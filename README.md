@@ -5,6 +5,16 @@
 
 # Orbit
 
+## Why Orbit
+Orbit gives one person working with Claude Code the habits of a small, careful software team.
+- **A team, not a single assistant**: an explorer, a designer, a tech lead, a security officer, a coder and two reviewers each do one job, so every change is thought through, built, then checked by someone fresh.
+- **Decisions made the way good teams make them**: `/decide` sizes the process to the question. A small fix just gets done; anything touching security or hard-to-undo choices gets proposals, a security review and a sign-off, with a written record of why.
+- **Several sessions working in parallel without stepping on each other**: one operator coordinates, each peer owns its own branch, and nothing reaches the shared branch without passing its checks.
+- **Lower cost**: cheaper models do the reading and routine building, and the strongest models are kept for judgment. Sessions message each other only when a decision is needed.
+- **Docs that stay small and current**: optional checks keep project docs short, indexed and updated alongside the code.
+- **Works in any project**: everything specific to a project lives in one profile file.
+
+## Contents in brief
 Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), the `/decide` PM command, and two skills for multi-session work (`operator`, `peer`). Everything project-specific lives in a per-project profile.
 
 ## Install
