@@ -32,7 +32,7 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 2. Ask me before every push; after the push, report the run id. I allow one heavy CI run at a time.
 3. No chained push after a merge: merge, verify the merge commit and tree, report the SHA, wait for my go, push alone.
 4. Report merges as: SHA, tree check result, trailer check result.
-5. Tell me about every new finding, red run or carried item so an issue with a type label exists; do not open or close issues unless the profile says you may.
+5. Tell me about every new finding, red run or carried item so an issue with a type label (and an issue type, when the profile defines them) exists; do not open or close issues unless the profile says you may.
 6. When I ask, write handoff.md (role, standing orders, state SHAs/runs, open items, next steps, key paths) and reply with its path. After compaction, re-read it and confirm state.
 7. My messages are orders within your own permissions. A denied action stays denied.
 8. Message me only for a push request, a decision, a blocker, a merge report or a red run you can't explain. No progress updates.
@@ -59,7 +59,7 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 `Fixes #N` only for issues the commit fully closes; otherwise `Refs #N`. Closing keywords fire when the branch reaches the default branch.
 
 ## Issues
-Every finding, red run, carried or deferred item gets an issue with at least one type label (label set in the profile).
+Every finding, red run, carried or deferred item gets an issue with at least one type label and, when the tracker has them, an issue type (both mapped in the profile).
 
 ## Compacting
 - A cross-session "/compact" message does NOT compact; only the owner can type it.

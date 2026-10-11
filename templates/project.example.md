@@ -27,7 +27,7 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 - Check: `git log -1 --format='%(trailers:key=Reviewed-By,valueonly)'`
 
 ## Issues
-- GitHub issues via `gh`; the PM opens and closes them. Labels: `bug`, `test`, `review`, `enhancement` (at least one), plus `security`, `deferred`.
+- GitHub issues via `gh`; the PM opens and closes them. Labels: `bug`, `test`, `review`, `enhancement` (at least one), plus `security`, `deferred`. Issue type: Bug for `bug`, `test`, `review`; Feature for `enhancement`; Task otherwise.
 - `Fixes #n` only when a commit fully closes the issue, else `Refs #n`.
 
 ## Docs
