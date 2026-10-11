@@ -60,13 +60,14 @@ Per the profile (skip if it says never). On the default branch, after the releas
 1. Bump the version files the profile lists, if any, and push.
 2. `git tag -a vX.Y.Z -m "<title>"` on that commit; `git push origin vX.Y.Z` alone. Never move or delete a published tag; fix forward with a new version.
 3. `gh release create vX.Y.Z --title "<title>" --notes-file <notes> --latest`. Notes: a few plain-language highlights, issues closed, upgrade steps, and the compare link `<repo>/compare/<prev>...vX.Y.Z`.
-4. Report the tag and the release URL.
+4. Close the release's milestone in the tracker, if the profile uses milestones.
+5. Report the tag and the release URL.
 
 ## Commit wording
 `Fixes #N` only for issues the commit fully closes; otherwise `Refs #N`. Closing keywords fire when the branch reaches the default branch.
 
 ## Issues
-Every finding, red run, carried or deferred item gets an issue with at least one type label and, when the tracker has them, an issue type (both mapped in the profile).
+Every finding, red run, carried or deferred item gets an issue with at least one type label and, when the tracker has them, an issue type (both mapped in the profile) and the milestone it is targeted at.
 
 ## Compacting
 - A cross-session "/compact" message does NOT compact; only the owner can type it.

@@ -41,6 +41,7 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Tracker: <GitHub issues via `gh`, ...>. Who opens/closes: <PM opens, closes on merge into the base; agents never>.
 - Label set: <type labels, extras>. Every issue gets at least one type label.
 - Issue types: <tracker types and their mapping, e.g. GitHub Bug for defects, Feature for new capabilities, Task otherwise; or "none">. Every issue gets one when the tracker has them.
+- Milestones: <tracker milestones matching the roadmap, or "none">. Every issue gets the milestone it is targeted at; moving it later is a carry, with a comment. The milestone closes when its release is published.
 - What gets an issue: every review finding, red run, carried or deferred item.
 - Commit wording: `Fixes #n` only when the commit fully closes the issue, else `Refs #n` (closing keywords fire when the branch reaches the default branch).
 
