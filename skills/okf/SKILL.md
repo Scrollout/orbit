@@ -23,8 +23,8 @@ Read the project profile (.agents/project.md) for the bundle path and any projec
 4. Run the validator.
 
 ## Roadmap and milestones
-- `roadmap.md` lists the milestones in order: `## M<n> <Title> - <status>` (`planned`, `in progress`, `done YYYY-MM-DD`) and a link to `roadmap-m<n>.md`.
-- `roadmap-m<n>.md` holds that milestone's exit tests, steps with proofs, and carried issues (`#n → M<m>`). A new milestone gets its plan doc when work on it starts; split by track when it outgrows the cap.
+- Roadmaps live in the `roadmap/` folder, listed in the root index. `roadmap/milestones.md` lists the milestones in order: `## M<n> <Title> - <status>` (`planned`, `in progress`, `done YYYY-MM-DD`) and a link to `m<n>.md`.
+- `roadmap/m<n>.md` holds that milestone's exit tests, steps with proofs, and carried issues (`#n → M<m>`). A new milestone gets its plan doc, and its line in `roadmap/index.md`, when work on it starts; split by track when it outgrows the cap.
 - One name everywhere: the tracker milestone is titled `M<n> <Title>`, every issue targeted at it carries it, and the release is `v0.<n>.0` (profile: Releases, Milestones). When the milestone closes, update its status line and log it.
 
 ## When to split
