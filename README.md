@@ -18,11 +18,22 @@ Orbit gives one person working with Claude Code the habits of a small, careful s
 Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), the `/decide` PM command, and two skills for multi-session work (`operator`, `peer`). Everything project-specific lives in a per-project profile.
 
 ## Install
+Clone it once (the templates used in "Adopt in a project" come from the clone):
+```
+git clone https://github.com/Scrollout/orbit.git ~/orbit
+```
+Then, in Claude Code:
 ```
 /plugin marketplace add ~/orbit
 /plugin install orbit@scrollout
 ```
-Agents appear as `orbit:<name>`, the command as `/orbit:decide`. After editing the plugin, update it and restart sessions (a running session keeps the definitions it started with).
+Agents appear as `orbit:<name>`, the command as `/orbit:decide`.
+
+**Update** to a new [release](https://github.com/Scrollout/orbit/releases):
+```
+git -C ~/orbit pull
+```
+then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout` in Claude Code, and restart running sessions (a running session keeps the definitions it started with).
 
 ## Adopt in a project
 1. `mkdir -p .agents && cp ~/orbit/templates/project.md .agents/project.md` and fill it in (TODO for unknowns). See `templates/project.example.md` for a filled one.
