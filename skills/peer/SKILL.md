@@ -8,6 +8,7 @@ Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md
 - **Push**: ask the operator before every push (branch, head SHA, why). Push only after its go. After pushing, report the run id.
 - **Merge**: after merging, verify the merge commit and report the SHA, the tree check (`git rev-parse HEAD^{tree} <branch>^{tree}` against the green tree) and the trailer check (profile). Wait for the operator's go.
 - **No chained push after a merge**: the merge and the push are separate commands, with the verification between them. If a stray run starts, tell the operator at once.
+- **Messages**: every message costs the operator a full re-read of its context. Message only for a push request, a decision you need, a blocker, a merge report or a red run you can't explain. Fold progress ("pushed", "run in flight", "reviewer started") into the next message that matters.
 - **Issues and findings**: report each new finding, red run or carried item to the operator; open or close issues only if the profile says you may.
 - **Handoff**: when asked, write `handoff.md` (template: `templates/handoff.md` of this plugin) with role, standing orders, state (branch, SHAs, run ids), open items with owners, next steps and key paths. Reply with its path. Do not write it unprompted mid-build.
 - **Compaction**: a "/compact" message from the operator does not compact you; only the owner can type it. After you are compacted, re-read `handoff.md`, then confirm to the operator the branch, SHAs, runs and open items you hold.

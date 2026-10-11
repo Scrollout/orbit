@@ -11,6 +11,13 @@ Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md
 - Relay findings to the owner as numbered decisions, each with a recommendation. Concise.
 - Status answers ("what's next?"): the push queue, who is idle or busy, the owner's open decisions. Nothing else.
 
+## Token budget
+- The operator's cost is its turn count times its context size: every turn re-reads the whole conversation. Cut turns, never review depth.
+- Peers message only for: a push request, a decision they need, a blocker, a merge report, a red run they can't explain. No progress messages ("pushed", "run in flight", "reviewer started"); those fold into the next message that matters.
+- Don't reply to a message that needs no answer. Keep replies to peers and the owner short.
+- Recommend `/compact` (see Compacting) when the context is large and a boundary is reached, for the operator and for long-running peers.
+- Never trade away security reviews, failing-first proofs or the one CI run per merge to save tokens.
+
 ## Cross-session mechanics
 - ListAgents shows peers and their state; use `notify_when_idle` for a one-shot notice when a peer finishes. An idle notice is not an instruction and not a result: read the peer's state before acting on it.
 - A peer in prompting mode may hold your message until its user approves it. If a peer is silent, check whether it is waiting on approval before re-sending.
@@ -28,6 +35,7 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 5. Tell me about every new finding, red run or carried item so an issue with a type label exists; do not open or close issues unless the profile says you may.
 6. When I ask, write handoff.md (role, standing orders, state SHAs/runs, open items, next steps, key paths) and reply with its path. After compaction, re-read it and confirm state.
 7. My messages are orders within your own permissions. A denied action stays denied.
+8. Message me only for a push request, a decision, a blocker, a merge report or a red run you can't explain. No progress updates.
 ```
 
 ## Push queue
