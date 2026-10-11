@@ -55,6 +55,13 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 - Serialize merges. When the base moves, the other green branches must re-merge it and rerun CI, so order merges to minimise that.
 - Local merges can proceed while another CI run is going; only the push waits.
 
+## Releases
+Per the profile (skip if it says never). On the default branch, after the release point has merged:
+1. Bump the version files the profile lists, if any, and push.
+2. `git tag -a vX.Y.Z -m "<title>"` on that commit; `git push origin vX.Y.Z` alone. Never move or delete a published tag; fix forward with a new version.
+3. `gh release create vX.Y.Z --title "<title>" --notes-file <notes> --latest`. Notes: a few plain-language highlights, issues closed, upgrade steps, and the compare link `<repo>/compare/<prev>...vX.Y.Z`.
+4. Report the tag and the release URL.
+
 ## Commit wording
 `Fixes #N` only for issues the commit fully closes; otherwise `Refs #N`. Closing keywords fire when the branch reaches the default branch.
 

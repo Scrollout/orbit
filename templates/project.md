@@ -44,6 +44,11 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - What gets an issue: every review finding, red run, carried or deferred item.
 - Commit wording: `Fixes #n` only when the commit fully closes the issue, else `Refs #n` (closing keywords fire when the branch reaches the default branch).
 
+## Releases
+- When: <each milestone merged into the default branch / each change set / never>.
+- Version: SemVer `vMAJOR.MINOR.PATCH` (0.y.z while unstable; MINOR for features, PATCH for fixes and docs). Version files to bump: <path or none>.
+- Who: <the owning session, after the owner's go>.
+
 ## Docs
 - Location and entry point: <path>. Format rules: <path or summary>.
 - Rule: update docs in the same commit as the behaviour.
