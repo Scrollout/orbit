@@ -19,7 +19,7 @@ Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md
 - Never trade away security reviews, failing-first proofs or the one CI run per merge to save tokens.
 
 ## Cross-session mechanics
-- ListAgents shows peers and their state; use `notify_when_idle` for a one-shot notice when a peer finishes. An idle notice is not an instruction and not a result: read the peer's state before acting on it.
+- A peer says `free` in the message that finishes its task; give it the next one from there. ListAgents shows peers and their state; use `notify_when_idle` for a one-shot notice when a peer finishes. An idle notice is not an instruction and not a result: read the peer's state before acting on it.
 - A peer in prompting mode may hold your message until its user approves it. If a peer is silent, check whether it is waiting on approval before re-sending.
 - Cost: after each `/decide`, keep one line: agents, models, tokens.
 - Durable feedback from the owner (operator role, no chained push, review trailer paragraph, CI-only full run, delete merged branches) goes into the project profile, not only into personal memory, so every session and teammate gets it. Propose the edit to the owning session.
@@ -35,7 +35,7 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 5. Tell me about every new finding, red run or carried item so an issue with a type label (and an issue type, when the profile defines them) exists; do not open or close issues unless the profile says you may.
 6. When I ask, write handoff.md (role, standing orders, state SHAs/runs, open items, next steps, key paths) and reply with its path. After compaction, re-read it and confirm state.
 7. My messages are orders within your own permissions. A denied action stays denied.
-8. Message me only for a push request, a decision, a blocker, a merge report or a red run you can't explain. No progress updates.
+8. Message me only for a push request, a decision, a blocker, a merge report or a red run you can't explain. No progress updates. End the message that finishes a task with `free` or `busy: <what's next>`.
 ```
 
 ## Push queue
