@@ -47,7 +47,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).
-- `/orbit:okf-init` scaffolds the bundle (index, log, constitution, doc rules, AGENTS.md/CLAUDE.md pointers, `.agents/okf.json`) and never overwrites.
+- `/orbit:okf-init` scaffolds the bundle (index, log, constitution, doc rules, roadmap and the M1 plan, AGENTS.md/CLAUDE.md pointers, `.agents/okf.json`) and never overwrites.
 - `node ~/orbit/scripts/validate-okf.mjs --root .` lints it (zero dependencies; settings from flags or `.agents/okf.json`; defaults: bundle `docs/okf`, 4000 chars per doc, AGENTS.md at most 80 lines, pointer files CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, .cursor/rules/agents.mdc). Skill `okf` has the rules.
 - `hooks/hooks.json` runs the validator after Write/Edit under the bundle (silent without node or a bundle). `templates/githooks/pre-commit` is a commit-time snippet.
 

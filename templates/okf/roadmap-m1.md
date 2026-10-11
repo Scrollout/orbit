@@ -1,0 +1,22 @@
+---
+type: Roadmap
+title: "M1 plan: <Title>"
+description: M1's goal, scope, steps with proofs, exit tests and carried issues.
+tags: [roadmap, milestones]
+status: draft
+generated: { by: process:orbit-okf-init, at: {{TIMESTAMP}} }
+---
+**TL;DR:** M1 (<goal in a few words>) is done when its exit tests pass. Overview: [roadmap](roadmap.md).
+
+## Exit tests
+| Test | Step |
+|---|---|
+| <behaviour proved, by a named test> | <step> |
+
+## Steps
+| Step | Builds | Proof |
+|---|---|---|
+| 1 | <what> | <test or check> |
+
+## Carried
+Issues in the M1 tracker milestone that move on, each with its new milestone: <#n → M2>.

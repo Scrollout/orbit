@@ -22,7 +22,13 @@ Read the project profile (.agents/project.md) for the bundle path and any projec
 3. Add a bullet to `log.md` under today's date (create the heading on top if missing).
 4. Run the validator.
 
+## Roadmap and milestones
+- `roadmap.md` lists the milestones in order: `## M<n> <Title> - <status>` (`planned`, `in progress`, `done YYYY-MM-DD`) and a link to `roadmap-m<n>.md`.
+- `roadmap-m<n>.md` holds that milestone's exit tests, steps with proofs, and carried issues (`#n → M<m>`). A new milestone gets its plan doc when work on it starts; split by track when it outgrows the cap.
+- One name everywhere: the tracker milestone is titled `M<n> <Title>`, every issue targeted at it carries it, and the release is `v0.<n>.0` (profile: Releases, Milestones). When the milestone closes, update its status line and log it.
+
 ## When to split
+
 A doc over the cap, or one covering two ideas a reader would load separately: split by idea, link the parts from the index, leave the old doc as the short overview or remove it and fix links. Never raise the cap to fit.
 
 ## Validate
