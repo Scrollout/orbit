@@ -6,7 +6,7 @@
 // Config keys: bundle, maxDocChars, maxAgentsLines, agentsFile, pointerFiles (array), maxPointerLines, okfVersion.
 // Checks: the spec's conformance (frontmatter with a non-empty `type`, reserved index.md and log.md) plus the doc rules
 // (skills/okf/SKILL.md): title, description, a TL;DR line, a size cap, every doc indexed, links that resolve,
-// timestamps with a UTC offset, footnotes that match `sources`, and vendor instruction files that only point to AGENTS.md.
+// timestamps with a UTC offset, quoted YAML values that hold ': ', footnotes that match `sources`, and vendor instruction files that only point to AGENTS.md.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -66,6 +66,14 @@ const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d
 function checkTimestamps(file, block) {
   for (const m of block.matchAll(/(?:^|[\s{,])(at|stale_after):\s*["']?([^,}"'\s]+)/gm)) {
     if (!DATETIME.test(m[2])) fail(file, `${m[1]} '${m[2]}' is not an ISO 8601 datetime with a UTC offset`);
+  }
+}
+
+// A plain (unquoted) YAML value may not hold ': ' or ' #': YAML reads them as a nested key or a comment. Quote such values.
+function checkPlainScalars(file, block) {
+  for (const line of block.split("\n")) {
+    const kv = line.match(/^\s*(?:-\s+)?[A-Za-z_][\w-]*:\s+(.+)$/);
+    if (kv && !/^["'[{|>&*!]/.test(kv[1]) && /: | #/.test(kv[1])) fail(file, `quote the value of '${line.trim()}' (': ' or ' #' in a plain YAML value)`);
   }
 }
 
@@ -130,6 +138,7 @@ for (const file of files) {
   }
   const block = text.match(/^---\n([\s\S]*?)\n---\n/)[1];
   checkTimestamps(file, block);
+  checkPlainScalars(file, block);
   checkFootnotes(file, block, text.slice(block.length + 8));
   for (const key of ["type", "title", "description"]) {
     if (!fm[key]?.trim()) fail(file, `frontmatter needs a non-empty '${key}'`);
