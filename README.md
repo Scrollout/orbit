@@ -9,13 +9,13 @@
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
 - **A team, not a single assistant**: an explorer, a designer, a tech lead, a security officer, a coder and two reviewers each do one job, so every change is thought through, built, then checked by someone fresh.
 - **Decisions made the way good teams make them**: `/decide` sizes the process to the question. A small fix just gets done; anything touching security or hard-to-undo choices gets proposals, a security review and a sign-off, with a written record of why.
-- **Several sessions working in parallel without stepping on each other**: one operator coordinates, each peer owns its own branch, and nothing reaches the shared branch without passing its checks.
+- **Parallel work without session upkeep**: one operator coordinates; each build step runs in a fresh worker subagent on its own branch (or in a peer session you can watch), sessions compact on their own, and nothing reaches the shared branch without passing its checks.
 - **Lower cost**: cheaper models do the reading and routine building, and the strongest models are kept for judgment. Sessions message each other only when a decision is needed.
 - **Docs that stay small and current**: optional checks keep project docs short, indexed and updated alongside the code.
 - **Works in any project**: everything specific to a project lives in one profile file.
 
 ## Contents in brief
-Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), the `/decide` PM command, and two skills for multi-session work (`operator`, `peer`). Everything project-specific lives in a per-project profile.
+Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), the `/decide` PM command, and two skills for coordinating parallel work (`operator`, `peer`). Everything project-specific lives in a per-project profile.
 
 ## Install
 Clone it once (the templates used in "Adopt in a project" come from the clone):
@@ -33,7 +33,7 @@ Agents appear as `orbit:<name>`, the command as `/orbit:decide`.
 ```
 git -C ~/orbit pull
 ```
-then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout` in Claude Code, and restart running sessions (a running session keeps the definitions it started with).
+then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout` in Claude Code, then `/reload-plugins` in each running session (or restart it; a running session keeps the definitions it loaded).
 
 ## Adopt in a project
 1. `mkdir -p .agents && cp ~/orbit/templates/project.md .agents/project.md` and fill it in (TODO for unknowns). See `templates/project.example.md` for a filled one.
@@ -42,7 +42,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
-- `skills/operator`, `skills/peer`: coordinating peer sessions (push queue, merge protocol, per-task worker subagents, auto-compaction).
+- `skills/operator`, `skills/peer`: coordinating per-task worker subagents or peer sessions (push queue, merge protocol, auto-compaction, no manual `/clear` or `/compact`).
 - `templates/`: `project.md`, `project.example.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
 
 ## OKF docs

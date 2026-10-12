@@ -1,6 +1,6 @@
 # Handoff: <session name>
 
-Written by the session on request, before the owner compacts it. Re-read after compaction.
+Kept current by the session at each task end and on request, so an automatic compaction loses nothing. Re-read after compaction.
 
 ## Role
 <!-- what this session is (operator, peer owning branch X, PM) and its boundaries -->

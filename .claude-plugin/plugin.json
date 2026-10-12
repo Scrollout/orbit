@@ -1,7 +1,7 @@
 {
   "name": "orbit",
-  "version": "0.8.0",
-  "description": "Personal team workflow: seven role agents, a /decide PM command, operator and peer skills, and OKF docs automation. Project-specific facts live in a project profile (.agents/project.md).",
+  "version": "0.8.1",
+  "description": "Personal team workflow: seven role agents, a /decide PM command, operator and peer skills for parallel work (per-task worker subagents or peer sessions, no manual clear or compact), and OKF docs automation. Project-specific facts live in a project profile (.agents/project.md).",
   "icon": "./assets/logo.svg",
   "author": {
     "name": "Marius Gologan"
