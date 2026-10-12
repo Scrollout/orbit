@@ -1,6 +1,6 @@
 ---
 name: operator
-description: Run a session as the operator of several peer Claude sessions that own the code. The operator never changes code; it messages peers, reads state (git log, gh run/issue, ListAgents), queues pushes and CI runs, runs the merge protocol, and relays decisions to the owner. Use when the owner asks you to coordinate, supervise or operate other sessions.
+description: Run a session as the operator of the sessions or per-task worker subagents that own the code. The operator never changes code; it messages peers or starts workers, reads state (git log, gh run/issue, ListAgents), queues pushes and CI runs, runs the merge protocol, and relays decisions to the owner. Use when the owner asks you to coordinate, supervise or operate other sessions or workers.
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, trailer format, label set and merge rules come from it. The peer side of this protocol is the `peer` skill.
 
@@ -15,7 +15,7 @@ Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md
 - The operator's cost is its turn count times its context size: every turn re-reads the whole conversation. Cut turns, never review depth.
 - Peers message only for: a push request, a decision they need, a blocker, a merge report, a red run they can't explain. No progress messages ("pushed", "run in flight", "reviewer started"); those fold into the next message that matters.
 - Don't reply to a message that needs no answer. Keep replies to peers and the owner short.
-- Recommend `/compact` (see Compacting) when the context is large and a boundary is reached, for the operator and for long-running peers.
+- Never ask the owner to `/clear` or `/compact` (see Compacting); keep contexts small with per-task workers instead (see Workers).
 - Never trade away security reviews, failing-first proofs or the one CI run per merge to save tokens.
 
 ## Cross-session mechanics
@@ -33,10 +33,17 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 3. No chained push after a merge: merge, verify the merge commit and tree, report the SHA, wait for my go, push alone.
 4. Report merges as: SHA, tree check result, trailer check result.
 5. Tell me about every new finding, red run or carried item so an issue with a type label (and an issue type, when the profile defines them) exists; do not open or close issues unless the profile says you may.
-6. When I ask, write handoff.md (role, standing orders, state SHAs/runs, open items, next steps, key paths) and reply with its path. After compaction, re-read it and confirm state.
+6. At each task end and when I ask, update handoff.md (role, standing orders, state SHAs/runs, open items, next steps, key paths). You compact automatically; after a compaction, re-read it and confirm state.
 7. My messages are orders within your own permissions. A denied action stays denied.
 8. Message me only for a push request, a decision, a blocker, a merge report or a red run you can't explain. No progress updates. End the message that finishes a task with `free` or `busy: <what's next>`.
 ```
+
+## Workers (per-task subagents)
+The default for new work: no session upkeep for the owner. Peers stay an option when the owner wants terminals to watch or talk to; let in-flight peer work finish, then give it no new task.
+- One fresh `coder` subagent per build step, in the background, on its own worktree and branch (the profile's convention). Its brief carries everything it needs: spec, conditions and their proof test, files, targeted checks, issue numbers, and the peer rules below (push, merge, no chained push). Several workers may run in parallel; the one-heavy-CI-run cap still holds.
+- Workers can't start agents, so the operator runs `/decide`, the `reviewer` and the `re-reviewer` itself. This is the one exception to "only message": starting agents is delegation, not a repo change; workers commit, the operator still never does.
+- A worker ends its turn instead of waiting: it reports "ready to push" (branch, head SHA) and stops. The go, the fix round and the merge order are sent to that same worker (SendMessage to its agent id), so it keeps its step's context; once its branch is merged and cleaned up, the worker is done.
+- Trade-offs to state if the owner asks: the owner sees only the operator; every result lands in the operator's context (auto-compact keeps it bounded); if the operator session stops, its workers stop.
 
 ## Push queue
 - Peers ask the operator before every push. Grant one at a time.
@@ -70,6 +77,6 @@ Per the profile (skip if it says never). On the default branch, after the releas
 Every finding, red run, carried or deferred item gets an issue with at least one type label and, when the tracker has them, an issue type (both mapped in the profile) and the milestone it is targeted at.
 
 ## Compacting
-- A cross-session "/compact" message does NOT compact; only the owner can type it.
-- Procedure: the session writes handoff.md (template: `templates/handoff.md` of this plugin) and replies with its path. The owner attaches, types `/compact`, then `/exit` (`/exit` only detaches). The operator then sends a post-compact check: re-read the handoff, confirm branch, SHAs, runs and open items.
-- Recommend compacting at natural boundaries: after a merge, while waiting on an owner decision. Never mid-decision or mid-build.
+- Nothing clears or compacts a session automatically except auto-compact: no hook can, and a cross-session "/clear" or "/compact" message is plain text. So rely on auto-compact (the `autoCompactWindow` setting, or `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` to compact earlier) for the operator and peers, and never ask the owner to type either command.
+- Peers keep `handoff.md` (template: `templates/handoff.md` of this plugin) current at each task end, so an automatic compaction loses nothing. After a peer reports it was compacted, send a post-compact check: re-read the handoff, confirm branch, SHAs, runs and open items.
+- Workers need neither: they start empty and end with their step.

@@ -42,7 +42,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
-- `skills/operator`, `skills/peer`: coordinating peer sessions (push queue, merge protocol, compaction).
+- `skills/operator`, `skills/peer`: coordinating peer sessions (push queue, merge protocol, per-task worker subagents, auto-compaction).
 - `templates/`: `project.md`, `project.example.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
 
 ## OKF docs
