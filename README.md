@@ -15,7 +15,7 @@ Orbit gives one person working with Claude Code the habits of a small, careful s
 - **Works in any project**: everything specific to a project lives in one profile file.
 
 ## Contents in brief
-Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), an `operator` main-session agent, the `/decide` PM command, and two skills for coordinating parallel work (`operator`, `peer`). Projects may opt in to pull requests per topic branch (`Pull requests: yes` in the profile); the merge stays a verified local `--no-ff` merge. Everything project-specific lives in a per-project profile.
+Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), an `operator` main-session agent, the `/decide` PM command, and two skills for coordinating parallel work (`operator`, `peer`). Projects may opt in to pull requests per topic branch (`Pull requests: yes` in the profile); the merge stays a verified local `--no-ff` merge. A fresh worker starts every task; a worker is resumed only for its own open branch (profile `Worker reuse: fresh-per-task`, default; `resume-ok` opts out). Everything project-specific lives in a per-project profile.
 
 ## Install
 Clone it once (the templates used in "Adopt in a project" come from the clone):

@@ -26,7 +26,7 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 - Heavy runner class: `self-hosted`, one run at a time. Path filters: `ci` - all paths; `ui` - `web/**`.
 
 ## Operator
-- Max parallel workers: 3. Escalate: security blocks, payments, legal, settings, `prod` actions.
+- Worker reuse: fresh-per-task. Max parallel workers: 3. Escalate: security blocks, payments, legal, settings, `prod` actions.
 - Standing worker brief lines: never `git stash`; no session names in trailers; run `make lint-docs` after committing.
 
 ## Review trailer
