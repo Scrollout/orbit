@@ -1,5 +1,5 @@
 {
-  "description": "After Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); at session start, resume or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
+  "description": "After Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
   "hooks": {
     "PostToolUse": [
       {
@@ -15,7 +15,7 @@
     ],
     "SessionStart": [
       {
-        "matcher": "startup|resume|compact",
+        "matcher": "startup|resume|compact|clear",
         "hooks": [
           {
             "type": "command",
