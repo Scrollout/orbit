@@ -15,7 +15,7 @@ Orbit gives one person working with Claude Code the habits of a small, careful s
 - **Works in any project**: everything specific to a project lives in one profile file.
 
 ## Contents in brief
-Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), the `/decide` PM command, and two skills for coordinating parallel work (`operator`, `peer`). Everything project-specific lives in a per-project profile.
+Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), an `operator` main-session agent, the `/decide` PM command, and two skills for coordinating parallel work (`operator`, `peer`). Everything project-specific lives in a per-project profile.
 
 ## Install
 Clone it once (the templates used in "Adopt in a project" come from the clone):
@@ -39,7 +39,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 1. `mkdir -p .agents && cp ~/orbit/templates/project.md .agents/project.md` and fill it in (TODO for unknowns). See `templates/project.example.md` for a filled one.
 2. Optionally `cp templates/principles.md .agents/principles.md` and `templates/AGENTS.md ./AGENTS.md`.
 3. Point `CLAUDE.md` or `AGENTS.md` at it: `@.agents/project.md` and `@.agents/principles.md` (Claude Code imports with `@` lines). If the profile lives elsewhere, state its path there; agents read `.agents/project.md` or that path first.
-4. To run the main checkout's session as the operator: `cp ~/orbit/templates/operator.md .agents/operator.md` and `echo .agents/operator.md >> .git/info/exclude` (it stays untracked). Its SessionStart hook then hands that file to the main checkout's session at startup, resume and compaction, so the operator resumes without being told; sibling worktrees get nothing.
+4. To run the main checkout's session as the operator: `cp ~/orbit/templates/operator.md .agents/operator.md` and `echo .agents/operator.md >> .git/info/exclude` (it stays untracked). Its SessionStart hook then hands that file to the main checkout's session at startup, resume and compaction, so the operator resumes without being told; sibling worktrees get nothing. Or start it directly as the operator with `claude --agent orbit:operator`.
 
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
