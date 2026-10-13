@@ -39,11 +39,13 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 1. `mkdir -p .agents && cp ~/orbit/templates/project.md .agents/project.md` and fill it in (TODO for unknowns). See `templates/project.example.md` for a filled one.
 2. Optionally `cp templates/principles.md .agents/principles.md` and `templates/AGENTS.md ./AGENTS.md`.
 3. Point `CLAUDE.md` or `AGENTS.md` at it: `@.agents/project.md` and `@.agents/principles.md` (Claude Code imports with `@` lines). If the profile lives elsewhere, state its path there; agents read `.agents/project.md` or that path first.
+4. To run the main checkout's session as the operator: `cp ~/orbit/templates/operator.md .agents/operator.md` and `echo .agents/operator.md >> .git/info/exclude` (it stays untracked). Its SessionStart hook then hands that file to the main checkout's session at startup, resume and compaction, so the operator resumes without being told; sibling worktrees get nothing.
 
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
 - `skills/operator`, `skills/peer`: coordinating per-task worker subagents or peer sessions (push queue, merge protocol, auto-compaction, no manual `/clear` or `/compact`).
-- `templates/`: `project.md`, `project.example.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
+- `hooks/operator-context.sh`: the operator's SessionStart hook (self-test: `sh hooks/operator-context.test.sh`).
+- `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
 
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).
