@@ -11,7 +11,9 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 ## Branches and merge rules
 - Default branch: <main>. Base/integration branch: <name; topic branches merge here>. Never work on either directly.
 - Merge into the base: `--no-ff` only, after merging the base into the topic branch and pushing it, green CI on that merge commit, then verify the merged tree equals the green tree (`git rev-parse HEAD^{tree} <branch>^{tree}`). Push the base alone, never chained after the merge.
-- After merge: close issues, remove the worktree, delete the branch locally and on the remote.
+- Merge build: a worker, in a fresh detached worktree from `origin/<base>` (e.g. `git worktree add --detach ../<repo>-merge-<topic> origin/<base>`).
+- Who pushes the base: <agent / owner>. `owner`: the operator hands the owner `! git -C <merge worktree> push origin HEAD:<base>`.
+- After merge, once `origin/<base>` equals the merge SHA: close issues; a worker removes the worktrees and deletes the branch locally and on the remote.
 - Other rules (merge gate, hooks, protected branches): <...>
 
 ## Worktree convention
@@ -30,11 +32,20 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - System: <GitHub Actions / ...>. Runs: <what>.
 - Is CI the only full run? <yes/no>. If yes: coders run only the targeted checks, push, report without waiting; the PM/operator watches CI.
 - Runner limits (shared host, one heavy run at a time): <...>
+- Heavy runner class: <runner label, or the workflows that count as heavy>.
+- Path filters: <workflow - the paths that trigger it, or "all paths">. A GO lists the workflows a diff triggers; green means all of them green.
+
+## Operator
+- Max parallel workers: <n>.
+- Escalate to the owner (the operator decides the rest or runs `/decide`): <e.g. security blocks, money, legal, settings, production or live actions>.
+- Standing worker brief lines, appended to every worker brief: <e.g. never `git stash` (shared across worktrees); no session names in commit trailers; run <check> after committing>.
+- Handoff: `.agents/operator.md` in the main checkout (template `templates/operator.md` of the plugin), untracked.
 
 ## Review trailer
 - Format: `<Trailer-Key>: <who> - <pointer>` on the merge commit, or `none`.
 - It must share the last paragraph with `Co-Authored-By` (no blank line between them), or git does not parse it as a trailer.
 - Check: `git log -1 --format='%(trailers:key=<Trailer-Key>,valueonly)'`
+- `<who>` names the reviewer that ran (agent and model, e.g. `reviewer (opus)`), never a session name. No review only with the waiver: `<waiver holder> waived - <reason>`.
 - Who may waive it: <owner>
 
 ## Issues

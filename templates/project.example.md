@@ -9,7 +9,8 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 ## Branches and merge rules
 - Default branch: `main`. Base branch: `develop`. Never work on either.
 - Merge into `develop` with `--no-ff` after merging `develop` into the topic branch and pushing it; green CI on that merge commit; then check `git rev-parse HEAD^{tree} <branch>^{tree}`. Push `develop` alone.
-- After merge: remove the worktree, delete the branch locally and on the remote.
+- Merge build: a worker, in `git worktree add --detach ../acme-shop-merge-<topic> origin/develop`. Who pushes the base: owner.
+- After merge, once `origin/develop` equals the merge SHA: a worker removes the worktrees, deletes the branch locally and on the remote.
 
 ## Worktree convention
 - Create: `git fetch && git worktree add ../acme-shop-<topic> -b <topic> origin/develop`; one per session, before any edit.
@@ -21,9 +22,14 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 
 ## CI
 - GitHub Actions. CI is the only full run: coders run targeted checks, push, report without waiting.
+- Heavy runner class: `self-hosted`, one run at a time. Path filters: `ci` - all paths; `ui` - `web/**`.
+
+## Operator
+- Max parallel workers: 3. Escalate: security blocks, payments, legal, settings, `prod` actions.
+- Standing worker brief lines: never `git stash`; no session names in trailers; run `make lint-docs` after committing.
 
 ## Review trailer
-- `Reviewed-By: <who> - <pointer>` on the merge commit, in the same last paragraph as `Co-Authored-By`.
+- `Reviewed-By: <who> - <pointer>` on the merge commit, in the same last paragraph as `Co-Authored-By`; `<who>` is the reviewer that ran, e.g. `reviewer (opus)`. No review only with the owner's waiver: `owner waived - <reason>`.
 - Check: `git log -1 --format='%(trailers:key=Reviewed-By,valueonly)'`
 
 ## Issues

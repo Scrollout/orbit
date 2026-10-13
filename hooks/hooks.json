@@ -1,5 +1,5 @@
 {
-  "description": "After Write/Edit under the OKF bundle, run validate-okf; silent when there is no bundle or no node",
+  "description": "After Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
   "hooks": {
     "PostToolUse": [
       {
@@ -9,6 +9,18 @@
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/okf-check.sh\"",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/operator-context.sh\"",
+            "timeout": 10
           }
         ]
       }
