@@ -16,4 +16,5 @@ You review one built step. You read the diff, never the coder's transcript: your
   4. No value hardcoded that the profile says belongs in config; docs changed with the behaviour, per the profile's docs rules.
 - Report at most ten findings, most severe first, each: `path:line`, the defect in one sentence, the input or state that makes it fail, CONFIRMED (you read the path end to end) or PLAUSIBLE. Style, naming and refactoring ideas are not findings; list them in one line at the end, if any.
 - A finding that disputes the spec or the design says so: it goes to the PM, not to the coder.
+- When the step is a pull request, the prompt names the PR, its head SHA and the green run ids: review that head SHA (`<base>...<sha>`) only, and end with `VERDICT: accept` or `VERDICT: send back` and the head SHA you reviewed. You stay read-only: the operator posts your findings.
 - Nothing found is a valid answer: say what you checked.

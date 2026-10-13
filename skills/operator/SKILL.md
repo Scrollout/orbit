@@ -71,9 +71,23 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
   `until [ "$(gh run view ID --json status -q .status)" = completed ]; do sleep 60; done; gh run view ID --json conclusion,headSha`
 - A run stuck in queued with no runner: cancel it, wait until it shows cancelled, then rerun.
 
+## Pull requests (optional)
+Per the profile's `Pull requests:` field (`no` when absent). Both modes keep every other rule: CI green on the head SHA before any reviewer, the verified local `--no-ff` merge, the trailer.
+
+| | `no` (default and fallback) | `yes` |
+|---|---|---|
+| Opened | no PR | by the worker after the push: `gh pr create --base <base> --head <branch>`, body from the profile's PR template, `Refs #n`, body file outside the worktree |
+| Reviewer starts | all triggered runs green on the head SHA | the same; the prompt names the PR, the head SHA and the green run ids |
+| Review record | the operator posts each summary as an issue comment | the operator posts each summary as a PR comment (reviewers are read-only) |
+| Trailer pointer | `comment <id> on issue #n` | `comment <id> on PR #n` |
+| Merge | local merge, pushed per the profile | the same, pushed by the operator so GitHub marks the PR merged; never the merge button or `gh pr merge` (it skips the tree check and the trailer) |
+
+- Check once, before the first task: the profile says `yes`, `gh auth status` works and `origin` is a GitHub remote. If a PR cannot be opened (`gh pr create` denied or failing, no GitHub remote), use `no` for that task and tell the owner once; never block.
+- Branch protection is optional and the profile says whether it exists; the convention is the control. `gh pr create` may need a permission allow rule, which only the owner adds.
+
 ## Merge protocol
 1. Catch-up: the topic's worker merges `origin/<base>` into its branch, verifies the merge commit and asks for the push; after the GO it pushes alone, never chained after the merge.
-2. All triggered runs green on that head, then a fresh `reviewer`, the fix round, and a `re-reviewer` after the fix's green runs.
+2. All triggered runs green on that head, then a fresh `reviewer`, the fix round, and a `re-reviewer` after the fix's green runs (records and pointers per Pull requests).
 3. Merge build: a worker, in a fresh detached worktree from `origin/<base>` (`git fetch && git worktree add --detach ../<repo>-merge-<topic> origin/<base>`), runs `git merge --no-ff <branch>` with the review trailer in the same last paragraph as `Co-Authored-By`. The trailer names the reviewer that ran (`reviewer (opus) - <pointer>`), never a session name; no review only when the owner waived it (`<owner> waived - <reason>`). It reports the merge SHA, the tree check (`git rev-parse HEAD^{tree} <branch>^{tree}` equals the green tree) and the trailer check.
 4. Push the base alone, per the profile's who pushes the base: `agent`, a GO to the merge worker; `owner`, hand the owner the exact `! git -C <merge worktree> push origin HEAD:<base>`.
 5. Confirm: `git fetch origin`, then `git rev-parse origin/<base>` equals the merge SHA. Nothing below happens before this.
