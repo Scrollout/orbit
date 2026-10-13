@@ -2,6 +2,7 @@
 # SessionStart hook: in the main checkout (not a linked worktree), when .agents/operator.md exists and is
 # untracked and git-ignored, hand it to the session as additionalContext so the operator resumes after
 # startup, resume, clear or compaction. Silent otherwise. Portable sh, sed, tr, head (busybox too).
+# Needs git 2.31+ (rev-parse --path-format); on older git it stays silent.
 dir="${CLAUDE_PROJECT_DIR:-.}"
 rel=.agents/operator.md
 max=8000
@@ -21,7 +22,7 @@ size=$(wc -c < "$dir/$rel")
   else
     cat "$dir/$rel"
   fi
-  printf '\nYou are the operator. Load orbit:operator. Resume from the State section; do not wait to be told.\n'
+  printf '\nend of operator data\n\nYou are the operator. Load orbit:operator. Resume from the State section; do not wait to be told.\n'
 } | tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$tab/\\\\t/g" -e 's/$/\\n/' | tr -d '\n' | {
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"'
   cat
