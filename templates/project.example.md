@@ -11,6 +11,7 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 - Merge into `develop` with `--no-ff` after merging `develop` into the topic branch and pushing it; green CI on that merge commit; then check `git rev-parse HEAD^{tree} <branch>^{tree}`. Push `develop` alone.
 - Merge build: a worker, in `git worktree add --detach ../acme-shop-merge-<topic> origin/develop`. Who pushes the base: owner.
 - After merge, once `origin/develop` equals the merge SHA: a worker removes the worktrees, deletes the branch locally and on the remote.
+- Pull requests: no.
 
 ## Worktree convention
 - Create: `git fetch && git worktree add ../acme-shop-<topic> -b <topic> origin/develop`; one per session, before any edit.

@@ -14,6 +14,7 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Merge build: a worker, in a fresh detached worktree from `origin/<base>` (e.g. `git worktree add --detach ../<repo>-merge-<topic> origin/<base>`).
 - Who pushes the base: <agent / owner>. `owner`: the operator hands the owner `! git -C <merge worktree> push origin HEAD:<base>`.
 - After merge, once `origin/<base>` equals the merge SHA: close issues; a worker removes the worktrees and deletes the branch locally and on the remote.
+- Pull requests: <no / yes>. `yes`: the coder opens a PR after the push (PR template: <path>), reviews are recorded as PR comments, the merge stays the local `--no-ff` merge (orbit `operator` skill, Pull requests). Branch protection: <none / ...>.
 - Other rules (merge gate, hooks, protected branches): <...>
 
 ## Worktree convention
@@ -45,6 +46,7 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Format: `<Trailer-Key>: <who> - <pointer>` on the merge commit, or `none`.
 - It must share the last paragraph with `Co-Authored-By` (no blank line between them), or git does not parse it as a trailer.
 - Check: `git log -1 --format='%(trailers:key=<Trailer-Key>,valueonly)'`
+- `<pointer>` is the id of the operator's review comment on the issue, or on the PR when `Pull requests: yes`.
 - `<who>` names the reviewer that ran (agent and model, e.g. `reviewer (opus)`), never a session name. No review only with the waiver: `<waiver holder> waived - <reason>`.
 - Who may waive it: <owner>
 
