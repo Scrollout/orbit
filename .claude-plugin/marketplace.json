@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "orbit",
-      "description": "Role agents, /decide, and the operator and peer skills for parallel work, driven by a per-project profile.",
+      "description": "Role agents, /decide, and an operator that runs a team of worker agents in parallel, driven by a per-project profile.",
       "source": "./"
     }
   ]

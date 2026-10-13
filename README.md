@@ -9,7 +9,7 @@
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
 - **A team, not a single assistant**: an explorer, a designer, a tech lead, a security officer, a coder and two reviewers each do one job, so every change is thought through, built, then checked by someone fresh.
 - **Decisions made the way good teams make them**: `/decide` sizes the process to the question. A small fix just gets done; anything touching security or hard-to-undo choices gets proposals, a security review and a sign-off, with a written record of why.
-- **Parallel work without session upkeep**: one operator coordinates; each build step runs in a fresh worker subagent on its own branch (or in a peer session you can watch), sessions compact on their own, and nothing reaches the shared branch without passing its checks.
+- **Parallel work without session upkeep**: one operator coordinates and never edits; every chore runs in a fresh worker subagent on its own branch (or in a peer session you can watch), work stays in flight, the operator resumes on its own after a compaction or restart, and nothing reaches the shared branch without passing its checks.
 - **Lower cost**: cheaper models do the reading and routine building, and the strongest models are kept for judgment. Sessions message each other only when a decision is needed.
 - **Docs that stay small and current**: optional checks keep project docs short, indexed and updated alongside the code.
 - **Works in any project**: everything specific to a project lives in one profile file.
