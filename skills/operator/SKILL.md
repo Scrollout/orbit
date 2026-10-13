@@ -45,7 +45,7 @@ The operator runs a team of agents in parallel (workers, reviewers, re-reviewers
 
 ## Workers (per-task subagents)
 The default for all work.
-- One fresh `coder` subagent per task, in the background, on its own worktree and branch (the profile's convention). Its brief carries everything it needs: spec, conditions and their proof test, files, targeted checks, issue numbers, the `peer` skill's rules (ask before every push, no chained push, merge report), and the profile's standing worker brief lines.
+- One fresh `coder` subagent per task, in the background, on its own worktree and branch (the profile's convention). Its brief carries everything it needs: spec, conditions and their proof test, files, targeted checks, issue numbers, the `peer` skill's rules (ask before every push; push with one bare `git push origin <branch>`; a denied push is reported, never retried; no chained push; merge report), and the profile's standing worker brief lines.
 - Workers can't start agents, so the operator runs `/decide`, the `reviewer` and the `re-reviewer`.
 - A worker ends its turn instead of waiting: it reports "ready to push" (branch, head SHA) and stops. The GO, the fix round, the merge and cleanup orders go to that same worker (SendMessage to its agent id), so it keeps its task's context.
 - Trade-offs to state if the owner asks: the owner sees only the operator; every result lands in the operator's context (auto-compact keeps it bounded); if the operator session stops, its workers stop.
@@ -72,12 +72,12 @@ You are <peer-name>, owner of <topic> on branch <branch> (worktree <path>). I am
 - A run stuck in queued with no runner: cancel it, wait until it shows cancelled, then rerun.
 
 ## Merge protocol
-1. The peer merges the base into the topic branch.
-2. Push alone, never chained after a merge in one command. Verify the merge commit first.
-3. Green CI, then a fresh `reviewer`, then a fix round, then a `re-reviewer` after the fix's green run.
-4. Merge with `--no-ff` and the review trailer, in the same last paragraph as `Co-Authored-By` (see the profile).
-5. Verify the merged tree equals the green tree (`git rev-parse HEAD^{tree} <branch>^{tree}`), then push the base alone.
-6. After green: close the issues, remove the worktree, delete the branch locally and on the remote. Report the SHA.
+1. Catch-up: the topic's worker merges `origin/<base>` into its branch, verifies the merge commit and asks for the push; after the GO it pushes alone, never chained after the merge.
+2. All triggered runs green on that head, then a fresh `reviewer`, the fix round, and a `re-reviewer` after the fix's green runs.
+3. Merge build: a worker, in a fresh detached worktree from `origin/<base>` (`git fetch && git worktree add --detach ../<repo>-merge-<topic> origin/<base>`), runs `git merge --no-ff <branch>` with the review trailer in the same last paragraph as `Co-Authored-By`. The trailer names the reviewer that ran (`reviewer (opus) - <pointer>`), never a session name; no review only when the owner waived it (`<owner> waived - <reason>`). It reports the merge SHA, the tree check (`git rev-parse HEAD^{tree} <branch>^{tree}` equals the green tree) and the trailer check.
+4. Push the base alone, per the profile's who pushes the base: `agent`, a GO to the merge worker; `owner`, hand the owner the exact `! git -C <merge worktree> push origin HEAD:<base>`.
+5. Confirm: `git fetch origin`, then `git rev-parse origin/<base>` equals the merge SHA. Nothing below happens before this.
+6. Close the issues; a worker removes the topic and merge worktrees and deletes the branch locally and on the remote. Watch the base's run; send a result batch.
 - Serialize merges. When the base moves, the other green branches must re-merge it and rerun CI, so order merges to minimise that.
 - Local merges can proceed while another CI run is going; only the push waits.
 
