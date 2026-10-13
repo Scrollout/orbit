@@ -38,6 +38,7 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 
 ## Operator
 - Max parallel workers: <n>.
+- Worker reuse: <fresh-per-task (default when absent) / resume-ok>. `fresh-per-task`: every new task gets a new worker; a worker is resumed only to finish its own open branch (orbit `operator` skill, Workers).
 - Escalate to the owner (the operator decides the rest or runs `/decide`): <e.g. security blocks, money, legal, settings, production or live actions>.
 - Standing worker brief lines, appended to every worker brief: <e.g. never `git stash` (shared across worktrees); no session names in commit trailers; run <check> after committing>.
 - Handoff: `.agents/operator.md` in the main checkout (template `templates/operator.md` of the plugin), untracked.
