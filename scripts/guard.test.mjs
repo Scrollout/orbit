@@ -421,7 +421,7 @@ test("round 2 B: eval shares the caller's cwd and variables", () => {
 
 test("round 2 E: cd under ||, a pipe, background or a condition leaves the cwd unknown; printf -v and declare -n assign", () => {
   for (const c of ["cd /r/main || cd /tmp; touch x", "false || cd /tmp && touch x", "if true; then cd /tmp; fi; touch x", "cd /tmp | cat; touch x",
-    "printf -v D %s /r/main; echo x > $D/a", "declare -n R=HOME; echo x > $R/a", "while false; do cd /tmp; done; touch x"]) deniedOp(c);
+    "printf -v TMPDIR %s /r/main; echo x > $TMPDIR/a", "printf -vTMPDIR %s /r/main; echo x > $TMPDIR/a", "declare -n R=HOME; echo x > $R/a", "while false; do cd /tmp; done; touch x"]) deniedOp(c);
   allowedOp("cd /tmp && touch x; cd /tmp; touch y");
 });
 
@@ -439,4 +439,21 @@ test("round 2 DEC-08: global -c and -C do not hide a worker's merge", () => {
   deniedOp("git -C \"$DIR\" status");
   deniedOp("git -c user.name=x log");
   assert.equal(run(bash("git commit -C HEAD -F msg-ok.txt", w), ctx({ mergeHead: () => "abc1234", baseShas: () => [] })), null, "-C consumes its value; the file is checked");
+});
+
+// ---------- fix round 3 ----------
+test("round 3: long options that git takes only as --opt=value never swallow the next argument", () => {
+  for (const c of ["git log --format --output=x", "git show --format --output=x", "git whatchanged --format --output=x", "git rev-list --format --output=x HEAD", "git shortlog --committer --output=x"]) {
+    assert.match(deniedOp(c), /--(format|output=x)/, c);
+  }
+  allowedOp("git log --format=%h --since 2.weeks --date iso");
+});
+
+test("round 3: a worker's git -C \"$X\" commit during a merge is checked against the session's repo", () => {
+  const w = { agent_id: "w1", agent_type: "orbit:coder", cwd: "/r/main" };
+  const merging = ctx({ mergeHead: () => "abc1234", baseShas: () => ["def5678"] });
+  assert.match(run(bash("git -C \"$X\" commit -m 'Merge topic'", w), merging) ?? "", /^DEC-08/);
+  assert.match(run(bash("git -C \"$X\" commit -F msg-ok.txt", w), merging) ?? "", /^DEC-08: .*cannot be read/, "a relative -F under an unknown -C is unreadable");
+  assert.equal(run(bash("git -C \"$X\" commit -F /r/main/msg-ok.txt", w), merging), null);
+  assert.equal(run(bash("git -C \"$X\" commit -m 'Merge topic'", w)), null, "no merge in progress in the session's repo");
 });
