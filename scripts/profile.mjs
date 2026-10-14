@@ -79,6 +79,23 @@ export function gaps(data) {
   return out;
 }
 
+// Globs: `*` and `?` stay inside a directory, `**` crosses directories, a trailing `/` (or a plain directory name)
+// covers everything below it, patterns are anchored at the repo root.
+export function globToRegExp(glob) {
+  let g = glob.replace(/^\.?\//, "");
+  if (g.endsWith("/")) g += "**";
+  let re = "";
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === "*" && g[i + 1] === "*") { re += ".*"; i++; if (g[i + 1] === "/") i++; }
+    else if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}(/.*)?$`);
+}
+export const matchesAny = (file, globs) => globs.some((g) => globToRegExp(g).test(file));
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
