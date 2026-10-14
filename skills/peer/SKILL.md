@@ -1,6 +1,7 @@
 ---
 name: peer
 description: Work as a peer session under an operator session that coordinates several Claude sessions. Covers starting in its own worktree, asking before each push, reporting run ids and merge SHAs, no chained push after a merge, keeping handoff.md current and re-reading it after auto-compaction, and the same rules as a per-task worker subagent. Use when an operator session has sent standing orders, or the owner says you are a peer of an operator.
+version: 1.0.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. The operator side is the `operator` skill.
 

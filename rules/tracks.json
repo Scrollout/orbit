@@ -1,0 +1,10 @@
+{
+  "source": "commands/decide.md, Track table",
+  "roles": ["analyst", "engineer", "reviewer", "security", "techlead"],
+  "tracks": {
+    "just do it":   { "analyst": [0, 0], "engineer": [0, 0], "reviewer": [0, 0], "security": [0, 0], "techlead": [0, 0], "max": 0 },
+    "light review": { "analyst": [0, 1], "engineer": [1, 1], "reviewer": [0, 0], "security": [0, 0], "techlead": [1, 1], "max": 3 },
+    "full review":  { "analyst": [0, 1], "engineer": [1, 2], "reviewer": [1, 1], "security": [1, 1], "techlead": [1, 1], "max": 5 },
+    "incident":     { "analyst": [0, 1], "engineer": [1, 1], "reviewer": [1, 1], "security": [1, 1], "techlead": [1, 1], "max": 5 }
+  }
+}

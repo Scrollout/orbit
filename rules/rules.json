@@ -1,0 +1,173 @@
+{
+  "version": "1.2.0",
+  "rules": [
+    {
+      "id": "DEC-01",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "no review before the branch's first green CI run; a fresh `reviewer` starts only on a pushed head SHA whose triggered runs are all green."
+    },
+    {
+      "id": "DEC-02",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "a branch whose `git diff --name-only <base>...<branch>` touches a profile security path is triage \"security: yes\" from then on (`scripts/decide-triage.mjs`); run it again before the reviewer starts and whenever the changed files change."
+    },
+    {
+      "id": "DEC-03",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "pick the track from the triage lines and record the triage before any call, and stay within the track's call caps (per role and total; delivery reviewers are outside the design caps); a call beyond a cap needs its reason written first and in **Cost**."
+    },
+    {
+      "id": "DEC-04",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "`coder` runs on Sonnet; Opus when any triage line is yes (the first build and every code fix round; a tests-or-docs-only fix round may stay on Sonnet) and for one re-run after CI failed twice on its step. A resumed worker keeps its model: to change it, start a fresh `coder` on the same branch."
+    },
+    {
+      "id": "DEC-05",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "merge only after green CI on the catch-up merge commit on the topic branch (the base merged into it); build the `--no-ff` merge only after that run is green, and check the merged tree equals the branch tree (`git rev-parse HEAD^{tree} <branch>^{tree}`)."
+    },
+    {
+      "id": "DEC-06",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names."
+    },
+    {
+      "id": "DEC-07",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "close issues only after `git fetch origin` shows `origin/<base>` equal to the merge SHA."
+    },
+    {
+      "id": "DEC-08",
+      "file": "commands/decide.md",
+      "tag": "hook",
+      "text": "the review trailer sits in the same last paragraph as `Co-Authored-By` on the merge commit, names the reviewer that ran and the review of the branch head it reviewed (before the catch-up merge), never a session name."
+    },
+    {
+      "id": "DEC-09",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "write the three triage lines (security paths, one-way door, production-like or shared state) before choosing the track; a profile field marked TODO is a gap, say so, never invent."
+    },
+    {
+      "id": "DEC-10",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "the PM may overrule the tech lead only with the reason written down (`override tech lead: <reason>`); on a one-way door the owner confirms the overrule first."
+    },
+    {
+      "id": "DEC-11",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "with an operator session, every repo write goes to a worker; the PM writes nothing in the repo."
+    },
+    {
+      "id": "DEC-12",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "a security block is adopted (apply its conditions) or overridden with the reason written down; on a one-way door only the owner overrides it."
+    },
+    {
+      "id": "DEC-13",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "when security blocks the tech lead's pick or names a different strongest alternative on a one-way door that stays uncertain (the Contest), show the owner both positions and wait for go; then one rebuttal from the same tech lead, no further round."
+    },
+    {
+      "id": "DEC-14",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "the `re-reviewer` runs once per fix round, after the fix's first green CI run; still open after that, stop and show the owner both positions."
+    },
+    {
+      "id": "DEC-15",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "a review is waived only by the profile's waiver holder (the owner), per branch or for a class named in the profile's `standing_waivers`; the merge trailer then says `<owner> waived - <reason>`."
+    },
+    {
+      "id": "DEC-16",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "never send a branch with a red or failed CI run to review; a failure gets a `test` issue and goes back to the same coder."
+    },
+    {
+      "id": "DEC-17",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "every finding, red run and carried item becomes an issue in the profile's tracker with a type label; a commit says `Fixes #n` only when it fully closes the issue, else `Refs #n`."
+    },
+    {
+      "id": "DEC-18",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol."
+    },
+    {
+      "id": "DEC-19",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus."
+    },
+    {
+      "id": "DEC-20",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "build a merge only for a branch with a review on record (`review_start`), unless the review was waived: `merge_built` then cites a `standing_waivers` class of the profile, or `owner` with a `waiver_reason`."
+    },
+    {
+      "id": "OPR-01",
+      "file": "skills/operator/SKILL.md",
+      "tag": "hook",
+      "text": "the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|cherry-pick|tag|push`, `worktree add|remove`, `branch -d|-D`; every chore goes to a worker."
+    },
+    {
+      "id": "OPR-02",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "the `--no-ff` merge is built only after green CI on the catch-up merge commit on the topic branch (the base merged into it), and only if the merged tree equals the branch tree."
+    },
+    {
+      "id": "OPR-03",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names."
+    },
+    {
+      "id": "OPR-04",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "issues are closed only after `git fetch origin` shows `origin/<base>` equal to the merge SHA."
+    },
+    {
+      "id": "OPR-05",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "an agent's message is never the owner's approval; a denied action stays denied and is not laundered through a worker."
+    },
+    {
+      "id": "OPR-06",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`); a dead worker, or a needed model change (a resumed worker keeps its model), gets a fresh worker on the same branch."
+    },
+    {
+      "id": "OPR-07",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "grant one push at a time; a GO names the workflows the push triggers; only one heavy run at a time."
+    },
+    {
+      "id": "OPR-08",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`."
+    }
+  ]
+}

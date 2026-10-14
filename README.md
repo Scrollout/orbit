@@ -5,6 +5,8 @@
 
 # Orbit
 
+Version: 0.12.1 (see [CHANGELOG](CHANGELOG.md)).
+
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
 - **A team, not a single assistant**: an explorer, a designer, a tech lead, a security officer, a coder and two reviewers each do one job, so every change is thought through, built, then checked by someone fresh.
@@ -44,8 +46,51 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
 - `skills/operator`, `skills/peer`: coordinating per-task worker subagents or peer sessions (push queue, merge protocol, auto-compaction, no manual `/clear` or `/compact`).
+- `refs/decide/`, `skills/operator/refs/`: detail (tables, templates, per-step procedures) split out of the two long files; each core file keeps the numbered rules and the flow and says when to load each ref.
+- `scripts/`, `rules/`, `skills/MANIFEST.json`: the drift guard (see Drift guard below).
 - `hooks/operator-context.sh`: the operator's SessionStart hook (self-test: `sh hooks/operator-context.test.sh`).
 - `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
+
+## Drift guard
+Keeps the skills and the sessions from drifting. Zero dependencies (Node built-ins, Node 20+); `npm test` runs every test and check below plus the hook self-test. Commands and skills call the scripts as `node "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.mjs"` (scripts are plugin files, so always the plugin root; a skill's own refs use `${CLAUDE_SKILL_DIR}`); from a shell, run `node <orbit clone>/scripts/<name>.mjs`. Known limit: that variable expansion follows the official Claude Code docs but has not been verified live here.
+
+### Layout and rules
+- **Rule ids.** `/decide` (`DEC-01..`) and the `operator` skill (`OPR-01..`) each carry a numbered rule list, every rule tagged `script` (an orbit script checks it), `hook` (a hook or git check can enforce it; not built yet) or `judgment`. The prose and the refs explain the rules; the ids are stable. `rules/rules.json` registers them; a test checks each id appears once in its core and nowhere in a ref.
+- **Core plus refs.** A file over 10000 characters (about 2500 tokens) or 100 lines is split: the core keeps the rules and the flow, `refs/decide/` and `skills/operator/refs/` hold detail, loaded when the core's "load when" line says so. Pointers use `${CLAUDE_PLUGIN_ROOT}` (commands) and `${CLAUDE_SKILL_DIR}` (skills), which Claude Code substitutes; a test resolves every one. `node scripts/check-size.mjs` fails over the threshold and lists the largest files.
+- **Versions.** Each command and skill has `version:` in its frontmatter. `skills/MANIFEST.json` records version and a content hash for each core plus its refs, and one shared entry for `rules/*.json` and the scripts (versioned by `version` in `rules/rules.json`). `node scripts/manifest.mjs --check` fails on an edit without a version bump; after bumping, `--update` rewrites the manifest (it refuses an unbumped edit); `--print` lists hashes. Claude Code ignores unknown frontmatter keys. On other surfaces (claude.ai upload, the Skills API) unknown keys may be rejected: there the manifest is the source of truth, and the `version:` line can be stripped.
+- **Docs.** `node scripts/check-docs.mjs` checks that plugin.json, the CHANGELOG and the `Version:` line above agree and that links and referenced paths resolve.
+
+### Project profile block
+`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`, optional `standing_waivers` (review-waived classes such as `docs-only`; `merge_built.waived` must cite one or be `owner` with a reason) and optional `ledger_path` (default `.agents/ledger.jsonl`, untracked).
+- `node scripts/profile.mjs --root .` prints `profile gap: <field>` for each missing, empty, TODO, wrongly typed or out-of-enum field (exit 1), warns on duplicate keys, and never guesses. `--json` prints the parsed block.
+
+### Triage and track
+- `node scripts/decide-triage.mjs --root . --base <ref> --branch <ref> [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident]`
+- It lists `git diff --no-renames --name-only <base>...<branch>` (three dots: the branch's own changes; both paths of a rename), forces security yes when a path matches a profile glob, and prints the track, the per-role caps (`rules/tracks.json`, checked against the Track table) and the coder model (opus if any line is yes or the kind is incident). `--files a,b` triages planned paths before a branch exists. A line left unset is a `triage gap` (exit 2), even when a security glob forces security yes (the one-way-door question is separate); exit 64 is bad usage (an option-like ref is refused), 70 a git failure; `production_env: TODO` needs `prod=` on every run; an unfilled profile reports `profile gap`.
+
+### Session ledger and audit
+- Append events: `node scripts/ledger.mjs --ledger L.jsonl --session S <kind> key=value key:=<json> ...` (adds `ts` and `rule_version`). Replay: `node scripts/audit-ledger.mjs L.jsonl --profile .agents/project.md` prints violations by rule id (exit 1; also for an empty ledger or a profile gap).
+- One JSON object per line; common fields `ts` (ISO 8601 with offset, non-decreasing per session), `session`, `rule_version`, `kind`. `topic` must equal the branch name: fix-round and re-review tracking join `triage`, `agent_start` and `review_start` on it, and the audit prints a non-fatal `warn:` line for a `review_start` whose branch has no `triage` topic.
+
+| kind | fields |
+|---|---|
+| `triage` | `topic`, `sec`, `door`, `prod`, `track`, `files` (changed paths) |
+| `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
+| `ci_run` | `branch` (= topic; a run without it counts for no topic's phase default), `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
+| `review_start` | `branch`, `sha`, `ci_state`, `role` (`reviewer` or `re-reviewer`) |
+| `merge_built` | `branch`, `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
+| `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |
+| `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
+
+The audit covers the `script` rules: reviews only on green CI of every recorded workflow and never on a red one, no second review of a sha without a fix, one re-reviewer per fix round on a new sha, security glob matches sticky, caps (delivery reviewers excluded), coder and reviewer models, merge only for a reviewed branch (or an owner waiver) with tree equality and green catch-up CI, base push alone, by the profile's pusher and only for a built merge, issue close after that push with `origin/<base>` equal to the merge sha. The ledger is self-reported: it finds drift, it does not prove honesty.
+
+### Next steps (not built yet)
+- Hooks: block repo writes and `git commit|merge|push` in the operator session (OPR-01); check the trailer paragraph on the merge commit (DEC-08).
+- Golden scenarios: scripted ledgers and briefs with expected tracks and violations, run in `npm test`, so a skill edit that changes behaviour fails.
+- Cross-project diff: compare two profile blocks and flag the fields that differ.
+- Decision-record lint: parse the decision-record table for columns, verdict words and the three triage lines.
+- Condition ledger: `condition` events so every security condition has a proof test before the merge.
+- Ledger auto-capture: hooks append `agent_start` and `push` events so the ledger does not depend on the operator remembering.
 
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).

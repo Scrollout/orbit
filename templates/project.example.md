@@ -48,9 +48,23 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 `docs/decisions/` (index `docs/decisions/index.md`).
 
 ## Security
-- Sensitive paths: `internal/auth/`, `internal/payments/`, `migrations/`.
+- Sensitive paths: the `security_paths` globs of the machine profile below (single source).
 - Threat model: `docs/threat-model.md`.
 - Production-like environment: `prod` (payments, destructive operations) needs a policy check and an audit record.
+
+## Machine profile
+```yaml orbit-profile
+base_branch: develop
+security_paths: [internal/auth/, internal/payments/, migrations/, .github/workflows/, .github/dependabot.yml, .github/CODEOWNERS, SECURITY.md, ci/**]
+review_trailer: Reviewed-By
+labels: [bug, test, review, enhancement, security, deferred]
+issue_tracker: github
+base_pusher: owner
+ci_policy: ci-only
+production_env: prod
+standing_waivers: [docs-only]
+ledger_path: .agents/ledger.jsonl
+```
 
 ## Non-negotiable rules
 - Never log or commit secrets. No hardcoded URLs or hosts; use config. Never bypass git hooks.

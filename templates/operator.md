@@ -18,6 +18,7 @@ This session is the operator (skill `orbit:operator`). It reads state, starts ag
 - Push queue: <worker - branch - sha - triggered workflows>
 - Runs: <run id - workflow - branch - sha - status>
 - Owner commands handed over, not yet confirmed: <command - expected sha>
+- Restart recovery (per branch in the merge phase): <merge worktree path - expected merge SHA - state: built / pushed / confirmed>. A worker that died is replaced by a fresh worker on the same branch (OPR-06); re-read the merge worktree and `git rev-parse origin/<base>` before acting.
 
 ## Open owner decisions
 1. <question> - recommendation: <...>
