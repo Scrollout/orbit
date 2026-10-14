@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.12.4 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.13.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -13,11 +13,12 @@ Orbit gives one person working with Claude Code the habits of a small, careful s
 - **Decisions made the way good teams make them**: `/decide` sizes the process to the question. A small fix just gets done; anything touching security or hard-to-undo choices gets proposals, a security review and a sign-off, with a written record of why.
 - **Parallel work without session upkeep**: one operator coordinates and never edits; every chore runs in a fresh worker subagent on its own branch (or in a peer session you can watch), work stays in flight, the operator resumes on its own after a compaction or restart, and nothing reaches the shared branch without passing its checks.
 - **Lower cost**: cheaper models do the reading and routine building, and the strongest models are kept for judgment. Sessions message each other only when a decision is needed.
+- **Big goals planned before they are built**: the `intent` skill (AI-DLC's Inception step) asks one round of questions, writes a milestone plan of small units with proofs as an OKF doc, checks it with a script, and waits for one approval before any issue or build.
 - **Docs that stay small and current**: optional checks keep project docs short, indexed and updated alongside the code.
 - **Works in any project**: everything specific to a project lives in one profile file.
 
 ## Contents in brief
-Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), an `operator` main-session agent, the `/decide` PM command, and two skills for coordinating parallel work (`operator`, `peer`). Projects may opt in to pull requests per topic branch (`Pull requests: yes` in the profile); the merge stays a verified local `--no-ff` merge. A fresh worker starts every task; a worker is resumed only for its own open branch (profile `Worker reuse: fresh-per-task`, default; `resume-ok` opts out). Everything project-specific lives in a per-project profile.
+Personal Claude Code plugin: seven role agents (`explorer`, `designer`, `architect`, `security`, `coder`, `reviewer`, `re-reviewer`), an `operator` main-session agent, the `/decide` PM command, two skills for coordinating parallel work (`operator`, `peer`), the `intent` skill that plans a big goal as a milestone of small units, and the `okf` docs skill. Projects may opt in to pull requests per topic branch (`Pull requests: yes` in the profile); the merge stays a verified local `--no-ff` merge. A fresh worker starts every task; a worker is resumed only for its own open branch (profile `Worker reuse: fresh-per-task`, default; `resume-ok` opts out). Everything project-specific lives in a per-project profile.
 
 ## Install
 Clone it once (the templates used in "Adopt in a project" come from the clone):
@@ -45,6 +46,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
+- `skills/intent`: plans a goal too big for one session as an approved milestone of small units (see Intent below).
 - `skills/operator`, `skills/peer`: coordinating per-task worker subagents or peer sessions (push queue, merge protocol, auto-compaction, no manual `/clear` or `/compact`).
 - `refs/decide/`, `skills/operator/refs/`: detail (tables, templates, per-step procedures) split out of the two long files; each core file keeps the numbered rules and the flow and says when to load each ref.
 - `scripts/`, `rules/`, `skills/MANIFEST.json`: the drift guard (see Drift guard below).
@@ -113,6 +115,13 @@ Optional docs automation for projects that keep docs as an [Open Knowledge Forma
 - `/orbit:okf-init` scaffolds the bundle (index, log, constitution, doc rules, a `roadmap/` folder with the milestones and the M1 plan, AGENTS.md/CLAUDE.md pointers, `.agents/okf.json`) and never overwrites.
 - `node ~/orbit/scripts/validate-okf.mjs --root .` lints it against the OKF v0.2 spec (`type`, reserved `index.md` and `log.md`, the trust and provenance fields: `generated.by`, `verified` entries with `by` and `at`, `sources` entries with a `resource`, timestamps with a UTC offset) plus the stricter doc rules of skill `okf`; `warn:` lines (exit 0) flag an actor off the spec's convention, a human-verified `draft`, and an index line without the doc's description. Tests: `scripts/okf.test.mjs` (zero dependencies; settings from flags or `.agents/okf.json`; defaults: bundle `docs/okf`, 4000 chars per doc, AGENTS.md at most 80 lines, pointer files CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, .cursor/rules/agents.mdc). Skill `okf` has the rules.
 - `hooks/hooks.json` also runs the validator after Write/Edit under the bundle (silent without node or a bundle). `templates/githooks/pre-commit` is a commit-time snippet.
+
+## Intent
+The `intent` skill borrows one step from AWS's AI-DLC, Inception: a goal becomes small, approved units before anything is built. The rest of AI-DLC (mob rituals, 33 stages, an operations phase, gates at every stage) is not adopted: `/decide` and the operator already size the process to the risk.
+- Triggers on its own when the owner states a goal that needs several sessions or branches (or run `/orbit:intent`); a goal that fits one session goes straight to `/decide`.
+- One question round, then a plan doc `roadmap/m<n>.md` in the OKF bundle: intent, exit tests, steps (`Step | Builds | Files | Proof | Depends | Hint`), carried issues. It is `stable` and `verified` by the owner once approved.
+- `node ~/orbit/scripts/intent-plan.mjs --root . --plan <file|->` checks it before approval (zero dependencies, no model): the OKF per-doc rules (`scripts/okf-lib.mjs`, shared with validate-okf), the plan rules, sec=yes forced from the profile's `security_paths`, dispatch waves with no two steps touching the same paths, and the steps that go to `/decide` first. Exit 0 ok, 1 profile gap (`security_paths` only), 2 plan gap. Tests: `scripts/intent-plan.test.mjs`.
+- Agents reused, none added: an optional light review by `designer` (reviewer role, on request), `/decide` only for a one-way-door goal, and the usual `/decide` per unit when it is built.
 
 ## Agents sync
 Instead of vendoring agent copies into `.claude/` (and keeping them in sync), install this plugin: the agents, command and skills load in every project. A project may still vendor its own copies in `.claude/agents`.

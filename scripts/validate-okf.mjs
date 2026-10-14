@@ -13,6 +13,7 @@
 // (SPEC §8, a SHOULD; case and a trailing period ignored).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { checkDoc, frontmatter } from "./okf-lib.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -55,194 +56,6 @@ const walk = (dir) =>
     return statSync(p).isDirectory() ? walk(p) : [p];
   });
 
-// Top-level keys of a YAML frontmatter block; values are only needed as strings here.
-function frontmatter(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---\n/);
-  if (!m) return null;
-  const out = {};
-  for (const line of m[1].split("\n")) {
-    const kv = line.match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-    if (kv) out[kv[1]] = kv[2].replace(/^["']|["']$/g, "");
-  }
-  return out;
-}
-
-// Every timestamp key (generated.at, verified.at, stale_after, sources[].last_modified) is an ISO 8601 datetime
-// with an explicit UTC offset; usage_window's from and to are checked in checkTrust.
-const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-function checkTimestamps(file, block) {
-  for (const m of block.matchAll(/(?:^|[\s{,])(at|stale_after|last_modified):\s*["']?([^,}"'\s]+)/gm)) {
-    if (!DATETIME.test(m[2])) fail(file, `${m[1]} '${m[2]}' is not an ISO 8601 datetime with a UTC offset`);
-  }
-}
-
-// A plain (unquoted) YAML value may not hold ': ' or ' #': YAML reads them as a nested key or a comment. Quote such values.
-function checkPlainScalars(file, block) {
-  for (const line of block.split("\n")) {
-    const kv = line.match(/^\s*(?:-\s+)?[A-Za-z_][\w-]*:\s+(.+)$/);
-    if (kv && !/^["'[{|>&*!]/.test(kv[1]) && /: | #/.test(kv[1])) fail(file, `quote the value of '${line.trim()}' (': ' or ' #' in a plain YAML value)`);
-  }
-}
-
-// A small YAML reader for the frontmatter (zero dependencies): block mappings and sequences nested by indentation,
-// flow mappings and sequences (`{ k: v }`, `[a, b]`, nested), quoted and plain scalars, block scalars (`|`, `>`),
-// comments and blank lines. It never throws; what it cannot read stays a string. Enough for OKF's fields.
-const unquote = (s) => {
-  s = s.trim();
-  if (/^".*"$/s.test(s)) return s.slice(1, -1).replace(/\\"/g, '"');
-  if (/^'.*'$/s.test(s)) return s.slice(1, -1).replace(/''/g, "'");
-  return s;
-};
-const stripComment = (s) => {
-  let q = null;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (q) { if (c === q) q = null; }
-    else if (c === '"' || c === "'") { if (i === 0 || /[\s[{,:]/.test(s[i - 1])) q = c; }
-    else if (c === "#" && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i);
-  }
-  return s;
-};
-function parseFlow(s) {
-  let i = 0;
-  const ws = () => { while (i < s.length && /\s/.test(s[i])) i++; };
-  const scalar = (stops) => {
-    ws();
-    if (s[i] === '"' || s[i] === "'") {
-      const q = s[i++]; let out = "";
-      while (i < s.length) {
-        if (s[i] === q && q === "'" && s[i + 1] === "'") { out += "'"; i += 2; continue; }
-        if (s[i] === "\\" && q === '"') { out += s[i + 1] ?? ""; i += 2; continue; }
-        if (s[i] === q) { i++; break; }
-        out += s[i++];
-      }
-      return out;
-    }
-    let out = "";
-    while (i < s.length && !stops.includes(s[i]) && !(s[i] === ":" && /\s/.test(s[i + 1] ?? " ") && stops.includes(":"))) out += s[i++];
-    return out.trim();
-  };
-  const value = (stops) => {
-    ws();
-    if (s[i] === "{") {
-      i++; const m = {};
-      for (ws(); i < s.length && s[i] !== "}"; ws()) {
-        const k = scalar([":", ",", "}"]); ws();
-        if (s[i] === ":") { i++; m[k] = value([",", "}"]); } else m[k] = "";
-        ws(); if (s[i] === ",") i++;
-      }
-      i++; return m;
-    }
-    if (s[i] === "[") {
-      i++; const a = [];
-      for (ws(); i < s.length && s[i] !== "]"; ws()) { a.push(value([",", "]"])); ws(); if (s[i] === ",") i++; }
-      i++; return a;
-    }
-    return scalar(stops);
-  };
-  const v = value([]);
-  ws();
-  return i >= s.length ? v : unquote(s);
-}
-const scalarValue = (s) => (/^\s*[[{]/.test(s) ? parseFlow(s.trim()) : unquote(s));
-function parseYaml(block) {
-  const raw = block.split("\n");
-  const L = [];
-  for (let r = 0; r < raw.length; r++) {
-    const text = stripComment(raw[r]).replace(/\s+$/, "");
-    if (text.trim()) L.push({ ind: text.length - text.trimStart().length, text: text.trimStart(), r });
-  }
-  const isItem = (l) => /^-(\s|$)/.test(l.text);
-  const keyLine = (t) => t.match(/^("[^"]*"|'[^']*'|[^\s"'#][^:]*?)\s*:(?:\s+(.*))?$/);
-  let i = 0;
-  // A block scalar after `key: |` or `key: >` takes every following raw line indented deeper than `ind`.
-  const blockScalar = (ind, style) => {
-    const parts = [];
-    while (i < L.length && L[i].ind > ind) parts.push(raw[L[i++].r].trim());
-    return parts.join(style.startsWith(">") ? " " : "\n");
-  };
-  const block_ = (ind) => (i < L.length && isItem(L[i]) && L[i].ind === ind ? seq(ind) : map(ind));
-  function map(ind) {
-    const m = {};
-    while (i < L.length && L[i].ind === ind && !isItem(L[i])) {
-      const kv = keyLine(L[i].text);
-      if (!kv) { i++; continue; }
-      const key = unquote(kv[1]), rest = kv[2] ?? "";
-      i++;
-      if (/^[|>][-+]?\d*$/.test(rest)) m[key] = blockScalar(ind, rest);
-      else if (rest) m[key] = scalarValue(rest);
-      else if (i < L.length && (L[i].ind > ind || (L[i].ind === ind && isItem(L[i])))) m[key] = block_(L[i].ind);
-      else m[key] = "";
-    }
-    return m;
-  }
-  function seq(ind) {
-    const a = [];
-    while (i < L.length && L[i].ind === ind && isItem(L[i])) {
-      const content = L[i].text.replace(/^-\s*/, "");
-      if (!content) { i++; a.push(i < L.length && L[i].ind > ind ? block_(L[i].ind) : ""); continue; }
-      if (!/^[[{"']/.test(content) && keyLine(content)) {
-        // `- k: v` opens a mapping whose keys sit at the column of `k`.
-        L[i] = { ...L[i], ind: ind + L[i].text.length - content.length, text: content };
-        a.push(map(L[i].ind));
-      } else { a.push(scalarValue(content)); i++; }
-    }
-    return a;
-  }
-  const out = i < L.length ? block_(L[0].ind) : {};
-  return out && typeof out === "object" && !Array.isArray(out) ? out : {};
-}
-
-// OKF v0.2 trust and provenance (SPEC §5): `generated` needs `by`; every `verified` entry (a list, or a bare
-// mapping read as a one-element list) needs `by` and `at`; every `sources` entry needs a `resource`; usage_window
-// bounds are datetimes. Warnings only: an actor off the §7 convention (generated.by and verified.by; never a
-// source's `author`, which may be e.g. `team:x`), and a human-verified doc that still says `status: draft`
-// (§5.4: not yet reviewed).
-const ACTOR = /^(human:\S+|process:\S+|[^\s:/]+\/\S+)$/;
-const isMap = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-function checkTrust(file, block, status) {
-  const f = parseYaml(block);
-  if ("generated" in f) {
-    if (!isMap(f.generated) || !f.generated.by) fail(file, "generated needs `by` (an actor)");
-    else if (!ACTOR.test(f.generated.by)) warn(file, `generated.by '${f.generated.by}' does not follow the actor convention (<producer>/<version>, human:<id> or process:<id>)`);
-  }
-  if ("verified" in f) {
-    const list = Array.isArray(f.verified) ? f.verified : [f.verified];
-    if (!list.length) fail(file, "verified is empty");
-    for (const v of list) {
-      if (!isMap(v) || !v.by || !v.at) fail(file, "each verified entry needs `by` and `at`");
-      else if (!ACTOR.test(v.by)) warn(file, `verified.by '${v.by}' does not follow the actor convention (<producer>/<version>, human:<id> or process:<id>)`);
-    }
-    if (status === "draft" && list.some((v) => isMap(v) && /^human:/.test(v.by ?? ""))) warn(file, "status draft means not yet reviewed, but a human verified it; set status stable");
-  }
-  const windows = [f.usage_window];
-  if ("sources" in f) {
-    if (!Array.isArray(f.sources)) fail(file, "sources must be a list");
-    else f.sources.forEach((s, i) => {
-      if (!isMap(s) || !s.resource) fail(file, `sources entry ${(isMap(s) && s.id) || i + 1} needs a resource`);
-      if (isMap(s)) windows.push(s.usage_window);
-    });
-  }
-  for (const w of windows.filter((w) => w !== undefined)) {
-    if (!isMap(w)) { fail(file, "usage_window needs { from, to }"); continue; }
-    for (const k of ["from", "to"]) if (!DATETIME.test(w[k] ?? "")) fail(file, `usage_window.${k} '${w[k] ?? ""}' is not an ISO 8601 datetime with a UTC offset`);
-  }
-}
-
-// Footnotes join on sources[].id: each one cited has a definition and a source, and each source is cited.
-function checkFootnotes(file, block, body) {
-  const sources = parseYaml(block).sources;
-  const ids = new Set((Array.isArray(sources) ? sources : []).filter((s) => isMap(s) && s.id).map((s) => s.id));
-  const prose = body.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
-  const defs = new Set([...prose.matchAll(/^\[\^([^\]]+)\]:/gm)].map((m) => m[1]));
-  const refs = new Set([...prose.replace(/^\[\^[^\]]+\]:/gm, "").matchAll(/\[\^([^\]]+)\]/g)].map((m) => m[1]));
-  for (const r of refs) {
-    if (!defs.has(r)) fail(file, `footnote [^${r}] has no definition`);
-    if (!ids.has(r)) fail(file, `footnote [^${r}] matches no sources id`);
-  }
-  for (const id of ids) if (!refs.has(id)) fail(file, `source '${id}' is never cited`);
-}
-
 // Links in prose (not in code) must resolve; bundle-relative links start at docs/okf.
 function checkLinks(file, text) {
   const prose = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
@@ -284,29 +97,16 @@ for (const file of files) {
     continue;
   }
 
-  const fm = frontmatter(text);
-  if (!fm) {
-    fail(file, "missing frontmatter");
-    continue;
-  }
-  const block = text.match(/^---\n([\s\S]*?)\n---\n/)[1];
-  checkTimestamps(file, block);
-  checkPlainScalars(file, block);
-  checkFootnotes(file, block, text.slice(block.length + 8));
-  checkTrust(file, block, fm.status);
-  for (const key of ["type", "title", "description"]) {
-    if (!fm[key]?.trim()) fail(file, `frontmatter needs a non-empty '${key}'`);
-  }
-  if (fm.status && !["draft", "stable", "deprecated"].includes(fm.status)) fail(file, `status '${fm.status}' is not draft, stable or deprecated`);
-  if (!/^\*\*TL;DR:\*\*/m.test(text)) fail(file, "missing a '**TL;DR:**' line");
-  if (text.length > MAX_DOC_CHARS) fail(file, `${text.length} chars exceeds ${MAX_DOC_CHARS}; split it`);
+  const doc = checkDoc(text, { maxChars: MAX_DOC_CHARS });
+  for (const m of doc.errors) fail(file, m);
+  for (const m of doc.warnings) warn(file, m);
+  if (!doc.fm) continue;
 
   const index = join(dirname(file), "index.md");
   if (!existsSync(index)) fail(file, "its folder has no index.md");
   else {
     const line = readFileSync(index, "utf8").split("\n").find((l) => l.includes(`(${name})`));
-    const parsed = parseYaml(block).description;
-    const desc = (typeof parsed === "string" ? parsed : fm.description ?? "").trim().replace(/\.$/, "").toLowerCase();
+    const desc = doc.description.replace(/\.$/, "").toLowerCase();
     if (!line) fail(file, `not listed in ${relative(ROOT, index)}`);
     else if (desc && !line.toLowerCase().includes(desc)) warn(file, `its line in ${relative(ROOT, index)} does not carry its description verbatim`);
   }
