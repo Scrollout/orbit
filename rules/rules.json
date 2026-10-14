@@ -16,7 +16,7 @@
       "id": "DEC-03",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "pick the track from the triage lines and stay within its call caps (per role and total); a call beyond a cap needs its reason written first and in **Cost**."
+      "text": "pick the track from the triage lines and record the triage before any call, and stay within the track's call caps (per role and total; delivery reviewers are outside the design caps); a call beyond a cap needs its reason written first and in **Cost**."
     },
     {
       "id": "DEC-04",
@@ -107,6 +107,12 @@
       "file": "commands/decide.md",
       "tag": "judgment",
       "text": "CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol."
+    },
+    {
+      "id": "DEC-20",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review."
     },
     {
       "id": "DEC-19",

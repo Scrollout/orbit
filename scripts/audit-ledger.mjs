@@ -1,10 +1,15 @@
 // Replays a session ledger against the `script`-tagged rules and prints violations by rule id. Zero dependencies.
 //   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md]
-// Exit 1 on any violation, invalid line or profile gap. Event kinds (fields beyond ts, session, rule_version, kind):
-//   triage{topic,sec,door,prod,track,files?}  agent_start{role,model,topic,phase?,fix_scope?,cap_reason?}
-//   ci_run{sha,state}  review_start{branch,sha,ci_state}  merge_built{merge_sha,tree_equal,ci_state}
-//   push{ref,chained}  issue_close{n,origin_base_sha,merge_sha}
-// The ledger is self-reported by the operator; the audit finds drift, it does not prove honesty.
+// Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
+// non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
+//   triage{topic,sec,door,prod,track,files?}   topic is the branch name
+//   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?}   phase: design | build | fix | delivery
+//   ci_run{sha,workflow?,state|conclusion}     green = state green or conclusion success
+//   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
+//   merge_built{branch,merge_sha,tree_equal,ci_state,waived?}
+//   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
+//   issue_close{n,origin_base_sha,merge_sha}
+// The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,17 +21,23 @@ const file = args.find((a, i) => !a.startsWith("--") && !(i > 0 && args[i - 1].s
 if (!file) { console.error("usage: audit-ledger.mjs <ledger.jsonl> [--root .] [--profile path]"); process.exit(64); }
 
 const { data: profile } = loadProfile(flag("root") ?? ".", flag("profile"));
-const pg = gaps(profile).filter((g) => ["base_branch", "security_paths"].includes(g));
+const pg = gaps(profile).filter((g) => ["base_branch", "security_paths", "base_pusher"].includes(g));
 if (pg.length) { for (const g of pg) console.log(`profile gap: ${g}`); process.exit(1); }
 const base = profile.base_branch;
 const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "rules", "tracks.json"), "utf8"));
 
 const violations = [];
-const v = (id, n, msg) => violations.push(`${id} line ${n}: ${msg}`);
+const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
 const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close"];
-const triage = {}, greens = new Set(), counts = {}, versions = new Set();
-let n = 0, events = 0;
-const norm = (r) => String(r).replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+const short = (s) => String(s).slice(0, 8);
+const norm = (r) => String(r).split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+const isGreen = (e) => e.state === "green" || e.conclusion === "success";
+const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
+
+const triage = {}, sticky = {}, counts = {}, ci = {}, versions = new Set(), lastTs = {};
+const branchState = {};           // per branch: reviewed shas, fixSince, reReviews since the last fix
+const merges = {}, basePushes = new Set();
+let n = 0, events = 0, sawCi = false;
 
 for (const raw of readFileSync(file, "utf8").split("\n")) {
   n++;
@@ -35,46 +46,96 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   try { e = JSON.parse(raw); } catch { v("LEDGER", n, "invalid JSON"); continue; }
   if (!KINDS.includes(e.kind)) { v("LEDGER", n, `unknown kind ${e.kind}`); continue; }
   events++;
+  const t = Date.parse(e.ts);
+  if (typeof e.ts !== "string" || !/^\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:\d\d)$/.test(e.ts) || Number.isNaN(t)) v("LEDGER", n, "ts missing or not ISO 8601 with a UTC offset");
+  else {
+    if (lastTs[e.session] > t) v("LEDGER", n, `ts goes backwards in session ${e.session}`);
+    lastTs[e.session] = t;
+  }
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
+  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false });
+
   switch (e.kind) {
     case "triage": {
-      triage[e.topic] = e;
-      if (Array.isArray(e.files) && e.sec !== "yes" && e.files.some((f) => matchesAny(f, profile.security_paths))) v("DEC-02", n, `topic ${e.topic} touches a security path but triage says security ${e.sec}`);
+      const forced = Array.isArray(e.files) && e.files.some((f) => matchesAny(f, profile.security_paths));
+      if (forced && e.sec !== "yes") v("DEC-02", n, `topic ${e.topic} touches a security path but triage says security ${e.sec}`);
+      if (sticky[e.topic] && e.sec !== "yes") v("DEC-02", n, `topic ${e.topic}: security was yes and a later triage says ${e.sec}`);
+      if (e.sec === "yes" || forced) sticky[e.topic] = true;
+      if (!T.tracks[e.track]) v("LEDGER", n, `unknown track ${e.track}`);
+      triage[e.topic] = { ...e, sec: sticky[e.topic] ? "yes" : e.sec };
       break;
     }
     case "agent_start": {
-      const t = triage[e.topic];
-      if (e.role === "coder" && t && [t.sec, t.door, t.prod].includes("yes") && e.model !== "opus" && !(e.phase === "fix" && e.fix_scope === "tests-docs"))
-        v("DEC-04", n, `coder on ${e.model} for ${e.topic} with a triage line yes (needs opus)`);
-      if (T.roles.includes(e.role) && !e.cap_reason && !e.outside_cap) {
+      const tr = triage[e.topic];
+      if (!tr) v("DEC-03", n, `${e.role} started on ${e.topic} with no triage event before it`);
+      if (e.role === "coder") {
+        if (e.phase === "fix") { bs(e.topic).fixSince = true; bs(e.topic).reReviews = 0; }
+        if (tr && [tr.sec, tr.door, tr.prod].includes("yes") && e.model !== "opus" && !(e.phase === "fix" && e.fix_scope === "tests-docs"))
+          v("DEC-04", n, `coder on ${e.model} for ${e.topic} with a triage line yes (needs opus)`);
+      }
+      if (e.role === "reviewer" && e.model !== "opus") v("DEC-19", n, `reviewer on ${e.model}, needs opus`);
+      if (e.role === "re-reviewer" && e.model !== "opus" && !(e.model === "sonnet" && e.fix_scope === "tests-docs")) v("DEC-19", n, `re-reviewer on ${e.model} (sonnet only for a tests-or-docs-only fix round)`);
+      const phase = e.phase ?? (e.role === "reviewer" ? (sawCi ? "delivery" : "design") : undefined);
+      const delivery = e.role === "reviewer" && phase === "delivery";
+      if (T.roles.includes(e.role) && !delivery && !e.cap_reason && !e.outside_cap) {
         const c = (counts[e.topic] ??= { total: 0 });
         c[e.role] = (c[e.role] ?? 0) + 1;
         c.total++;
-        const caps = t && T.tracks[t.track];
-        if (caps && (c[e.role] > caps[e.role][1] || c.total > caps.max)) v("DEC-03", n, `${e.topic}: ${e.role} call ${c[e.role]}, total ${c.total} exceeds the ${t.track} caps without a cap_reason`);
+        const caps = tr && T.tracks[tr.track];
+        if (caps && (c[e.role] > caps[e.role][1] || c.total > caps.max)) v("DEC-03", n, `${e.topic}: ${e.role} call ${c[e.role]}, total ${c.total} exceeds the ${tr.track} caps without a cap_reason`);
       }
       break;
     }
-    case "ci_run": if (e.state === "green") greens.add(e.sha); break;
-    case "review_start":
-      if (e.ci_state !== "green" || !greens.has(e.sha)) v("DEC-01", n, `review of ${e.branch}@${String(e.sha).slice(0, 8)} started without a recorded green CI run (ci_state ${e.ci_state})`);
+    case "ci_run": {
+      sawCi = true;
+      ((ci[e.sha] ??= {})[e.workflow ?? "default"] = isGreen(e) ? "green" : isRed(e) ? "red" : "pending");
       break;
-    case "merge_built":
-      for (const id of ["DEC-05", "OPR-02"]) {
-        if (e.tree_equal !== true) v(id, n, `merge ${String(e.merge_sha).slice(0, 8)}: merged tree not equal to the green tree`);
-        if (e.ci_state !== "green") v(id, n, `merge ${String(e.merge_sha).slice(0, 8)}: CI on the merge commit is ${e.ci_state}, not green`);
+    }
+    case "review_start": {
+      const runs = Object.values(ci[e.sha] ?? {});
+      const red = runs.includes("red");
+      const green = runs.length > 0 && runs.every((s) => s === "green");
+      if (e.ci_state !== "green" || !green) v("DEC-01", n, `review of ${e.branch}@${short(e.sha)} started without green CI on every recorded workflow (ci_state ${e.ci_state})`);
+      if (red || e.ci_state === "red") v("DEC-16", n, `review of ${e.branch}@${short(e.sha)} started on a red CI run`);
+      const b = bs(e.branch), role = e.role ?? "reviewer";
+      b.reviewed_any = true;
+      if (role === "re-reviewer") {
+        if (!b.fixSince) v("DEC-14", n, `re-reviewer on ${e.branch} with no fix round since the last review`);
+        if (++b.reReviews > 1) v("DEC-14", n, `re-reviewer ran more than once on ${e.branch} for one fix round`);
       }
+      if (b.fixSince && e.sha === b.lastSha) v("DEC-14", n, `fix-round review on ${e.branch} used the old sha ${short(e.sha)}`);
+      else if (!b.fixSince && b.reviewed.has(e.sha) && role !== "re-reviewer") v("DEC-14", n, `${e.branch}@${short(e.sha)} reviewed twice without a fix in between`);
+      b.reviewed.add(e.sha); b.lastSha = e.sha; b.fixSince = false;
       break;
-    case "push":
-      if (norm(e.ref) === base && e.chained !== false) for (const id of ["DEC-06", "OPR-03"]) v(id, n, `base ${base} pushed chained after another command`);
+    }
+    case "merge_built": {
+      for (const id of ["DEC-05", "OPR-02"]) {
+        if (e.tree_equal !== true) v(id, n, `merge ${short(e.merge_sha)}: merged tree not equal to the branch tree`);
+        if (e.ci_state !== "green") v(id, n, `merge ${short(e.merge_sha)}: CI on the catch-up merge commit is ${e.ci_state}, not green`);
+      }
+      if (!bs(e.branch).reviewed_any && e.waived !== true) v("DEC-20", n, `merge of ${e.branch} with no review_start on it and no owner waiver`);
+      merges[e.merge_sha] = e;
       break;
-    case "issue_close":
-      if (e.origin_base_sha !== e.merge_sha) for (const id of ["DEC-07", "OPR-04"]) v(id, n, `issue #${e.n} closed while origin/${base} (${String(e.origin_base_sha).slice(0, 8)}) is not the merge sha (${String(e.merge_sha).slice(0, 8)})`);
+    }
+    case "push": {
+      if (norm(e.ref) !== base) break;
+      if (e.chained !== false) v(["DEC-06", "OPR-03"], n, `base ${base} pushed chained after another command`);
+      if (e.by !== profile.base_pusher) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
+      if (!merges[e.sha]) v(["DEC-06", "OPR-03"], n, `base ${base} pushed at ${short(e.sha)} with no merge_built for that sha before it`);
+      basePushes.add(e.sha);
       break;
+    }
+    case "issue_close": {
+      if (!merges[e.merge_sha]) v(["DEC-07", "OPR-04"], n, `issue #${e.n} closed for ${short(e.merge_sha)}, which no merge_built built`);
+      if (!basePushes.has(e.merge_sha)) v(["DEC-07", "OPR-04"], n, `issue #${e.n} closed before a base push of ${short(e.merge_sha)}`);
+      if (e.origin_base_sha !== e.merge_sha) v(["DEC-07", "OPR-04"], n, `issue #${e.n} closed while origin/${base} (${short(e.origin_base_sha)}) is not the merge sha (${short(e.merge_sha)})`);
+      break;
+    }
   }
 }
+if (!events && !violations.length) v("LEDGER", 1, "empty ledger");
 if (violations.length) {
-  for (const x of violations.sort()) console.log(x);
+  for (const x of violations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : a.n - b.n))) console.log(x.line);
   process.exit(1);
 }
 console.log(`audit ok: ${events} events, rule versions: ${[...versions].join(" | ") || "none recorded"}`);

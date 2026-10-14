@@ -1,7 +1,7 @@
 ---
 description: Act as project manager and run a decision the way a team does - triage, discovery, proposals, design review, sign-off, decision record, delivery - with only the people the question needs
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.1.1
+version: 1.2.1
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
@@ -12,7 +12,7 @@ Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scrip
 ## Rules
 - DEC-01 `script`: no review before the branch's first green CI run; a fresh `reviewer` starts only on a pushed head SHA whose triggered runs are all green.
 - DEC-02 `script`: a branch whose `git diff --name-only <base>...<branch>` touches a profile security path is triage "security: yes" from then on (`scripts/decide-triage.mjs`).
-- DEC-03 `script`: pick the track from the triage lines and stay within its call caps (per role and total); a call beyond a cap needs its reason written first and in **Cost**.
+- DEC-03 `script`: pick the track from the triage lines and record the triage before any call, and stay within the track's call caps (per role and total; delivery reviewers are outside the design caps); a call beyond a cap needs its reason written first and in **Cost**.
 - DEC-04 `script`: `coder` runs on Sonnet; override to `opus` when any triage line is yes, for the first build and for a fix round that changes a security path's behaviour (a tests-or-docs-only fix round stays on Sonnet).
 - DEC-05 `script`: merge only after green CI on the catch-up merge commit on the topic branch (the base merged into it); build the `--no-ff` merge only after that run is green, and check the merged tree equals the branch tree (`git rev-parse HEAD^{tree} <branch>^{tree}`).
 - DEC-06 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names.
@@ -28,6 +28,7 @@ Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scrip
 - DEC-16 `script`: never send a branch with a red or failed CI run to review; a failure gets a `test` issue and goes back to the same coder.
 - DEC-17 `judgment`: every finding, red run and carried item becomes an issue in the profile's tracker with a type label; a commit says `Fixes #n` only when it fully closes the issue, else `Refs #n`.
 - DEC-18 `judgment`: CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol.
+- DEC-20 `script`: build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review.
 - DEC-19 `script`: reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus.
 
 ## Flow
