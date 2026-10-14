@@ -1,15 +1,15 @@
 ---
 name: okf
 description: Write, index, log and validate project docs as an OKF v0.2 bundle (small docs, frontmatter, TL;DR, indexes, change log). Use when adding or editing docs under the project's bundle, when a docs check fails, or when deciding whether to split a doc.
-version: 1.0.1
+version: 1.0.2
 ---
 Read the project profile (.agents/project.md) for the bundle path and any project additions; the defaults are `docs/okf` and the settings in `.agents/okf.json` (keys `bundle`, `maxDocChars`, `maxAgentsLines`, `agentsFile`, `pointerFiles`, `maxPointerLines`, `okfVersion`). A bundle's own `constitution/doc-rules.md` wins over this skill.
 
 ## Rules
-- **Frontmatter** on every doc except `index.md` and `log.md`: `type`, `title`, `description` (required); `tags`, `status` (`draft`|`stable`|`deprecated`), `generated: { by, at }`. Volatile external facts add `stale_after` and `sources` (`- id:`, `resource:`); a checked doc adds `verified: { by: human:<id>, at }`.
+- **Frontmatter** on every doc except `index.md` and `log.md`: `type`, `title`, `description` (required); `tags`, `status` (`draft`|`stable`|`deprecated`), `generated: { by, at }` (`by` required). Volatile external facts add `stale_after` and `sources` (a list; each entry needs `resource`, plus the `id` it is cited by; optional `last_modified`, and `usage_window: { from, to }`); a checked doc adds `verified: { by: human:<id>, at }` (one mapping or a list, each entry with `by` and `at`). `draft` means not yet reviewed: a doc a human verified is `stable`.
 - **Actors**: `<tool>/<model>` for an assistant, `human:<id>`, `process:<id>`.
 - **Body** starts with `**TL;DR:** ...`; lists, headings, tables over prose. Target under 400 tokens, hard cap 4000 characters.
-- **Index**: each doc is listed in its folder's `index.md` as `* [Title](file.md) - description. Load when ...`; each folder index is listed in its parent's (`(folder/index.md)`). Only the root index has frontmatter, and only `okf_version: "0.2"`.
+- **Index**: each doc is listed in its folder's `index.md` as `* [Title](file.md) - description. Load when ...`, the description as in its frontmatter; each folder index is listed in its parent's (`(folder/index.md)`). Only the root index has frontmatter, and only `okf_version: "0.2"`.
 - **Links** bundle-relative (`/area/x.md`) or relative, and they must resolve. Link, never copy.
 - **Timestamps** ISO 8601 with a UTC offset (`2027-04-04T00:00:00Z`), never a bare date.
 - **Citations**: `[^id]` in the text, `[^id]: title` at the end, keyed by `sources[].id`; every source is cited and every footnote has a source.
