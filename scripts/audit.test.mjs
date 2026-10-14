@@ -294,3 +294,22 @@ test("a resumed coder cannot change model; ci-failed-twice needs opus", () => {
   const h = [g[0], ev("agent_start", { role: "coder", model: "sonnet", topic: "t", phase: "fix", reason: "ci-failed-twice" })];
   assert.match(run(h).stdout, /^DEC-04 .*CI failed twice/m);
 });
+
+test("merge_built needs branch, with a clear message", () => {
+  const e = clean();
+  delete e[6].branch;
+  const r = run(e);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^LEDGER line 7: merge_built needs branch/m);
+  assert.doesNotMatch(r.stdout, /undefined/);
+});
+
+test("a worker id derives 'resumed': same worker, later coder event, other model is a DEC-04 violation", () => {
+  const g = (second, extra = {}) => [ev("triage", { topic: "t", sec: "no", door: "no", prod: "no", track: "just do it", files: [] }),
+    ev("agent_start", { role: "coder", model: "sonnet", topic: "t", phase: "build", worker: "w1" }),
+    ev("agent_start", { role: "coder", model: second, topic: "t", phase: "fix", ...extra })];
+  assert.match(run(g("opus", { worker: "w1" })).stdout, /^DEC-04 .*worker w1/m);
+  assert.equal(run(g("opus", { worker: "w2" })).status, 0, "a different worker is a fresh coder");
+  assert.equal(run(g("opus")).status, 0, "no worker id on the later event: not derivable");
+  assert.equal(run(g("sonnet", { worker: "w1" })).status, 0, "same model is fine");
+});

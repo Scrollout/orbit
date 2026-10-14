@@ -75,10 +75,10 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 | kind | fields |
 |---|---|
 | `triage` | `topic`, `sec`, `door`, `prod`, `track`, `files` (changed paths) |
-| `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
+| `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `worker` (an id for the worker session: a later coder event with the same id and another model is a violation even without `resumed`; a fresh coder gets a new id), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
 | `ci_run` | `branch` (= topic; a run without it counts for no topic's phase default), `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
 | `review_start` | `branch`, `sha`, `ci_state`, `role` (`reviewer` or `re-reviewer`) |
-| `merge_built` | `branch`, `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
+| `merge_built` | `branch` (required), `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
 | `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |
 | `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
 

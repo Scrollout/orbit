@@ -2,6 +2,7 @@
 //   node <plugin>/scripts/profile.mjs [--root .] [--profile .agents/project.md] [--json]
 // The block is a fenced code block whose info string is `yaml orbit-profile` (templates/project.md).
 // Subset of YAML: `key: value`, `key: [a, b]`, or `key:` followed by `- item` lines (indented or at column 0); `#` starts a comment.
+// A security_paths entry that is empty, `/`, `./` or `.` has no segment and would match every file: it is a gap.
 // Output: one `profile gap: <field>` line per missing, empty or TODO field; exit 1 if any. --json prints the parsed block.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -88,7 +89,8 @@ export function gaps(data) {
     const missing = v === undefined;
     const empty = missing || (spec.list && !Array.isArray(v)) || (Array.isArray(v) ? (v.length === 0 && spec.required) || v.some(isTodo) : v === "" || isTodo(v));
     if (missing && !spec.required) continue;
-    if (empty || (spec.enum && !spec.enum.includes(v))) out.push(name);
+    const matchAll = name === "security_paths" && Array.isArray(v) && v.some((x) => !String(x).replace(/^\.?\//, "").replace(/^\.$/, "").trim());
+    if (empty || matchAll || (spec.enum && !spec.enum.includes(v))) out.push(name);
   }
   return out;
 }
