@@ -45,12 +45,13 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.0.0",
-      "hash": "1b47d8d6de787a30c6f27eb4b3f1a424e32d742fd8479fef5875bb3b4ac2c26f",
+      "version": "1.1.1",
+      "hash": "1f101121a5029d2cdcaf47ab7c1bc5036e7b006cd6c7d6b904d7d10130ee9bf4",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
         "scripts/audit-ledger.mjs",
+        "scripts/check-docs.mjs",
         "scripts/check-size.mjs",
         "scripts/decide-triage.mjs",
         "scripts/ledger.mjs",
