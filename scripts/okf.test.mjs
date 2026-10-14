@@ -127,3 +127,34 @@ test("an index line without the doc's description is a warning (SPEC §8 SHOULD)
 test("conformance: a concept without type fails", () => {
   fails(check("title: X\ndescription: A test concept."), /frontmatter needs a non-empty 'type'/);
 });
+
+// Review round: valid YAML the first parser misread.
+test("a trailing comment after a flow mapping is ignored", () => {
+  ok(check(`${base}\ngenerated: { by: process:x, at: 2026-01-01T00:00:00Z } # made by ci\nverified: { by: human:a, at: 2026-01-01T00:00:00Z } # ok\nsources:\n  - { id: a, resource: x } # note`, "**TL;DR:** C.[^a]\n\n[^a]: A\n"));
+});
+
+test("flow sequences are lists", () => {
+  ok(check(`${base}\nverified: [{ by: human:a, at: 2026-01-01T00:00:00Z }]\nsources: [{ id: a, resource: "https://x/y, z" }]`, "**TL;DR:** C.[^a]\n\n[^a]: A\n"));
+  fails(check(`${base}\nsources: [{ id: a }]`, "**TL;DR:** C.[^a]\n\n[^a]: A\n"), /sources entry a needs a resource/);
+});
+
+test("blank lines and comment lines inside a block list keep every entry", () => {
+  ok(check(`${base}\nsources:\n  - id: a\n    resource: https://x\n\n  # second\n  - id: b\n    resource: https://y`, "**TL;DR:** C.[^a][^b]\n\n[^a]: A\n[^b]: B\n"));
+  fails(check(`${base}\nsources:\n  - id: a\n    resource: https://x\n\n  - id: b`, "**TL;DR:** C.[^a][^b]\n\n[^a]: A\n[^b]: B\n"), /sources entry b needs a resource/);
+});
+
+test("nested block mappings and lists inside a list entry", () => {
+  ok(check(`${base}\nsources:\n  - id: a\n    resource: https://x\n    usage_window:\n      from: 2026-06-01T00:00:00Z\n      to: 2026-06-30T00:00:00Z\n    tags:\n      - foo\n      - bar`, "**TL;DR:** C.[^a]\n\n[^a]: A\n"));
+  fails(check(`${base}\nsources:\n  - id: a\n    resource: https://x\n    usage_window:\n      from: 2026-06-01\n      to: 2026-06-30T00:00:00Z`, "**TL;DR:** C.[^a]\n\n[^a]: A\n"), /usage_window\.from '2026-06-01'/);
+});
+
+test("a block-scalar or quoted description is matched against the index line", () => {
+  assert.doesNotMatch(check("type: Reference\ntitle: X\ndescription: >-\n  A test\n  concept.").stderr, /warn:/);
+  assert.doesNotMatch(check("type: Reference\ntitle: X\ndescription: 'A test concept.'").stderr, /warn:/);
+});
+
+test("on failure, warnings are printed after the errors and labelled", () => {
+  const r = check(`${base}\nstatus: draft\nverified: { by: human:a, at: 2026-01-01T00:00:00Z }\nsources:\n  - id: s`);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /FAILED[\s\S]*Warnings \(not failures\):\nwarn: .*status draft/);
+});

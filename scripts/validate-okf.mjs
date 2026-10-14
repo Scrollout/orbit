@@ -84,55 +84,113 @@ function checkPlainScalars(file, block) {
   }
 }
 
-// The OKF v0.2 trust and provenance families as values: a flow mapping `{ k: v }`, a block mapping, or a list of
-// either (`- { k: v }`, or `- k: v` with indented continuation lines). Enough YAML for these fields, nothing more.
-const unquote = (s) => s.trim().replace(/^(["'])(.*)\1$/, "$2");
-function flowMap(s) {
-  const parts = [];
-  let cur = "", q = null, depth = 0;
-  for (const c of s.trim().slice(1, -1)) {
+// A small YAML reader for the frontmatter (zero dependencies): block mappings and sequences nested by indentation,
+// flow mappings and sequences (`{ k: v }`, `[a, b]`, nested), quoted and plain scalars, block scalars (`|`, `>`),
+// comments and blank lines. It never throws; what it cannot read stays a string. Enough for OKF's fields.
+const unquote = (s) => {
+  s = s.trim();
+  if (/^".*"$/s.test(s)) return s.slice(1, -1).replace(/\\"/g, '"');
+  if (/^'.*'$/s.test(s)) return s.slice(1, -1).replace(/''/g, "'");
+  return s;
+};
+const stripComment = (s) => {
+  let q = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
     if (q) { if (c === q) q = null; }
-    else if (c === '"' || c === "'") q = c;
-    else if (c === "{" || c === "[") depth++;
-    else if (c === "}" || c === "]") depth--;
-    else if (c === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
-    cur += c;
+    else if (c === '"' || c === "'") { if (i === 0 || /[\s[{,:]/.test(s[i - 1])) q = c; }
+    else if (c === "#" && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i);
   }
-  parts.push(cur);
-  const out = {};
-  for (const p of parts) {
-    const kv = p.match(/^\s*([A-Za-z_][\w-]*)\s*:\s*(.*)$/s);
-    if (kv) out[kv[1]] = yamlValue(kv[2]);
-  }
-  return out;
+  return s;
+};
+function parseFlow(s) {
+  let i = 0;
+  const ws = () => { while (i < s.length && /\s/.test(s[i])) i++; };
+  const scalar = (stops) => {
+    ws();
+    if (s[i] === '"' || s[i] === "'") {
+      const q = s[i++]; let out = "";
+      while (i < s.length) {
+        if (s[i] === q && q === "'" && s[i + 1] === "'") { out += "'"; i += 2; continue; }
+        if (s[i] === "\\" && q === '"') { out += s[i + 1] ?? ""; i += 2; continue; }
+        if (s[i] === q) { i++; break; }
+        out += s[i++];
+      }
+      return out;
+    }
+    let out = "";
+    while (i < s.length && !stops.includes(s[i]) && !(s[i] === ":" && /\s/.test(s[i + 1] ?? " ") && stops.includes(":"))) out += s[i++];
+    return out.trim();
+  };
+  const value = (stops) => {
+    ws();
+    if (s[i] === "{") {
+      i++; const m = {};
+      for (ws(); i < s.length && s[i] !== "}"; ws()) {
+        const k = scalar([":", ",", "}"]); ws();
+        if (s[i] === ":") { i++; m[k] = value([",", "}"]); } else m[k] = "";
+        ws(); if (s[i] === ",") i++;
+      }
+      i++; return m;
+    }
+    if (s[i] === "[") {
+      i++; const a = [];
+      for (ws(); i < s.length && s[i] !== "]"; ws()) { a.push(value([",", "]"])); ws(); if (s[i] === ",") i++; }
+      i++; return a;
+    }
+    return scalar(stops);
+  };
+  const v = value([]);
+  ws();
+  return i >= s.length ? v : unquote(s);
 }
-const yamlValue = (s) => (/^\s*\{.*\}\s*$/s.test(s) ? flowMap(s) : unquote(s));
-function trustFields(block) {
-  const lines = block.split("\n"), out = {};
-  for (let i = 0; i < lines.length; i++) {
-    const top = lines[i].match(/^([A-Za-z_][\w-]*):\s*(.*)$/);
-    if (!top) continue;
-    if (top[2].trim()) { out[top[1]] = yamlValue(top[2]); continue; }
-    const body = [];
-    while (i + 1 < lines.length && /^(\s+\S|-\s)/.test(lines[i + 1])) body.push(lines[++i]);
-    if (!body.length) { out[top[1]] = ""; continue; }
-    if (!/^\s*-\s/.test(body[0])) {
-      const map = {};
-      for (const l of body) { const kv = l.match(/^\s+([A-Za-z_][\w-]*):\s*(.*)$/); if (kv) map[kv[1]] = yamlValue(kv[2]); }
-      out[top[1]] = map;
-      continue;
-    }
-    const list = [];
-    for (const l of body) {
-      const item = l.match(/^\s*-\s+(.*)$/);
-      const kv = (item ? item[1] : l).match(/^\s*([A-Za-z_][\w-]*):\s*(.*)$/);
-      if (item && /^\{/.test(item[1].trim())) list.push(yamlValue(item[1]));
-      else if (item) list.push(kv ? { [kv[1]]: yamlValue(kv[2]) } : unquote(item[1]));
-      else if (kv && list.length && typeof list[list.length - 1] === "object") list[list.length - 1][kv[1]] = yamlValue(kv[2]);
-    }
-    out[top[1]] = list;
+const scalarValue = (s) => (/^\s*[[{]/.test(s) ? parseFlow(s.trim()) : unquote(s));
+function parseYaml(block) {
+  const raw = block.split("\n");
+  const L = [];
+  for (let r = 0; r < raw.length; r++) {
+    const text = stripComment(raw[r]).replace(/\s+$/, "");
+    if (text.trim()) L.push({ ind: text.length - text.trimStart().length, text: text.trimStart(), r });
   }
-  return out;
+  const isItem = (l) => /^-(\s|$)/.test(l.text);
+  const keyLine = (t) => t.match(/^("[^"]*"|'[^']*'|[^\s"'#][^:]*?)\s*:(?:\s+(.*))?$/);
+  let i = 0;
+  // A block scalar after `key: |` or `key: >` takes every following raw line indented deeper than `ind`.
+  const blockScalar = (ind, style) => {
+    const parts = [];
+    while (i < L.length && L[i].ind > ind) parts.push(raw[L[i++].r].trim());
+    return parts.join(style.startsWith(">") ? " " : "\n");
+  };
+  const block_ = (ind) => (i < L.length && isItem(L[i]) && L[i].ind === ind ? seq(ind) : map(ind));
+  function map(ind) {
+    const m = {};
+    while (i < L.length && L[i].ind === ind && !isItem(L[i])) {
+      const kv = keyLine(L[i].text);
+      if (!kv) { i++; continue; }
+      const key = unquote(kv[1]), rest = kv[2] ?? "";
+      i++;
+      if (/^[|>][-+]?\d*$/.test(rest)) m[key] = blockScalar(ind, rest);
+      else if (rest) m[key] = scalarValue(rest);
+      else if (i < L.length && (L[i].ind > ind || (L[i].ind === ind && isItem(L[i])))) m[key] = block_(L[i].ind);
+      else m[key] = "";
+    }
+    return m;
+  }
+  function seq(ind) {
+    const a = [];
+    while (i < L.length && L[i].ind === ind && isItem(L[i])) {
+      const content = L[i].text.replace(/^-\s*/, "");
+      if (!content) { i++; a.push(i < L.length && L[i].ind > ind ? block_(L[i].ind) : ""); continue; }
+      if (!/^[[{"']/.test(content) && keyLine(content)) {
+        // `- k: v` opens a mapping whose keys sit at the column of `k`.
+        L[i] = { ...L[i], ind: ind + L[i].text.length - content.length, text: content };
+        a.push(map(L[i].ind));
+      } else { a.push(scalarValue(content)); i++; }
+    }
+    return a;
+  }
+  const out = i < L.length ? block_(L[0].ind) : {};
+  return out && typeof out === "object" && !Array.isArray(out) ? out : {};
 }
 
 // OKF v0.2 trust and provenance (SPEC §5): `generated` needs `by`; every `verified` entry (a list, or a bare
@@ -143,7 +201,7 @@ function trustFields(block) {
 const ACTOR = /^(human:\S+|process:\S+|[^\s:/]+\/\S+)$/;
 const isMap = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function checkTrust(file, block, status) {
-  const f = trustFields(block);
+  const f = parseYaml(block);
   if ("generated" in f) {
     if (!isMap(f.generated) || !f.generated.by) fail(file, "generated needs `by` (an actor)");
     else if (!ACTOR.test(f.generated.by)) warn(file, `generated.by '${f.generated.by}' does not follow the actor convention (<producer>/<version>, human:<id> or process:<id>)`);
@@ -173,7 +231,7 @@ function checkTrust(file, block, status) {
 
 // Footnotes join on sources[].id: each one cited has a definition and a source, and each source is cited.
 function checkFootnotes(file, block, body) {
-  const sources = trustFields(block).sources;
+  const sources = parseYaml(block).sources;
   const ids = new Set((Array.isArray(sources) ? sources : []).filter((s) => isMap(s) && s.id).map((s) => s.id));
   const prose = body.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
   const defs = new Set([...prose.matchAll(/^\[\^([^\]]+)\]:/gm)].map((m) => m[1]));
@@ -247,7 +305,8 @@ for (const file of files) {
   if (!existsSync(index)) fail(file, "its folder has no index.md");
   else {
     const line = readFileSync(index, "utf8").split("\n").find((l) => l.includes(`(${name})`));
-    const desc = (fm.description ?? "").trim().replace(/\.$/, "").toLowerCase();
+    const parsed = parseYaml(block).description;
+    const desc = (typeof parsed === "string" ? parsed : fm.description ?? "").trim().replace(/\.$/, "").toLowerCase();
     if (!line) fail(file, `not listed in ${relative(ROOT, index)}`);
     else if (desc && !line.toLowerCase().includes(desc)) warn(file, `its line in ${relative(ROOT, index)} does not carry its description verbatim`);
   }
@@ -283,10 +342,11 @@ for (const rel of POINTER_FILES) {
   }
 }
 
-for (const w of warnings) console.error(w);
 if (errors.length) {
   console.error(errors.join("\n"));
   console.error(`\nvalidate-okf FAILED (${errors.length} problem${errors.length > 1 ? "s" : ""})`);
+  if (warnings.length) console.error(`\nWarnings (not failures):\n${warnings.join("\n")}`);
   process.exit(1);
 }
+for (const w of warnings) console.error(w);
 console.log(`validate-okf OK (${files.length} docs)`);
