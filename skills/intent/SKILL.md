@@ -1,7 +1,7 @@
 ---
 name: intent
 description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
-version: 1.0.0
+version: 1.0.1
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. A field marked TODO is a gap: say so, never invent. The plan's units are then built through the usual flow: `/orbit:decide` per unit, or the operator's dispatch.
 
@@ -23,7 +23,7 @@ Your own greps and reads first. At most one `orbit:explorer` call, only for a sw
 The scaffold's `roadmap/m1.md` shape, filled in, under the cap (`maxDocChars`, default 4000, frontmatter included):
 - Frontmatter: `type: Roadmap`, quoted `title: "M<n> plan: <Title>"`, `description` (one sentence; the index line repeats it), `tags: [roadmap, milestones, m<n>]`, `status: draft`, `generated: { by: claude-code/<model id>, at: <now, ISO 8601 with Z> }`. `sources` only for a fact taken from outside the conversation, each with `id` and `resource`, cited as `[^id]`.
 - Body: a `**TL;DR:**` line, `## Intent` (goal, out of scope, assumptions), `## Exit tests` (`Test | Step`), `## Steps`, `## Carried`.
-- Steps: `Step | Builds | Files | Proof | Depends | Hint`. One step fits one worker session. Files are paths, directories ending in `/`, or a wildcard in the last segment; prefer files and `dir/*.ext` over bare directories, which a `**/x` security glob forces to sec=yes. Proof names a test or check. Depends lists step ids or `-`. Hint is `sec=yes|no door=yes|no` (plus `prod=yes|no` when the profile names a production_env), your provisional triage, or `decide-first` for a step that is an open design question.
+- Steps: `Step | Builds | Files | Proof | Depends | Hint`. One step fits one worker session. Files are paths, directories ending in `/`, or a wildcard in the last segment, separated by commas or spaces; prefer exact files: a directory or wildcard entry is forced to sec=yes whenever a security path could lie below it. Proof names a test or check. Depends lists step ids or `-`. Hint is `sec=yes|no door=yes|no` (plus `prod=yes|no` when the profile names a production_env), your provisional triage, or `decide-first` for a step that is an open design question.
 - Over the cap: split by track into `m<n>-<track>.md` docs, one plan; step ids stay unique across them.
 
 ## 6. Check it (free, deterministic)

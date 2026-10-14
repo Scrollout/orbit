@@ -185,9 +185,9 @@ function checkFootnotes(r, block, body) {
   const prose = body.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
   const defs = new Set([...prose.matchAll(/^\[\^([^\]]+)\]:/gm)].map((m) => m[1]));
   const refs = new Set([...prose.replace(/^\[\^[^\]]+\]:/gm, "").matchAll(/\[\^([^\]]+)\]/g)].map((m) => m[1]));
-  for (const r of refs) {
-    if (!defs.has(r)) r.fail(`footnote [^${r}] has no definition`);
-    if (!ids.has(r)) r.fail(`footnote [^${r}] matches no sources id`);
+  for (const ref of refs) {
+    if (!defs.has(ref)) r.fail(`footnote [^${ref}] has no definition`);
+    if (!ids.has(ref)) r.fail(`footnote [^${ref}] matches no sources id`);
   }
   for (const id of ids) if (!refs.has(id)) r.fail(`source '${id}' is never cited`);
 }

@@ -25,7 +25,7 @@ const usage = "usage: intent-plan.mjs --root . --plan <path|-> [--plan <path> ..
 if (!plans.length || plans.some((p) => p === undefined || p.startsWith("--")) || plans.filter((p) => p === "-").length > 1) { console.error(usage); process.exit(64); }
 const root = resolve(flag("root") ?? ".");
 const texts = plans.map((p) => {
-  try { return [p === "-" ? "stdin" : p, readFileSync(p === "-" ? 0 : resolve(root, p), "utf8")]; }
+  try { return [p === "-" ? "stdin" : p, readFileSync(p === "-" ? 0 : resolve(root, p), "utf8").replace(/\r\n/g, "\n")]; }
   catch { console.error(`intent-plan: cannot read ${p === "-" ? "stdin" : p}`); process.exit(64); }
 });
 
@@ -33,7 +33,8 @@ const { data: profile } = loadProfile(root, flag("profile"));
 if (gaps(profile).includes("security_paths")) { console.log("profile gap: security_paths"); process.exit(1); }
 const securityPaths = profile.security_paths;
 const prodEnv = profile.production_env;
-const needProd = prodEnv !== undefined && !/^none$/i.test(String(prodEnv).trim());
+const needProd = prodEnv !== undefined && !/^(none|todo)\b/i.test(String(prodEnv).trim());
+if (/^todo\b/i.test(String(prodEnv ?? "").trim())) console.log("warn: profile production_env is TODO: prod= lines are optional until it is set");
 let okfConfig = {};
 try { okfConfig = JSON.parse(readFileSync(join(root, ".agents/okf.json"), "utf8")); } catch {}
 const maxChars = Number(flag("max-chars") ?? okfConfig.maxDocChars ?? 4000);
@@ -44,14 +45,17 @@ const placeholder = (s) => !s.trim() || /<[^>]*>/.test(s);
 
 // A markdown table under `## <heading>`: rows of cells keyed by the lower-cased header.
 function table(text, heading) {
-  const m = text.match(new RegExp(`^## ${heading}[ \\t]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
+  const m = text.match(new RegExp(`^## ${heading}\\b[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
   if (!m) return null;
-  const rows = m[1].split("\n").filter((l) => /^\s*\|/.test(l)).map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+  // Cells split on `|` but not on an escaped `\|` (GFM), which stays a literal pipe in the cell.
+  const rows = m[1].split("\n").filter((l) => /^\s*\|/.test(l))
+    .map((l) => l.trim().replace(/^\||(?<!\\)\|$/g, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|")));
   if (rows.length < 2) return [];
   const head = rows[0].map((h) => h.toLowerCase());
   return rows.slice(2).map((cells) => Object.fromEntries(head.map((h, i) => [h, cells[i] ?? ""])));
 }
-const list = (s) => s.replace(/`/g, "").split(",").map((x) => x.trim()).filter((x) => x && !/^(-|none)$/i.test(x));
+// A cell list: entries separated by commas, semicolons, `<br>` or whitespace (paths with spaces are not supported).
+const list = (s) => s.replace(/`/g, "").split(/<br\s*\/?>|[,;\s]+/i).map((x) => x.trim()).filter((x) => x && !/^(-|none)$/i.test(x));
 
 const steps = new Map(), exits = [];
 for (const [name, text] of texts) {
@@ -69,35 +73,33 @@ for (const [name, text] of texts) {
     if (steps.has(id)) { gap(`step ${id}: duplicate id`); continue; }
     steps.set(id, { id, doc: name, builds: r.builds ?? "", files: list(r.files ?? ""), proof: r.proof ?? "", depends: list(r.depends ?? ""), hint: (r.hint ?? "").trim() });
   }
-  for (const r of table(text, "Exit tests") ?? []) exits.push({ doc: name, test: r.test ?? "", steps: list(r.step ?? "") });
+  for (const r of table(text, "Exit tests") ?? []) exits.push({ doc: name, test: r.test ?? "", rawSteps: r.step ?? "", steps: list(r.step ?? "") });
 }
 if (!exits.length) gap("no ## Exit tests table with a row (in any plan doc)");
 
-// Literal prefix: the segments before the first one holding a wildcard. `dir` marks a trailing `/`.
+// Overlap, conservative: it may over-report, it must never miss. A Files entry with no wildcard and no trailing `/`
+// is one file. A directory entry (`dir/`) or a wildcard entry covers everything below what it matches, as a profile
+// glob does (scripts/profile.mjs: a pattern covers everything below the path it matches; a plain name may be a
+// directory). Two such patterns may meet when their segments agree up to the shorter one, or up to a glob's first
+// `**`, which can absorb any depth.
 const parse = (e) => {
   const segs = e.replace(/^\.?\//, "").split("/").filter(Boolean);
-  const wild = segs.findIndex((s) => /[*?]/.test(s));
-  return { e, segs, dir: e.endsWith("/"), wild, prefix: wild < 0 ? segs : segs.slice(0, wild) };
+  return { e, segs, dir: e.endsWith("/"), wild: segs.findIndex((x) => /[*?]/.test(x)) };
 };
 const concrete = (x) => x.wild < 0 && !x.dir;
-const isPrefix = (a, b) => a.length <= b.length && a.every((s, i) => s === b[i]);
-// May the paths an entry names meet the paths a glob (or another entry) names? Exact when one side is a concrete path
-// or a last-segment pattern against a glob with a literal last segment; otherwise one literal prefix inside the other.
-const wildFile = (x) => !x.dir && x.wild >= 0 && x.wild === x.segs.length - 1;
-function wildFileMeets(a, g) {
-  if (a.prefix.length && globMatch(g.e, a.prefix.join("/"))) return true;
-  const last = g.segs[g.segs.length - 1] ?? "";
-  if (!/[*?]/.test(last)) return globMatch(a.segs[a.segs.length - 1], last) && globMatch(g.e, [...a.prefix, last].join("/"));
-  return isPrefix(a.prefix, g.prefix) || isPrefix(g.prefix, a.prefix);
+const segsAgree = (p, q) => (/[*?]/.test(p) ? (/[*?]/.test(q) ? true : globMatch(p, q)) : /[*?]/.test(q) ? globMatch(q, p) : p === q);
+function patternsMeet(a, b) {
+  const cut = (x) => { const i = x.segs.indexOf("**"); return i < 0 ? x.segs : x.segs.slice(0, i); };
+  const A = cut(a), B = cut(b), n = Math.min(A.length, B.length);
+  for (let i = 0; i < n; i++) if (!segsAgree(A[i], B[i])) return false;
+  return true;
 }
-function meets(a, b) {
-  if (concrete(a) && concrete(b)) return a.segs.join("/") === b.segs.join("/");
+// A Files entry against a profile glob (`g`) or another Files entry.
+function meets(a, b, bIsGlob = false) {
+  if (concrete(a) && concrete(b)) return bIsGlob ? globMatch(b.e, a.segs.join("/")) : a.segs.join("/") === b.segs.join("/");
   if (concrete(a)) return globMatch(b.e, a.segs.join("/"));
-  if (concrete(b)) return globMatch(a.e, b.segs.join("/"));
-  if (wildFile(a) && wildFile(b)) return a.prefix.join("/") === b.prefix.join("/");
-  if (wildFile(a)) return wildFileMeets(a, b);
-  if (wildFile(b)) return wildFileMeets(b, a);
-  return isPrefix(a.prefix, b.prefix) || isPrefix(b.prefix, a.prefix);
+  if (concrete(b) && !bIsGlob) return globMatch(a.e, b.segs.join("/"));
+  return patternsMeet(a, b);
 }
 
 const hintRe = needProd ? /^sec=(yes|no) door=(yes|no) prod=(yes|no)$/ : /^sec=(yes|no) door=(yes|no)( prod=(yes|no))?$/;
@@ -108,10 +110,11 @@ for (const s of steps.values()) {
   if (placeholder(s.builds)) gap(`step ${s.id}: Builds is empty or a placeholder`);
   if (placeholder(s.proof) && !first) gap(`step ${s.id}: Proof is empty or a placeholder`);
   if (!s.files.length && !first) gap(`step ${s.id}: no Files`);
+  if (s.files.some((f) => /[<>]/.test(f))) gap(`step ${s.id}: Files is a placeholder`);
   s.parsed = s.files.map(parse);
   for (const x of s.parsed) if (x.wild >= 0 && x.wild < x.segs.length - 1) gap(`step ${s.id}: '${x.e}' has a wildcard outside the last segment`);
   for (const d of s.depends) if (!steps.has(d)) gap(`step ${s.id}: depends on unknown step ${d}`);
-  const hits = securityPaths.filter((g) => s.parsed.some((x) => meets(x, parse(g))));
+  const hits = securityPaths.filter((g) => s.parsed.some((x) => meets(x, parse(g), true)));
   if (hits.length) {
     s.sec = true;
     const exact = s.parsed.every(concrete);
@@ -119,6 +122,7 @@ for (const s of steps.values()) {
   } else s.sec = /sec=yes/.test(s.hint);
 }
 for (const x of exits) {
+  if (placeholder(x.test) || placeholder(x.rawSteps)) gap(`${x.doc}: exit test '${x.test}' is empty or a placeholder`);
   if (!x.steps.length) gap(`${x.doc}: exit test '${x.test}' names no step`);
   for (const id of x.steps) if (!steps.has(id)) gap(`${x.doc}: exit test '${x.test}' names unknown step ${id}`);
 }

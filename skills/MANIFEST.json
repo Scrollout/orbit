@@ -20,8 +20,8 @@
       ]
     },
     "skills/intent/SKILL.md": {
-      "version": "1.0.0",
-      "hash": "671b3160100ee8ada00225cce68b6576538a6de28c77eba3f8d1697f6d8a7104",
+      "version": "1.0.1",
+      "hash": "3ddd51d6e22ab7e1430270cb187747da53e3aa34b8bb9894e31ab5dcfc8eb10e",
       "files": [
         "skills/intent/SKILL.md"
       ]
@@ -53,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.5.0",
-      "hash": "d7f920e690d2c0584aeba935c90353d192e2f76546f81736bf1c8710647f1258",
+      "version": "1.5.1",
+      "hash": "5e368f28e512d4f8996007f2fb6bcd4a7d2814ec7571648beaaba731d62186f7",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",

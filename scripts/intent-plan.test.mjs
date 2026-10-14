@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const script = join(dirname(fileURLToPath(import.meta.url)), "intent-plan.mjs");
 const profile = (extra = "production_env: none") => `\`\`\`yaml orbit-profile
 base_branch: main
-security_paths: [auth/, "scripts/check-*", "**/Makefile"]
+security_paths: [auth/, "scripts/check-*", "Makefile"]
 review_trailer: Reviewed-by
 labels: [bug]
 issue_tracker: github
@@ -109,19 +109,48 @@ test("a decide-first step needs no files or proof and is listed first", () => {
   assert.match(r.stdout, /decide first: .*4 \(decide-first\)/);
 });
 
-test("security paths force sec=yes: exact, directory prefix, and may-touch for a directory against **/x", () => {
+test("security paths force sec=yes: exact, and may-touch for a directory entry", () => {
   let r = run(plan([...rows, "| 4 | Scopes | `auth/scopes.ts` | `scope.test` | 2 | sec=no door=no |"]));
   assert.match(r.stdout, /^step 4: sec=yes \(forced: auth\/\)$/m);
   r = run(plan([...rows, "| 4 | Checks | `scripts/` | `c.test` | - | sec=no door=no |"]));
-  assert.match(r.stdout, /^step 4: sec=yes \(forced, may touch: scripts\/check-\*, \*\*\/Makefile\)$/m);
+  assert.match(r.stdout, /^step 4: sec=yes \(forced, may touch: scripts\/check-\*\)$/m);
   assert.match(r.stdout, /decide first: .*4 \(sec=yes\)/);
+  assert.doesNotMatch(run(plan()).stdout, /sec=yes/);
 });
 
-test("a last-segment pattern is not forced by a glob whose literal last segment it cannot match", () => {
-  const r = run(plan());
-  assert.doesNotMatch(r.stdout, /step 3: sec=yes/);
-  const m = run(plan([...rows, "| 4 | Build | `ci/Make*` | `b.test` | - | sec=no door=no |"]));
-  assert.match(m.stdout, /^step 4: sec=yes \(forced, may touch: \*\*\/Makefile\)$/m);
+// Review round: real overlaps the first version missed. Each must be forced.
+const secProfile = (paths) => profile().replace('security_paths: [auth/, "scripts/check-*", "Makefile"]', `security_paths: [${paths}]`);
+const forcedFor = (paths, files) => run(plan([`| 1 | X | ${files} | \`x.test\` | - | sec=no door=no |`], exitTests.replace("| 2 |", "| 1 |")), { prof: secProfile(paths) }).stdout;
+test("a plain-name glob covers everything below it", () => {
+  assert.match(forcedFor("src/auth", "`src/auth/login.ts`"), /^step 1: sec=yes \(forced: src\/auth\)$/m);
+  assert.match(forcedFor("infra", "`infra/terraform/`"), /^step 1: sec=yes/m);
+  assert.match(forcedFor("infra", "`infra/*.tf`"), /^step 1: sec=yes/m);
+});
+test("a wildcard glob segment matches a directory and covers below it", () => {
+  assert.match(forcedFor('"src/*"', "`src/auth/*.ts`"), /^step 1: sec=yes/m);
+  assert.match(forcedFor('"**/config/secrets.yml"', "`app/*`"), /^step 1: sec=yes/m);
+  assert.match(forcedFor('"**/auth/token.ts"', "`src/a*`"), /^step 1: sec=yes/m);
+  assert.doesNotMatch(forcedFor('"src/auth/**"', "`web/*.tsx`"), /sec=yes/);
+});
+test("Files split on commas, semicolons, <br> and spaces", () => {
+  for (const f of ["`src/a.ts src/auth/x.ts`", "`src/a.ts`; `src/auth/x.ts`", "`src/a.ts`<br>`src/auth/x.ts`"]) assert.match(forcedFor('"src/auth/**"', f), /^step 1: sec=yes/m, f);
+});
+test("placeholders in Files and exit tests are gaps", () => {
+  gapOf(run(plan([rows[0].replace("`src/csv/writer.ts`", "<paths>")])), /step 1: Files is a placeholder/);
+  gapOf(run(plan(rows, exitTests.replace("`export.test` exports a report", "<behaviour proved>"))), /exit test '<behaviour proved>' is empty or a placeholder/);
+});
+test("an escaped pipe stays in its cell; a heading may carry text; CRLF is read", () => {
+  assert.equal(run(plan([rows[0].replace("CSV writer", "parse `a \\| b`"), rows[1], rows[2]])).status, 0);
+  assert.equal(run(plan().replace("## Steps\n", "## Steps (track A)\n")).status, 0);
+  assert.equal(run(plan().replace(/\n/g, "\r\n")).status, 0);
+});
+test("production_env TODO does not make prod= mandatory", () => {
+  const r = run(plan(), { prof: profile("production_env: TODO") });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /warn: profile production_env is TODO/);
+});
+test("an undefined footnote is a plan gap, not a crash", () => {
+  gapOf(run(plan().replace("**TL;DR:** M2 (CSV export) is done when its exit tests pass.", "**TL;DR:** Cited.[^s1]")), /okf: footnote \[\^s1\] has no definition/);
 });
 
 test("waves keep steps that touch the same paths apart", () => {
@@ -155,7 +184,7 @@ test("several plan docs are one plan: ids unique across them, Depends may cross"
 test("only a security_paths gap stops it; other TODO fields are not needed for planning", () => {
   const r = run(plan(), { prof: profile("production_env: none").replace("base_pusher: agent", "base_pusher: TODO").replace("labels: [bug]", "labels: [TODO]") });
   assert.equal(r.status, 0, r.stdout);
-  const g = run(plan(), { prof: profile().replace('security_paths: [auth/, "scripts/check-*", "**/Makefile"]', "security_paths: [TODO]") });
+  const g = run(plan(), { prof: profile().replace('security_paths: [auth/, "scripts/check-*", "Makefile"]', "security_paths: [TODO]") });
   assert.equal(g.status, 1);
   assert.match(g.stdout, /profile gap: security_paths/);
   assert.equal(run(plan(), { prof: null }).status, 1);
