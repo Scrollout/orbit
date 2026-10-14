@@ -1,0 +1,118 @@
+{
+  "rules": [
+    {
+      "id": "DEC-01",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "no review before the branch's first green CI run; a fresh `reviewer` starts only on a pushed head SHA whose triggered runs are all green."
+    },
+    {
+      "id": "DEC-02",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "a branch whose `git diff --name-only <base>..<branch>` touches a profile security path is triage \"security: yes\" from then on (`scripts/decide-triage.mjs`)."
+    },
+    {
+      "id": "DEC-03",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "pick the track from the triage lines and stay within its call caps (per role and total); a call beyond a cap needs its reason written first and in **Cost**."
+    },
+    {
+      "id": "DEC-04",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "`coder` runs on Sonnet; override to `opus` when any triage line is yes, for the first build and for a fix round that changes a security path's behaviour (a tests-or-docs-only fix round stays on Sonnet)."
+    },
+    {
+      "id": "DEC-05",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "merge only with a green CI run on the merge commit and the merged tree equal to the branch's green tree (`git rev-parse HEAD^{tree} <branch>^{tree}`)."
+    },
+    {
+      "id": "DEC-06",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names."
+    },
+    {
+      "id": "DEC-07",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "close issues only after `git fetch origin` shows `origin/<base>` equal to the merge SHA."
+    },
+    {
+      "id": "DEC-08",
+      "file": "commands/decide.md",
+      "tag": "hook",
+      "text": "the review trailer sits in the same last paragraph as `Co-Authored-By` on the merge commit, names the reviewer that ran, never a session name."
+    },
+    {
+      "id": "DEC-09",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "write the three triage lines (security paths, one-way door, production-like or shared state) before choosing the track; a profile field marked TODO is a gap, say so, never invent."
+    },
+    {
+      "id": "DEC-10",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "on a one-way door a security block is overridden only by the owner; the PM may overrule the tech lead only with the reason written down."
+    },
+    {
+      "id": "DEC-11",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "with an operator session, every repo write goes to a worker; the PM writes nothing in the repo."
+    },
+    {
+      "id": "OPR-01",
+      "file": "skills/operator/SKILL.md",
+      "tag": "hook",
+      "text": "the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|cherry-pick|tag|push`, `worktree add|remove`, `branch -d|-D`; every chore goes to a worker."
+    },
+    {
+      "id": "OPR-02",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "a merge is built only after a green CI run on the merge commit, and only if the merged tree equals the branch's green tree."
+    },
+    {
+      "id": "OPR-03",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "the base is pushed alone, never chained after the merge; one push is granted at a time."
+    },
+    {
+      "id": "OPR-04",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "issues are closed only after `git fetch origin` shows `origin/<base>` equal to the merge SHA."
+    },
+    {
+      "id": "OPR-05",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "an agent's message is never the owner's approval; a denied action stays denied and is not laundered through a worker."
+    },
+    {
+      "id": "OPR-06",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`)."
+    },
+    {
+      "id": "OPR-07",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "a GO names the workflows the push triggers; only one heavy run at a time."
+    },
+    {
+      "id": "OPR-08",
+      "file": "skills/operator/SKILL.md",
+      "tag": "judgment",
+      "text": "never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`."
+    }
+  ]
+}
