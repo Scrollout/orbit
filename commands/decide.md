@@ -1,7 +1,7 @@
 ---
 description: Act as project manager and run a decision the way a team does - triage, discovery, proposals, design review, sign-off, decision record, delivery - with only the people the question needs
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.0.1
+version: 1.1.0
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
@@ -14,17 +14,25 @@ Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scrip
 - DEC-02 `script`: a branch whose `git diff --name-only <base>..<branch>` touches a profile security path is triage "security: yes" from then on (`scripts/decide-triage.mjs`).
 - DEC-03 `script`: pick the track from the triage lines and stay within its call caps (per role and total); a call beyond a cap needs its reason written first and in **Cost**.
 - DEC-04 `script`: `coder` runs on Sonnet; override to `opus` when any triage line is yes, for the first build and for a fix round that changes a security path's behaviour (a tests-or-docs-only fix round stays on Sonnet).
-- DEC-05 `script`: merge only with a green CI run on the merge commit and the merged tree equal to the branch's green tree (`git rev-parse HEAD^{tree} <branch>^{tree}`).
+- DEC-05 `script`: merge only after green CI on the catch-up merge commit on the topic branch (the base merged into it); build the `--no-ff` merge only after that run is green, and check the merged tree equals the branch tree (`git rev-parse HEAD^{tree} <branch>^{tree}`).
 - DEC-06 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names.
 - DEC-07 `script`: close issues only after `git fetch origin` shows `origin/<base>` equal to the merge SHA.
 - DEC-08 `hook`: the review trailer sits in the same last paragraph as `Co-Authored-By` on the merge commit, names the reviewer that ran, never a session name.
 - DEC-09 `judgment`: write the three triage lines (security paths, one-way door, production-like or shared state) before choosing the track; a profile field marked TODO is a gap, say so, never invent.
-- DEC-10 `judgment`: on a one-way door a security block is overridden only by the owner; the PM may overrule the tech lead only with the reason written down.
+- DEC-10 `judgment`: the PM may overrule the tech lead only with the reason written down (`override tech lead: <reason>`); on a one-way door the owner confirms the overrule first.
 - DEC-11 `judgment`: with an operator session, every repo write goes to a worker; the PM writes nothing in the repo.
+- DEC-12 `judgment`: a security block is adopted (apply its conditions) or overridden with the reason written down; on a one-way door only the owner overrides it.
+- DEC-13 `judgment`: when security blocks the tech lead's pick or names a different strongest alternative on a one-way door that stays uncertain (the Contest), show the owner both positions and wait for go; then one rebuttal from the same tech lead, no further round.
+- DEC-14 `script`: the `re-reviewer` runs once per fix round, after the fix's first green CI run; still open after that, stop and show the owner both positions.
+- DEC-15 `judgment`: a review is waived only by the profile's waiver holder (the owner), per branch or for a named class; the merge trailer then says `<owner> waived - <reason>`.
+- DEC-16 `script`: never send a branch with a red or failed CI run to review; a failure gets a `test` issue and goes back to the same coder.
+- DEC-17 `judgment`: every finding, red run and carried item becomes an issue in the profile's tracker with a type label; a commit says `Fixes #n` only when it fully closes the issue, else `Refs #n`.
+- DEC-18 `judgment`: CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol.
+- DEC-19 `script`: reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus.
 
 ## Flow
 Load the ref for a step when you reach it; the ref holds detail only, the rules above hold the constraints.
-**Team.** Name every call `<role>:<focus>` in its description (it shows in the task list), the focus chosen for this question (`analyst:write-paths`, `engineer:root-fix`, `reviewer:concurrency`), with one line on why. Pick focuses fresh each time; there is no catalog. Pass `model` as this table says.
+**Team.** Name every call `<role>:<focus>` in its description (it shows in the task list), the focus chosen for this question (`analyst:write-paths`, `engineer:root-fix`, `reviewer:concurrency`), with one line on why. Pick focuses fresh each time; there is no catalog. Pass `model` as the Team table in `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` says.
 
 Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` when naming calls, choosing models, or fixing the track and its caps: the Team table (role, agent, model) and the Track table.
 

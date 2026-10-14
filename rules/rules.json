@@ -28,7 +28,7 @@
       "id": "DEC-05",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "merge only with a green CI run on the merge commit and the merged tree equal to the branch's green tree (`git rev-parse HEAD^{tree} <branch>^{tree}`)."
+      "text": "merge only after green CI on the catch-up merge commit on the topic branch (the base merged into it); build the `--no-ff` merge only after that run is green, and check the merged tree equals the branch tree (`git rev-parse HEAD^{tree} <branch>^{tree}`)."
     },
     {
       "id": "DEC-06",
@@ -58,13 +58,61 @@
       "id": "DEC-10",
       "file": "commands/decide.md",
       "tag": "judgment",
-      "text": "on a one-way door a security block is overridden only by the owner; the PM may overrule the tech lead only with the reason written down."
+      "text": "the PM may overrule the tech lead only with the reason written down (`override tech lead: <reason>`); on a one-way door the owner confirms the overrule first."
     },
     {
       "id": "DEC-11",
       "file": "commands/decide.md",
       "tag": "judgment",
       "text": "with an operator session, every repo write goes to a worker; the PM writes nothing in the repo."
+    },
+    {
+      "id": "DEC-12",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "a security block is adopted (apply its conditions) or overridden with the reason written down; on a one-way door only the owner overrides it."
+    },
+    {
+      "id": "DEC-13",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "when security blocks the tech lead's pick or names a different strongest alternative on a one-way door that stays uncertain (the Contest), show the owner both positions and wait for go; then one rebuttal from the same tech lead, no further round."
+    },
+    {
+      "id": "DEC-14",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "the `re-reviewer` runs once per fix round, after the fix's first green CI run; still open after that, stop and show the owner both positions."
+    },
+    {
+      "id": "DEC-15",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "a review is waived only by the profile's waiver holder (the owner), per branch or for a named class; the merge trailer then says `<owner> waived - <reason>`."
+    },
+    {
+      "id": "DEC-16",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "never send a branch with a red or failed CI run to review; a failure gets a `test` issue and goes back to the same coder."
+    },
+    {
+      "id": "DEC-17",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "every finding, red run and carried item becomes an issue in the profile's tracker with a type label; a commit says `Fixes #n` only when it fully closes the issue, else `Refs #n`."
+    },
+    {
+      "id": "DEC-18",
+      "file": "commands/decide.md",
+      "tag": "judgment",
+      "text": "CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol."
+    },
+    {
+      "id": "DEC-19",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus."
     },
     {
       "id": "OPR-01",
@@ -76,13 +124,13 @@
       "id": "OPR-02",
       "file": "skills/operator/SKILL.md",
       "tag": "script",
-      "text": "a merge is built only after a green CI run on the merge commit, and only if the merged tree equals the branch's green tree."
+      "text": "the `--no-ff` merge is built only after green CI on the catch-up merge commit on the topic branch (the base merged into it), and only if the merged tree equals the branch tree."
     },
     {
       "id": "OPR-03",
       "file": "skills/operator/SKILL.md",
       "tag": "script",
-      "text": "the base is pushed alone, never chained after the merge; one push is granted at a time."
+      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names."
     },
     {
       "id": "OPR-04",
@@ -106,7 +154,7 @@
       "id": "OPR-07",
       "file": "skills/operator/SKILL.md",
       "tag": "judgment",
-      "text": "a GO names the workflows the push triggers; only one heavy run at a time."
+      "text": "grant one push at a time; a GO names the workflows the push triggers; only one heavy run at a time."
     },
     {
       "id": "OPR-08",

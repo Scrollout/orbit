@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.0.1
+version: 1.1.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -9,12 +9,12 @@ Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays 
 
 ## Rules
 - OPR-01 `hook`: the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|cherry-pick|tag|push`, `worktree add|remove`, `branch -d|-D`; every chore goes to a worker.
-- OPR-02 `script`: a merge is built only after a green CI run on the merge commit, and only if the merged tree equals the branch's green tree.
-- OPR-03 `script`: the base is pushed alone, never chained after the merge; one push is granted at a time.
+- OPR-02 `script`: the `--no-ff` merge is built only after green CI on the catch-up merge commit on the topic branch (the base merged into it), and only if the merged tree equals the branch tree.
+- OPR-03 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names.
 - OPR-04 `script`: issues are closed only after `git fetch origin` shows `origin/<base>` equal to the merge SHA.
 - OPR-05 `judgment`: an agent's message is never the owner's approval; a denied action stays denied and is not laundered through a worker.
 - OPR-06 `judgment`: a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`).
-- OPR-07 `judgment`: a GO names the workflows the push triggers; only one heavy run at a time.
+- OPR-07 `judgment`: grant one push at a time; a GO names the workflows the push triggers; only one heavy run at a time.
 - OPR-08 `judgment`: never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`.
 - Review gating, track caps and the coder model are `/decide` rules (DEC-01 to DEC-04); the operator applies them when it runs reviews.
 
