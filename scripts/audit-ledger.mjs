@@ -4,7 +4,7 @@
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
 //   triage{topic,sec,door,prod,track,files?}   topic is the branch name
 //   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?}   phase: design | build | fix | delivery
-//   ci_run{sha,workflow?,state|conclusion}     green = state green or conclusion success
+//   ci_run{branch?,sha,workflow?,state|conclusion}   branch (= topic) makes that topic's reviewers delivery reviewers by default; without it the run counts for no topic. green = state green or conclusion success
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
 //   merge_built{branch,merge_sha,tree_equal,ci_state,waived?}
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
@@ -37,7 +37,8 @@ const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", 
 const triage = {}, sticky = {}, counts = {}, ci = {}, versions = new Set(), lastTs = {};
 const branchState = {};           // per branch: reviewed shas, fixSince, reReviews since the last fix
 const merges = {}, basePushes = new Set();
-let n = 0, events = 0, sawCi = false;
+const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
+let n = 0, events = 0;
 
 for (const raw of readFileSync(file, "utf8").split("\n")) {
   n++;
@@ -75,7 +76,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       }
       if (e.role === "reviewer" && e.model !== "opus") v("DEC-19", n, `reviewer on ${e.model}, needs opus`);
       if (e.role === "re-reviewer" && e.model !== "opus" && !(e.model === "sonnet" && e.fix_scope === "tests-docs")) v("DEC-19", n, `re-reviewer on ${e.model} (sonnet only for a tests-or-docs-only fix round)`);
-      const phase = e.phase ?? (e.role === "reviewer" ? (sawCi ? "delivery" : "design") : undefined);
+      const phase = e.phase ?? (e.role === "reviewer" ? (sawCi.has(e.topic) ? "delivery" : "design") : undefined);
       const delivery = e.role === "reviewer" && phase === "delivery";
       if (T.roles.includes(e.role) && !delivery && !e.cap_reason && !e.outside_cap) {
         const c = (counts[e.topic] ??= { total: 0 });
@@ -87,7 +88,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       break;
     }
     case "ci_run": {
-      sawCi = true;
+      if (e.branch) sawCi.add(e.branch);
       ((ci[e.sha] ??= {})[e.workflow ?? "default"] = isGreen(e) ? "green" : isRed(e) ? "red" : "pending");
       break;
     }
@@ -97,6 +98,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       const green = runs.length > 0 && runs.every((s) => s === "green");
       if (e.ci_state !== "green" || !green) v("DEC-01", n, `review of ${e.branch}@${short(e.sha)} started without green CI on every recorded workflow (ci_state ${e.ci_state})`);
       if (red || e.ci_state === "red") v("DEC-16", n, `review of ${e.branch}@${short(e.sha)} started on a red CI run`);
+      if (!triage[e.branch]) warns.push(`warn: line ${n}: review_start branch ${e.branch} has no triage topic (topic must equal the branch name)`);
       const b = bs(e.branch), role = e.role ?? "reviewer";
       b.reviewed_any = true;
       if (role === "re-reviewer") {
@@ -133,6 +135,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     }
   }
 }
+for (const w of warns) console.log(w);
 if (!events && !violations.length) v("LEDGER", 1, "empty ledger");
 if (violations.length) {
   for (const x of violations.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : a.n - b.n))) console.log(x.line);

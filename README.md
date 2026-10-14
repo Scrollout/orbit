@@ -70,13 +70,13 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 
 ### Session ledger and audit
 - Append events: `node scripts/ledger.mjs --ledger L.jsonl --session S <kind> key=value key:=<json> ...` (adds `ts` and `rule_version`). Replay: `node scripts/audit-ledger.mjs L.jsonl --profile .agents/project.md` prints violations by rule id (exit 1; also for an empty ledger or a profile gap).
-- One JSON object per line; common fields `ts` (ISO 8601 with offset, non-decreasing per session), `session`, `rule_version`, `kind`. `topic` is the branch name.
+- One JSON object per line; common fields `ts` (ISO 8601 with offset, non-decreasing per session), `session`, `rule_version`, `kind`. `topic` must equal the branch name: fix-round and re-review tracking join `triage`, `agent_start` and `review_start` on it, and the audit prints a non-fatal `warn:` line for a `review_start` whose branch has no `triage` topic.
 
 | kind | fields |
 |---|---|
 | `triage` | `topic`, `sec`, `door`, `prod`, `track`, `files` (changed paths) |
-| `agent_start` | `role`, `model`, `topic`; `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason` or `outside_cap` (excludes the call from the caps) |
-| `ci_run` | `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
+| `agent_start` | `role`, `model`, `topic`; `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason` or `outside_cap` (excludes the call from the caps) |
+| `ci_run` | `branch` (= topic; a run without it counts for no topic's phase default), `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
 | `review_start` | `branch`, `sha`, `ci_state`, `role` (`reviewer` or `re-reviewer`) |
 | `merge_built` | `branch`, `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (owner waived the review) |
 | `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |

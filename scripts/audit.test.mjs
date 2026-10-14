@@ -18,7 +18,7 @@ const clean = () => [
   ev("agent_start", { role: "engineer", model: "sonnet", topic: "t" }),
   ev("agent_start", { role: "security", model: "fable", topic: "t" }),
   ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "build" }),
-  ev("ci_run", { sha: SHA, workflow: "checks", conclusion: "success" }),
+  ev("ci_run", { branch: "t", sha: SHA, workflow: "checks", conclusion: "success" }),
   ev("review_start", { branch: "t", sha: SHA, ci_state: "green" }),
   ev("merge_built", { branch: "t", merge_sha: MERGE, tree_equal: true, ci_state: "green" }),
   ev("push", { ref: "t", sha: SHA, chained: false, by: "agent" }),
@@ -160,4 +160,29 @@ test("ledger.mjs appends one stamped JSON line per event", () => {
   assert.match(e.ts, /^\d{4}-\d\d-\d\dT.*Z$/);
   assert.match(e.rule_version.decide, /^\d+\.\d+\.\d+$/);
   assert.match(run([e]).stdout, /^DEC-06 .*no merge_built/m, "a stamped event parses and is audited");
+});
+
+test("the delivery default is per topic: A's ci_run does not make B's phase-less reviewer a delivery reviewer", () => {
+  const tri = (t) => ev("triage", { topic: t, sec: "no", door: "no", prod: "no", track: "full review" });
+  const rv = (t) => ev("agent_start", { role: "reviewer", model: "opus", topic: t });
+  const base = [tri("a"), tri("b"), ev("ci_run", { branch: "a", sha: SHA, workflow: "w", conclusion: "success" })];
+  assert.equal(run([...base, rv("a"), rv("a"), rv("b")]).status, 0, "A's reviewers are delivery (outside caps), B's one design reviewer fits");
+  const r = run([...base, rv("b"), rv("b")]);
+  assert.equal(r.status, 1, "B has no ci_run: its second phase-less reviewer is a design reviewer over the cap of 1");
+  assert.match(r.stdout, /^DEC-03 .*b: reviewer call 2/m);
+});
+
+test("a ci_run without a branch counts for no topic", () => {
+  const e = [ev("triage", { topic: "b", sec: "no", door: "no", prod: "no", track: "full review" }), ev("ci_run", { sha: SHA, workflow: "w", conclusion: "success" })];
+  for (let i = 0; i < 2; i++) e.push(ev("agent_start", { role: "reviewer", model: "opus", topic: "b" }));
+  assert.match(run(e).stdout, /^DEC-03 /m);
+});
+
+test("a review_start on a branch with no triage topic warns without failing", () => {
+  const e = clean();
+  e.splice(6, 0, ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }), ev("review_start", { branch: "orphan", sha: SHA2, ci_state: "green" }));
+  const r = run(e);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /^warn: line 8: review_start branch orphan has no triage topic/m);
+  assert.doesNotMatch(run(clean()).stdout, /warn:/);
 });

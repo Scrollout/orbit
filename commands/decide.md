@@ -1,7 +1,7 @@
 ---
 description: Act as project manager and run a decision the way a team does - triage, discovery, proposals, design review, sign-off, decision record, delivery - with only the people the question needs
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.2.1
+version: 1.2.2
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
@@ -28,8 +28,8 @@ Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scrip
 - DEC-16 `script`: never send a branch with a red or failed CI run to review; a failure gets a `test` issue and goes back to the same coder.
 - DEC-17 `judgment`: every finding, red run and carried item becomes an issue in the profile's tracker with a type label; a commit says `Fixes #n` only when it fully closes the issue, else `Refs #n`.
 - DEC-18 `judgment`: CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol.
-- DEC-20 `script`: build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review.
 - DEC-19 `script`: reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus.
+- DEC-20 `script`: build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review.
 
 ## Flow
 Load the ref for a step when you reach it; the ref holds detail only, the rules above hold the constraints.

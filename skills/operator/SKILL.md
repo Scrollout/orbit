@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.1.0
+version: 1.1.1
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -16,7 +16,7 @@ Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays 
 - OPR-06 `judgment`: a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`).
 - OPR-07 `judgment`: grant one push at a time; a GO names the workflows the push triggers; only one heavy run at a time.
 - OPR-08 `judgment`: never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`.
-- Review gating, track caps and the coder model are `/decide` rules (DEC-01 to DEC-04); the operator applies them when it runs reviews.
+- The operator also applies these `/decide` rules when it runs reviews and merges (defined in `commands/decide.md`): DEC-01 review only after green CI, DEC-03 track caps, DEC-04 coder model, DEC-14 re-reviewer once per fix round, DEC-16 no review on a red run, DEC-19 reviewer models, DEC-20 merge only a reviewed branch.
 
 ## Refs
 Load a ref when you reach its topic; refs hold detail, the rules above hold the constraints.

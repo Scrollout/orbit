@@ -1,5 +1,5 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "rules": [
     {
       "id": "DEC-01",
@@ -110,16 +110,16 @@
       "text": "CONFIRMED findings and PLAUSIBLE security findings go back to the coder; style is logged, not applied; a finding against the spec or design is a new question for this protocol."
     },
     {
-      "id": "DEC-20",
-      "file": "commands/decide.md",
-      "tag": "script",
-      "text": "build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review."
-    },
-    {
       "id": "DEC-19",
       "file": "commands/decide.md",
       "tag": "script",
       "text": "reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus."
+    },
+    {
+      "id": "DEC-20",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review."
     },
     {
       "id": "OPR-01",
