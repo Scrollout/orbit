@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.12.3 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.12.4 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -111,7 +111,7 @@ The audit covers the `script` rules: reviews only on green CI of every recorded 
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).
 - `/orbit:okf-init` scaffolds the bundle (index, log, constitution, doc rules, a `roadmap/` folder with the milestones and the M1 plan, AGENTS.md/CLAUDE.md pointers, `.agents/okf.json`) and never overwrites.
-- `node ~/orbit/scripts/validate-okf.mjs --root .` lints it (zero dependencies; settings from flags or `.agents/okf.json`; defaults: bundle `docs/okf`, 4000 chars per doc, AGENTS.md at most 80 lines, pointer files CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, .cursor/rules/agents.mdc). Skill `okf` has the rules.
+- `node ~/orbit/scripts/validate-okf.mjs --root .` lints it against the OKF v0.2 spec (`type`, reserved `index.md` and `log.md`, the trust and provenance fields: `generated.by`, `verified` entries with `by` and `at`, `sources` entries with a `resource`, timestamps with a UTC offset) plus the stricter doc rules of skill `okf`; `warn:` lines (exit 0) flag an actor off the spec's convention, a human-verified `draft`, and an index line without the doc's description. Tests: `scripts/okf.test.mjs` (zero dependencies; settings from flags or `.agents/okf.json`; defaults: bundle `docs/okf`, 4000 chars per doc, AGENTS.md at most 80 lines, pointer files CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, .cursor/rules/agents.mdc). Skill `okf` has the rules.
 - `hooks/hooks.json` also runs the validator after Write/Edit under the bundle (silent without node or a bundle). `templates/githooks/pre-commit` is a commit-time snippet.
 
 ## Agents sync
