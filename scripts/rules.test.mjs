@@ -22,6 +22,14 @@ test("every rule id appears exactly once in its core file, with the registry's t
   }
 });
 
+test("every hook-tagged rule names the hook that enforces it, and that hook names the rule", () => {
+  for (const r of rules) {
+    if (r.tag !== "hook") { assert.equal(r.enforced_by, undefined, `${r.id} is not a hook rule`); continue; }
+    assert.ok(r.enforced_by && existsSync(join(repo, r.enforced_by)), `${r.id} enforced_by ${r.enforced_by}`);
+    assert.ok(readFileSync(join(repo, r.enforced_by), "utf8").includes(r.id), `${r.enforced_by} does not name ${r.id}`);
+  }
+});
+
 test("rule ids are defined only in the cores (refs may point to an id, never define one)", () => {
   for (const dir of ["refs/decide", "skills/operator/refs"]) {
     for (const f of readdirSync(join(repo, dir))) {

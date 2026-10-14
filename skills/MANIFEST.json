@@ -27,8 +27,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.2.0",
-      "hash": "7d71a6b198606a648f493214219d0ee754700b85861d1d159852b98b07317e6c",
+      "version": "1.3.0",
+      "hash": "fd2a2cc7ac553a4b7e3daec0187d280961d68f26312fec119b2dac311523f624",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -46,8 +46,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.3.1",
-      "hash": "c64e97aa82884c5dcfa50b8a5a8a6b6c64ea3aed6c8f6952b165ba5134e783f0",
+      "version": "1.4.3",
+      "hash": "5566530a2b4c1dd6903fd6021f56deccc6e94d477a3b6339362962c94202ba5f",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -62,6 +62,8 @@
         "scripts/run-tests.mjs",
         "scripts/scenarios.mjs",
         "scripts/validate-okf.mjs",
+        "hooks/guard.mjs",
+        "hooks/guard.sh",
         "hooks/hooks.json",
         "hooks/okf-check.sh",
         "hooks/okf-hook.mjs",

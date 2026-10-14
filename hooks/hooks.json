@@ -1,6 +1,18 @@
 {
-  "description": "After Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
+  "description": "Before Bash and file edits, deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer (hooks/guard.mjs); after Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
