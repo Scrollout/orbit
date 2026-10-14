@@ -44,8 +44,18 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 ## Contents
 - `agents/`, `commands/decide.md`: the team and its process; models: architect and security on fable, reviewer and re-reviewer on opus, the rest on sonnet.
 - `skills/operator`, `skills/peer`: coordinating per-task worker subagents or peer sessions (push queue, merge protocol, auto-compaction, no manual `/clear` or `/compact`).
+- `refs/decide/`, `skills/operator/refs/`: detail (tables, templates, per-step procedures) split out of the two long files; each core file keeps the numbered rules and the flow and says when to load each ref.
 - `hooks/operator-context.sh`: the operator's SessionStart hook (self-test: `sh hooks/operator-context.test.sh`).
 - `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
+
+## Drift guard
+Keeps skills and sessions from drifting. Zero dependencies (Node built-ins); `npm test` runs all of it (plus the hook self-test).
+- **Rule ids.** `/decide` (`DEC-01..`) and the operator skill (`OPR-01..`) each start with a numbered rule list, every rule tagged `script` (an orbit script checks it), `hook` (a hook or git check can) or `judgment`. `rules/rules.json` registers them; a test checks each id appears exactly once in its core file and is not repeated in refs.
+- **Size.** Core files stay short; `node scripts/check-size.mjs` fails a file over 10000 characters (about 2500 tokens) or 100 lines and lists the largest. Move detail to `refs/` files linked from the core with a "load when" line; rules stay in the core.
+- **Profile block.** `templates/project.md` ends with a fenced ```` ```yaml orbit-profile ```` block (base branch, security globs, trailer, labels, tracker, who pushes the base, CI policy, optional production environment). `node scripts/profile.mjs --root .` prints `profile gap: <field>` for each missing or TODO field (exit 1); never guessed.
+- **Triage.** `node scripts/decide-triage.mjs --root . --base <ref> --branch <ref> [--lines sec=..,door=..,prod=..] [--kind small|design|incident]`: a diff touching a security glob forces security yes; prints the track, per-role caps (`rules/tracks.json`, mirrors the /decide table) and the coder model. An unset line is a `triage gap` (exit 2).
+- **Session ledger.** Append-only JSONL, one event per line: `ts`, `session`, `rule_version` (manifest versions of /decide and operator), `kind` and its fields: `triage{topic,sec,door,prod,track,files}`, `agent_start{role,model,topic,phase,fix_scope,cap_reason}`, `ci_run{sha,state}`, `review_start{branch,sha,ci_state}`, `merge_built{merge_sha,tree_equal,ci_state}`, `push{ref,chained}`, `issue_close{n,origin_base_sha,merge_sha}`. Write with `node scripts/ledger.mjs --ledger L --session S <kind> key=value key:=json`; replay with `node scripts/audit-ledger.mjs L --profile .agents/project.md` (violations by rule id, exit 1). The ledger is self-reported: it finds drift, it does not prove honesty.
+- **Versions.** Each command and skill has `version:` in its frontmatter; `skills/MANIFEST.json` records the version and a content hash of the core plus its refs. `node scripts/manifest.mjs --check` fails on an edit without a version bump; `--update` rewrites the manifest (refuses an unbumped edit); `--print` lists the hashes.
 
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).
