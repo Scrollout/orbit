@@ -58,9 +58,10 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   }
   if (typeof e.session !== "string" || !e.session) v("LEDGER", n, "missing session");
   if (!e.rule_version || typeof e.rule_version !== "object") v("LEDGER", n, "missing rule_version");
-  const missing = NEEDS[e.kind].filter((f) => e[f] === undefined || e[f] === "");
+  const missing = NEEDS[e.kind].filter((f) => e[f] === undefined || e[f] === null || e[f] === "");
   if (e.kind === "ci_run" && e.state === undefined && e.conclusion === undefined) missing.push("state or conclusion");
   for (const f of missing) v("LEDGER", n, `${e.kind} needs ${f}`);
+  if (e.kind === "agent_start" && "worker" in e && (typeof e.worker !== "string" || e.worker === "")) { v("LEDGER", n, "agent_start worker must be a non-empty string"); continue; }
   if (missing.length) continue;
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
   const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false });

@@ -313,3 +313,14 @@ test("a worker id derives 'resumed': same worker, later coder event, other model
   assert.equal(run(g("opus")).status, 0, "no worker id on the later event: not derivable");
   assert.equal(run(g("sonnet", { worker: "w1" })).status, 0, "same model is fine");
 });
+
+test("worker must be a non-empty string; merge_built branch may not be null", () => {
+  for (const w of [null, "", {}, 5, ["w"]]) {
+    const e = clean();
+    e[3].worker = w;
+    assert.match(run(e).stdout, /^LEDGER line 4: .*worker/m, JSON.stringify(w));
+  }
+  const e = clean();
+  e[6].branch = null;
+  assert.match(run(e).stdout, /^LEDGER line 7: merge_built needs branch/m);
+});

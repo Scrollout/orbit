@@ -5,10 +5,10 @@
 // A scenario is a directory scenarios/<name>/ with: scenario.json {description, profile?, profile_extra?, triage?}, ledger.jsonl (optional), expect.json.
 //   profile: fixture name (scripts/fixtures/<name>.md, default real-profile); profile_extra: lines added to the machine block (e.g. "standing_waivers: [docs-only]").
 //   triage: {files: [...], lines?: "sec=no,door=no,prod=no", kind?: "small|design|incident"}, run through decide-triage.mjs --files.
-//   expect.json keys (only those present for the parts the scenario has): track, caps, coder_model, triage_exit (default 0) for a triage; violations ({rule id: count}, default {}) and exit (default 0) for a ledger.
+//   expect.json keys (only those present for the parts the scenario has): track, caps, coder_model, triage_exit (default 0), gaps (the `triage gap:` names, when any) for a triage; violations ({rule id: count}, default {}) and exit (default 0) for a ledger.
 // scenarios/pin.json pins the versions of /decide, the operator skill and the rules the scenarios were reviewed against (see scenarios.test.mjs).
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -26,11 +26,17 @@ export function actual(name) {
   let text = readFileSync(join(here, "fixtures", `${sc.profile ?? "real-profile"}.md`), "utf8");
   if (sc.profile_extra) text = text.replace(/^(ci_policy: .*)$/m, (m) => [m, ...sc.profile_extra].join("\n"));
   writeFileSync(join(root, ".agents", "project.md"), text);
+  try { return run(d, sc, root); } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+function run(d, sc, root) {
   const out = {};
   if (sc.triage) {
     const t = sc.triage;
     const r = node("decide-triage.mjs", ["--root", root, "--files", t.files.join(","), ...(t.lines ? ["--lines", t.lines] : []), ...(t.kind ? ["--kind", t.kind] : [])]);
     out.triage_exit = r.status;
+    out.gaps = [...r.stdout.matchAll(/^triage gap: (.*)$/gm)].map((m) => m[1]);
+    if (!out.gaps.length) delete out.gaps;
     for (const [k, re] of [["track", /^track: (.*)$/m], ["caps", /^caps: (.*)$/m], ["coder_model", /^coder model: (.*)$/m]]) { const m = r.stdout.match(re); if (m) out[k] = m[1]; }
   }
   if (existsSync(join(d, "ledger.jsonl"))) {

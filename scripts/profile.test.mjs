@@ -152,3 +152,14 @@ test("an empty, / or ./ security_paths entry is a profile gap, never a match-all
   const r = run(rootWith(block(full.replace('["a/**", Makefile]', '["a/**", "/"]'))));
   assert.match(r.stdout, /^profile gap: security_paths$/m);
 });
+
+test("a security_paths entry with no non-empty segment is a gap, block or inline form", async () => {
+  const { gaps } = await import("./profile.mjs");
+  const mk = (sp) => ({ base_branch: "main", security_paths: sp, review_trailer: "R", labels: ["a"], issue_tracker: "github", base_pusher: "agent", ci_policy: "ci-only" });
+  for (const bad of ["//", ".//", "///", "./."]) assert.deepEqual(gaps(mk(["a/", bad])), ["security_paths"], bad);
+  for (const inline of ['[a/, ""]', "[a/, , b]", "[a/, ]", "[, a/]"]) {
+    const r = run(rootWith(block(full.replace('["a/**", Makefile]', inline))));
+    assert.match(r.stdout, /^profile gap: security_paths$/m, inline);
+  }
+  assert.equal(run(rootWith(block(full.replace('["a/**", Makefile]', "[]")))).stdout.trim(), "profile gap: security_paths");
+});

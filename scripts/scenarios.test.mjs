@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actual, differs, dir, expected, names } from "./scenarios.mjs";
@@ -52,4 +53,19 @@ test("scenarios are anonymised: no project, host, user or lab names", () => {
     const text = readFileSync(join(dir, n, f), "utf8");
     for (const bad of [/portfolio/i, /scrollout/i, /\/home\//, /marius/i, /platform-lab/, /k3s/i, /\blab\b/i, /gologan/i]) assert.doesNotMatch(text, bad, `${n}/${f}`);
   }
+});
+
+test("a security-contest scenario is on a one-way door (DEC-13)", () => {
+  for (const n of ["security-contest-rebuttal-ok", "security-contest-rebuttal-needs-reason"]) assert.equal(JSON.parse(readFileSync(join(dir, n, "ledger.jsonl"), "utf8").split("\n")[0]).door, "yes", n);
+});
+
+test("triage-gap scenarios pin the reported gap list", () => {
+  assert.deepEqual(expected("triage-gap-door-unset").gaps, ["door"]);
+  assert.deepEqual(expected("triage-gap-kind-unset").gaps, ["kind"]);
+});
+
+test("a scenario run leaves no temp directory behind", () => {
+  const before = readdirSync(tmpdir()).filter((f) => f.startsWith("scn-")).length;
+  actual("lifecycle-clean"); actual("triage-docs-only-small");
+  assert.equal(readdirSync(tmpdir()).filter((f) => f.startsWith("scn-")).length, before);
 });
