@@ -39,7 +39,7 @@ const splitInline = (s) => {
   return out.map(unquote).filter((x) => x !== "");
 };
 
-export function parseProfileText(text) {
+export function parseProfileText(text, warnings = []) {
   const m = text.match(/^```yaml[ \t]+orbit-profile[ \t]*\r?\n([\s\S]*?)^```/m);
   if (!m) return null;
   const data = {};
@@ -52,6 +52,7 @@ export function parseProfileText(text) {
     const kv = line.match(/^([A-Za-z_][\w]*):\s*(.*)$/);
     if (!kv) continue;
     key = kv[1];
+    if (key in data) warnings.push(`duplicate key ${key}`);
     const v = kv[2].trim();
     if (v === "") data[key] = "";
     else if (v.startsWith("[") && v.endsWith("]")) data[key] = splitInline(v.slice(1, -1));
@@ -62,8 +63,9 @@ export function parseProfileText(text) {
 
 export function loadProfile(root, path) {
   const file = resolve(root, path ?? ".agents/project.md");
-  if (!existsSync(file)) return { file, data: null };
-  return { file, data: parseProfileText(readFileSync(file, "utf8")) };
+  if (!existsSync(file)) return { file, data: null, warnings: [] };
+  const warnings = [];
+  return { file, data: parseProfileText(readFileSync(file, "utf8"), warnings), warnings };
 }
 
 const isTodo = (s) => /^TODO\b/i.test(String(s).trim());
@@ -72,7 +74,7 @@ export function gaps(data) {
   for (const [name, spec] of Object.entries(FIELDS)) {
     const v = data?.[name];
     const missing = v === undefined;
-    const empty = missing || (Array.isArray(v) ? v.length === 0 || v.some(isTodo) : v === "" || isTodo(v));
+    const empty = missing || (spec.list && !Array.isArray(v)) || (Array.isArray(v) ? v.length === 0 || v.some(isTodo) : v === "" || isTodo(v));
     if (missing && !spec.required) continue;
     if (empty || (spec.enum && !spec.enum.includes(v))) out.push(name);
   }
@@ -80,14 +82,15 @@ export function gaps(data) {
 }
 
 // Globs: `*` and `?` stay inside a directory, `**` crosses directories, a trailing `/` (or a plain directory name)
-// covers everything below it, patterns are anchored at the repo root.
+// covers everything below it, patterns are anchored at the repo root (`**/Makefile` matches it at any depth);
+// braces and character classes are not supported (taken literally).
 export function globToRegExp(glob) {
   let g = glob.replace(/^\.?\//, "");
   if (g.endsWith("/")) g += "**";
   let re = "";
   for (let i = 0; i < g.length; i++) {
     const c = g[i];
-    if (c === "*" && g[i + 1] === "*") { re += ".*"; i++; if (g[i + 1] === "/") i++; }
+    if (c === "*" && g[i + 1] === "*") { i++; if (g[i + 1] === "/") { i++; re += "(?:.*/)?"; } else re += ".*"; }
     else if (c === "*") re += "[^/]*";
     else if (c === "?") re += "[^/]";
     else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
@@ -99,7 +102,8 @@ export const matchesAny = (file, globs) => globs.some((g) => globToRegExp(g).tes
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
-  const { file, data } = loadProfile(flag("root") ?? ".", flag("profile"));
+  const { file, data, warnings } = loadProfile(flag("root") ?? ".", flag("profile"));
+  for (const w of warnings) console.error(`profile warning: ${w}`);
   if (args.includes("--json") && data) console.log(JSON.stringify(data, null, 2));
   const g = gaps(data);
   if (!args.includes("--json") || g.length) for (const f of g) console.log(`profile gap: ${f}`);

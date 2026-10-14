@@ -84,3 +84,54 @@ test("prod line is skipped when the profile has no production environment", () =
   const r = run(repo(["a.md"]), "--lines", "sec=no,door=no", "--kind", "small");
   assert.equal(r.status, 0, r.stdout);
 });
+
+test("a rename out of a security path counts (both paths), and odd file names do not break parsing", () => {
+  const root = mkdtempSync(join(tmpdir(), "tri-"));
+  git(root, "init", "-q", "-b", "main");
+  mkdirSync(join(root, ".agents"));
+  writeFileSync(join(root, ".agents/project.md"), profile);
+  mkdirSync(join(root, "auth"));
+  writeFileSync(join(root, "auth/secret.go"), "package auth // some content that is long enough to be detected as a rename\n".repeat(5));
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "init");
+  git(root, "checkout", "-q", "-b", "topic");
+  git(root, "mv", "auth/secret.go", "moved.go");
+  writeFileSync(join(root, "café \"q\".md"), "z");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "mv");
+  const r = run(root, "--lines", "sec=no,door=no,prod=no");
+  assert.match(get(r.stdout, "security"), /^yes \(forced: auth\/secret\.go\)/);
+});
+
+test("three-dot diff: a security change that landed on the base after the branch point is not the branch's", () => {
+  const root = repo(["docs/a.md"]);
+  git(root, "checkout", "-q", "main");
+  writeFileSync(join(root, "Makefile"), "all:\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "base moved");
+  const r = run(root, "--lines", "sec=no,door=no,prod=no", "--kind", "small");
+  assert.equal(get(r.stdout, "security"), "no");
+});
+
+test("an unfilled template (TODO list) is a profile gap, exit 1", () => {
+  const root = repo(["a.md"]);
+  writeFileSync(join(root, ".agents/project.md"), profile.replace('[Makefile, ".github/workflows/", "scripts/check-*", "auth/**"]', "[TODO]"));
+  const r = run(root, "--lines", "sec=no,door=no,prod=no", "--kind", "small");
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /profile gap: security_paths/);
+});
+
+test("unknown --kind is rejected with exit 64; incident picks the opus coder", () => {
+  assert.equal(run(repo(["a.md"]), "--lines", "sec=no,door=no,prod=no", "--kind", "smal").status, 64);
+  const r = run(repo(["a.md"]), "--lines", "sec=no,door=no,prod=no", "--kind", "incident");
+  assert.equal(get(r.stdout, "coder model"), "opus");
+});
+
+test("production_env: TODO needs prod= (a triage gap), none or absent skips it", () => {
+  const root = repo(["a.md"]);
+  writeFileSync(join(root, ".agents/project.md"), profile.replace("production_env: none", "production_env: TODO"));
+  const g = run(root, "--lines", "sec=no,door=no", "--kind", "small");
+  assert.equal(g.status, 2);
+  assert.match(g.stdout, /triage gap: prod/);
+  assert.equal(run(root, "--lines", "sec=no,door=no,prod=no", "--kind", "small").status, 0);
+});

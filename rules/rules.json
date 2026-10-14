@@ -10,7 +10,7 @@
       "id": "DEC-02",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "a branch whose `git diff --name-only <base>..<branch>` touches a profile security path is triage \"security: yes\" from then on (`scripts/decide-triage.mjs`)."
+      "text": "a branch whose `git diff --name-only <base>...<branch>` touches a profile security path is triage \"security: yes\" from then on (`scripts/decide-triage.mjs`)."
     },
     {
       "id": "DEC-03",

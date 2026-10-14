@@ -62,3 +62,26 @@ test("bad enum value is a gap", () => {
   const r = run(rootWith(block(full.replace("ci-only", "whatever"))));
   assert.equal(r.stdout.trim(), "profile gap: ci_policy");
 });
+
+test("a scalar where a list is expected is a gap, not a crash", () => {
+  const r = run(rootWith(block(full.replace('security_paths: ["a/**", Makefile]', "security_paths: internal/auth/"))));
+  assert.equal(r.stdout.trim(), "profile gap: security_paths");
+  assert.doesNotMatch(r.stderr, /TypeError/);
+});
+
+test("duplicate keys warn on stderr (last one wins)", () => {
+  const r = run(rootWith(block(full + "\nbase_branch: develop")), "--json");
+  assert.match(r.stderr, /profile warning: duplicate key base_branch/);
+  assert.equal(JSON.parse(r.stdout).base_branch, "develop");
+});
+
+test("globs: root-anchored, ** crosses directories, **/ matches nested and root, braces are literal", async () => {
+  const { matchesAny } = await import("./profile.mjs");
+  assert.ok(matchesAny("Makefile", ["Makefile"]));
+  assert.ok(!matchesAny("sub/Makefile", ["Makefile"]));
+  assert.ok(matchesAny("sub/Makefile", ["**/Makefile"]));
+  assert.ok(matchesAny("Makefile", ["**/Makefile"]));
+  assert.ok(!matchesAny("fooMakefile", ["**/Makefile"]));
+  assert.ok(matchesAny("ci/images.mk", ["ci/**"]));
+  assert.ok(!matchesAny("a.go", ["{a,b}.go"]));
+});

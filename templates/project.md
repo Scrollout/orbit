@@ -83,7 +83,7 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Extra one-way doors beyond data, migrations, API contract, security boundary, money/destructive operations: <...>
 
 ## Machine profile
-Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs: `*` within a directory, `**` across, a trailing `/` or a plain directory name covers everything below it, no leading slash); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name).
+Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs anchored at the repo root: `*` within a directory, `**` across directories, `**/Makefile` for a file at any depth, a trailing `/` or a plain directory name covers everything below it; no leading slash, no braces; matched against `git diff --name-only <base>...<branch>`, renames count both paths); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name; `TODO` is allowed but then `decide-triage.mjs` needs `prod=` on every run).
 ```yaml orbit-profile
 base_branch: TODO
 security_paths: [TODO]

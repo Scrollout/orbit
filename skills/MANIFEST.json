@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.1.0",
-      "hash": "2e9c3883e9a4038fcebdf0d81ff463e678b85fa52d10ddfe33024cf8e045390f",
+      "version": "1.1.1",
+      "hash": "d21d45d03cd322f0fe4f4c73f9f4f195d768d27d7e5d0883859a4f3281c0fee5",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
