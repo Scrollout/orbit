@@ -60,9 +60,11 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Commit wording: `Fixes #n` only when the commit fully closes the issue, else `Refs #n` (closing keywords fire when the branch reaches the default branch).
 
 ## Releases
-- When: <each milestone merged into the default branch / each change set / never>.
-- Version: SemVer `vMAJOR.MINOR.PATCH` (0.y.z while unstable; MINOR for features, PATCH for fixes and docs). Version files to bump: <path or none>.
-- Who: <the owning session, after the owner's go>.
+Machine fields `release_when`, `release_via`, `release_tool`, `changelog`, `version_files` (operator rule OPR-09; setting `release_when` is the owner's standing go).
+- When (`release_when`): `change-set` (every merge to the base, released before the next is pushed), `milestone` (when a tracker milestone closes) or `never`.
+- How (`release_via`): `ci` (a tag-triggered workflow builds, attests and publishes; start from the plugin's `templates/release.yml`) or `session` (`gh release create --verify-tag` from a worker). Release tool (`release_tool`): `none`, or the tool that owns versions and notes (`release-please`, `changesets`, `semantic-release`, `goreleaser`, `other`).
+- Version: SemVer `vMAJOR.MINOR.PATCH` (0.y.z while unstable: breaking or feature MINOR, fix and docs PATCH), bumped in the change itself. Version files (`version_files`): <paths, or []>. Changelog (`changelog`): <path, Keep a Changelog sections>.
+- Guard rails (checked by `release-check.mjs --repo`): required checks on the base, a tag ruleset on `v*` (no update or delete), immutable releases, signed tags.
 
 ## Docs
 - Location and entry point: <path>. Format rules: <path or summary>.
@@ -95,6 +97,11 @@ ci_policy: TODO
 production_env: TODO
 standing_waivers: []
 ledger_path: .agents/ledger.jsonl
+release_when: TODO
+release_via: TODO
+release_tool: none
+changelog: CHANGELOG.md
+version_files: []
 ```
 
 ## Non-negotiable rules

@@ -34,7 +34,7 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 - Check: `git log -1 --format='%(trailers:key=Reviewed-By,valueonly)'`
 
 ## Issues
-- Releases: each milestone merged into `main` is `v0.<milestone>.0`; the owning session tags and releases after the owner's go.
+- Releases: each milestone merged into `develop` is `v0.<milestone>.0`, tagged on the merge commit and released by the tag-triggered `release.yml` workflow (checksums and provenance attestation); `package.json` and `CHANGELOG.md` are bumped on the milestone's release branch.
 - GitHub issues via `gh`; the PM opens and closes them. Labels: `bug`, `test`, `review`, `enhancement` (at least one), plus `security`, `deferred`. Issue type: Bug for `bug`, `test`, `review`; Feature for `enhancement`; Task otherwise.
 - `Fixes #n` only when a commit fully closes the issue, else `Refs #n`.
 
@@ -64,6 +64,11 @@ ci_policy: ci-only
 production_env: prod
 standing_waivers: [docs-only]
 ledger_path: .agents/ledger.jsonl
+release_when: milestone
+release_via: ci
+release_tool: none
+changelog: CHANGELOG.md
+version_files: [package.json]
 ```
 
 ## Non-negotiable rules

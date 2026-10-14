@@ -1,0 +1,7 @@
+{
+  "description": "release_via ci: the tag-triggered workflow publishes; a session release would break the profile",
+  "profile_extra": [
+    "release_when: change-set",
+    "release_via: ci"
+  ]
+}

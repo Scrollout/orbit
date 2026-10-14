@@ -163,3 +163,15 @@ test("a security_paths entry with no non-empty segment is a gap, block or inline
   }
   assert.equal(run(rootWith(block(full.replace('["a/**", Makefile]', "[]")))).stdout.trim(), "profile gap: security_paths");
 });
+
+test("release fields are optional; a bad or TODO value is a gap for profile.mjs but not for triage", () => {
+  assert.equal(run(rootWith(block(`${full}\nrelease_when: change-set\nrelease_via: ci\nrelease_tool: none\nchangelog: CHANGELOG.md\nversion_files: [package.json]`))).status, 0);
+  for (const [line, field] of [["release_when: weekly", "release_when"], ["release_when: TODO", "release_when"], ["release_via: laptop", "release_via"], ["release_tool: make", "release_tool"], ["version_files: package.json", "version_files"]]) {
+    const root = rootWith(block(`${full}\n${line}`));
+    const r = run(root);
+    assert.equal(r.status, 1, line);
+    assert.match(r.stdout, new RegExp(`^profile gap: ${field}$`, "m"), line);
+    const t = spawnSync("node", [join(here, "decide-triage.mjs"), "--root", root, "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
+    assert.equal(t.status, 0, `${line}: ${t.stdout}`);
+  }
+});

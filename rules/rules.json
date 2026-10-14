@@ -1,5 +1,5 @@
 {
-  "version": "1.5.2",
+  "version": "1.6.0",
   "rules": [
     {
       "id": "DEC-01",
@@ -170,6 +170,12 @@
       "file": "skills/operator/SKILL.md",
       "tag": "judgment",
       "text": "never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`."
+    },
+    {
+      "id": "OPR-09",
+      "file": "skills/operator/SKILL.md",
+      "tag": "script",
+      "text": "releases follow the profile's `release_when`: with `change-set`, a merge pushed to the base is released before the next merge is pushed (its `merge_built` may give a `release_skip` reason; a `release_tool` owns the cadence); with `milestone`, at the milestone's close; with `never`, nothing is tagged. A release is an annotated `vX.Y.Z` tag (signed when a key is configured) on a merge commit already pushed to the base, pushed alone by its full ref by the profile's `base_pusher`, then a release from that tag (`--verify-tag`, or by CI with `release_via: ci`), `latest` only on the highest version; a published tag or release is never moved, deleted or re-created."
     }
   ]
 }

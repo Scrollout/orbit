@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gaps, loadProfile, matchesAny } from "./profile.mjs";
+import { gaps, loadProfile, matchesAny, RELEASE_FIELDS } from "./profile.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -20,7 +20,8 @@ if (!planned && (!base || !branch)) { console.error("usage: decide-triage.mjs --
 
 const { data: profile } = loadProfile(root, flag("profile"));
 // production_env TODO is not a profile gap here: it just means the prod= line must be given (or the field set to none).
-const pg = gaps(profile).filter((g) => g !== "production_env");
+// Release fields do not affect triage.
+const pg = gaps(profile).filter((g) => g !== "production_env" && !RELEASE_FIELDS.includes(g));
 if (pg.length) { for (const g of pg) console.log(`profile gap: ${g}`); process.exit(1); }
 const kind = flag("kind");
 if (kind !== undefined && !["small", "design", "incident"].includes(kind)) { console.error(`bad --kind: ${kind} (small, design or incident)`); process.exit(64); }

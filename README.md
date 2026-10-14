@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.13.0 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.14.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -64,7 +64,7 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 - **Docs.** `node scripts/check-docs.mjs` checks that plugin.json, the CHANGELOG and the `Version:` line above agree and that links and referenced paths resolve.
 
 ### Project profile block
-`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (an empty, `/` or `./` entry is a gap, never a match-all; globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`, optional `standing_waivers` (review-waived classes such as `docs-only`; `merge_built.waived` must cite one or be `owner` with a reason) and optional `ledger_path` (default `.agents/ledger.jsonl`, untracked).
+`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (an empty, `/` or `./` entry is a gap, never a match-all; globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`, optional `standing_waivers` (review-waived classes such as `docs-only`; `merge_built.waived` must cite one or be `owner` with a reason) optional `ledger_path` (default `.agents/ledger.jsonl`, untracked), and the optional release fields (see Releases): `release_when` (`change-set`, `milestone` or `never`), `release_via` (`ci` or `session`), `release_tool` (`none`, `release-please`, `changesets`, `semantic-release`, `goreleaser`, `other`), `changelog` and `version_files`; triage ignores them.
 - `node scripts/profile.mjs --root .` prints `profile gap: <field>` for each missing, empty, TODO, wrongly typed or out-of-enum field (exit 1), warns on duplicate keys, and never guesses. `--json` prints the parsed block.
 
 ### Triage and track
@@ -81,11 +81,13 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 | `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `worker` (an id for the worker session: a later coder event with the same id and another model is a violation even without `resumed`; a fresh coder gets a new id), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
 | `ci_run` | `branch` (= topic; a run without it counts for no topic's phase default), `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
 | `review_start` | `branch`, `sha`, `ci_state`, `role` (`reviewer` or `re-reviewer`) |
-| `merge_built` | `branch` (required), `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
+| `merge_built` | `branch` (required), `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`), `release_skip` (why this merge is not released, OPR-09) |
 | `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |
 | `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
+| `tag_push` | `tag` (`vX.Y.Z`), `sha` (the merge commit), `by` (`agent` or `owner`; `ci` when a `release_tool` tags), `annotated`, `chained`, `signed` |
+| `release` | `tag`, `url`, `via` (`session` default, or `ci`), `verify_tag`, `latest`, `prerelease` |
 
-The audit covers the `script` rules: reviews only on green CI of every recorded workflow and never on a red one, no second review of a sha without a fix, one re-reviewer per fix round on a new sha, security glob matches sticky, caps (delivery reviewers excluded), coder and reviewer models, merge only for a reviewed branch (or an owner waiver) with tree equality and green catch-up CI, base push alone, by the profile's pusher and only for a built merge, issue close after that push with `origin/<base>` equal to the merge sha. The ledger is self-reported: it finds drift, it does not prove honesty.
+The audit covers the `script` rules: reviews only on green CI of every recorded workflow and never on a red one, no second review of a sha without a fix, one re-reviewer per fix round on a new sha, security glob matches sticky, caps (delivery reviewers excluded), coder and reviewer models, merge only for a reviewed branch (or an owner waiver) with tree equality and green catch-up CI, base push alone, by the profile's pusher and only for a built merge, issue close after that push with `origin/<base>` equal to the merge sha; releases (OPR-09): a SemVer tag, annotated and pushed alone by the profile's pusher on a commit pushed to the base (or a `release/X.Y` line), never moved; a release only from a pushed tag, with `--verify-tag` unless CI made it, made the way `release_via` says, `latest` only on the highest version, a pre-release marked as one, never re-created; with `release_when: change-set` (and no `release_tool`), no merge is pushed while the previous one has no release (a last unreleased merge, or an unset `release_when`, is a `warn:`). The ledger is self-reported: it finds drift, it does not prove honesty.
 
 ### Golden scenarios
 - `scenarios/<name>/` is one scripted case: `scenario.json` (`description`, optional `profile` fixture name from `scripts/fixtures/` (default `real-profile`), `profile_extra` lines for the machine block such as `standing_waivers: [docs-only]`, optional `triage` input `{files, lines, kind}`), an optional `ledger.jsonl`, and `expect.json` (`track`, `caps`, `coder_model`, `triage_exit`, `gaps` for a triage; `violations` by rule id and `exit` for a ledger). `scripts/scenarios.test.mjs` runs them all in `npm test`.
@@ -98,6 +100,14 @@ The audit covers the `script` rules: reviews only on green CI of every recorded 
 - Decision-record lint: parse the decision-record table for columns, verdict words and the three triage lines.
 - Condition ledger: `condition` events so every security condition has a proof test before the merge.
 - Ledger auto-capture: hooks append `agent_start` and `push` events so the ledger does not depend on the operator remembering.
+
+## Releases
+Every project that sets `release_when` releases like a team with a release process: operator rule OPR-09, steps in [the merge protocol](skills/operator/refs/merge-protocol.md#releases), checked by the audit.
+- **Version in the change.** SemVer, bumped with the change (or on a milestone's release branch) and reviewed with it, the changelog's `## X.Y.Z` section beside it; a `release_tool` (release-please, changesets, ...) owns that step when the profile names one.
+- **Tag on the pushed merge.** Annotated (signed when a key is configured), on the merge commit once it is on the base with green CI, pushed alone by its full ref by the profile's `base_pusher`; never moved or deleted: a bad release is fixed forward and deprecated or yanked where it was published.
+- **Release from the tag.** `release_via: ci`: a tag-triggered workflow tests, builds, writes `SHA256SUMS`, attests provenance and publishes (`templates/release.yml`, pinned action SHAs, least-privilege permissions). `session`: `gh release create --verify-tag` with the changelog section and the compare link. `--latest` only for the highest version, `--prerelease` for `-rc.N`.
+- **`node scripts/release-check.mjs --next`** prints the last tag, the bump the commits since then need (Conventional Commits), the next version, and gaps: version files that disagree or do not cover the bump, a changelog behind, a tag that already exists; `--notes <file>` writes the release notes.
+- **`node scripts/release-check.mjs --repo`** reads the forge's guard rails through `gh api` (required checks and no force push on the base, a tag ruleset on `v*`, immutable releases, CI, tag signing) and prints each gap with its fix for the owner. It changes nothing.
 
 ## Operator guard
 `hooks/guard.mjs` runs before every Bash, Edit, Write, MultiEdit and NotebookEdit call and denies a breach with the rule id and what to delegate. **A guardrail against slips, not a sandbox**: it reads the command the way a shell would for the common forms and fails closed on what it cannot read, but a determined session can still write a file in a way it does not model (for example a compiled program, or a tool it does not list). The permission system stays the real boundary.

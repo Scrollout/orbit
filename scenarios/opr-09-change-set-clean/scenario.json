@@ -1,0 +1,7 @@
+{
+  "description": "change-set: each merge is tagged on its pushed merge commit and released before the next merge is pushed",
+  "profile_extra": [
+    "release_when: change-set",
+    "release_via: session"
+  ]
+}
