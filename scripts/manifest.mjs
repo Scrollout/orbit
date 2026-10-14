@@ -1,6 +1,6 @@
 // Content hash and version per skill and command, so an edit without a version bump is caught. Zero dependencies.
 //   node <plugin>/scripts/manifest.mjs [--root .] --check | --update | --print
-// Also one shared entry for rules/*.json, scripts/*.mjs, hooks/*, agents/*.md and templates/project.md (version: rules/rules.json). An entry is a core file (commands/*.md, skills/*/SKILL.md) plus its refs (refs/<command>/ or skills/<skill>/refs/).
+// Also one shared entry for rules/*.json, scripts/*.mjs, hooks/*, agents/*.md, templates/project.md, scenarios/**, scripts/scenarios.test.mjs and scripts/fixtures/real-profile.md (version: rules/rules.json). An entry is a core file (commands/*.md, skills/*/SKILL.md) plus its refs (refs/<command>/ or skills/<skill>/refs/).
 // The version is the `version:` line of the core's frontmatter; the hash covers the core and its refs.
 // --check: exit 1 if an entry is missing, has no version, was edited without a version bump, or the manifest is stale.
 // --update: rewrite skills/MANIFEST.json; refuses an entry whose content changed but whose version did not.
@@ -19,6 +19,7 @@ const root = resolve(flag("root") ?? ".");
 const manifestPath = join(root, "skills", "MANIFEST.json");
 
 const ls = (d) => (existsSync(join(root, d)) ? readdirSync(join(root, d)).sort() : []);
+const walk = (d) => ls(d).flatMap((f) => (statSync(join(root, d, f)).isDirectory() ? walk(`${d}/${f}`) : [`${d}/${f}`]));
 const hashOf = (files) => {
   const h = createHash("sha256");
   for (const f of files) h.update(`${f}\n${readFileSync(join(root, f), "utf8").replace(/\r\n/g, "\n")}\n`);
@@ -41,6 +42,9 @@ export function entries() {
       ...ls("scripts").filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")).map((f) => `scripts/${f}`),
       ...ls("hooks").filter((f) => !/\.test\./.test(f) && existsSync(join(root, "hooks", f)) && statSync(join(root, "hooks", f)).isFile()).map((f) => `hooks/${f}`),
       ...ls("agents").filter((f) => f.endsWith(".md")).map((f) => `agents/${f}`),
+      ...walk("scenarios"),
+      ...ls("scripts").filter((f) => f === "scenarios.test.mjs").map((f) => `scripts/${f}`),
+      ...(existsSync(join(root, "scripts/fixtures/real-profile.md")) ? ["scripts/fixtures/real-profile.md"] : []),
       ...(existsSync(join(root, "templates/project.md")) ? ["templates/project.md"] : []),
     ];
     res.push({ core: "rules/rules.json", files, version: JSON.parse(readFileSync(join(root, "rules/rules.json"), "utf8")).version, hash: hashOf(files) });

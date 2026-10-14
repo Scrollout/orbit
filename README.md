@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.12.1 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.12.2 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -61,7 +61,7 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 - **Docs.** `node scripts/check-docs.mjs` checks that plugin.json, the CHANGELOG and the `Version:` line above agree and that links and referenced paths resolve.
 
 ### Project profile block
-`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`, optional `standing_waivers` (review-waived classes such as `docs-only`; `merge_built.waived` must cite one or be `owner` with a reason) and optional `ledger_path` (default `.agents/ledger.jsonl`, untracked).
+`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (an empty, `/` or `./` entry is a gap, never a match-all; globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`, optional `standing_waivers` (review-waived classes such as `docs-only`; `merge_built.waived` must cite one or be `owner` with a reason) and optional `ledger_path` (default `.agents/ledger.jsonl`, untracked).
 - `node scripts/profile.mjs --root .` prints `profile gap: <field>` for each missing, empty, TODO, wrongly typed or out-of-enum field (exit 1), warns on duplicate keys, and never guesses. `--json` prints the parsed block.
 
 ### Triage and track
@@ -75,18 +75,23 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 | kind | fields |
 |---|---|
 | `triage` | `topic`, `sec`, `door`, `prod`, `track`, `files` (changed paths) |
-| `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
+| `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `worker` (an id for the worker session: a later coder event with the same id and another model is a violation even without `resumed`; a fresh coder gets a new id), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
 | `ci_run` | `branch` (= topic; a run without it counts for no topic's phase default), `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
 | `review_start` | `branch`, `sha`, `ci_state`, `role` (`reviewer` or `re-reviewer`) |
-| `merge_built` | `branch`, `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
+| `merge_built` | `branch` (required), `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
 | `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |
 | `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
 
 The audit covers the `script` rules: reviews only on green CI of every recorded workflow and never on a red one, no second review of a sha without a fix, one re-reviewer per fix round on a new sha, security glob matches sticky, caps (delivery reviewers excluded), coder and reviewer models, merge only for a reviewed branch (or an owner waiver) with tree equality and green catch-up CI, base push alone, by the profile's pusher and only for a built merge, issue close after that push with `origin/<base>` equal to the merge sha. The ledger is self-reported: it finds drift, it does not prove honesty.
 
+### Golden scenarios
+- `scenarios/<name>/` is one scripted case: `scenario.json` (`description`, optional `profile` fixture name from `scripts/fixtures/` (default `real-profile`), `profile_extra` lines for the machine block such as `standing_waivers: [docs-only]`, optional `triage` input `{files, lines, kind}`), an optional `ledger.jsonl`, and `expect.json` (`track`, `caps`, `coder_model`, `triage_exit`, `gaps` for a triage; `violations` by rule id and `exit` for a ledger). `scripts/scenarios.test.mjs` runs them all in `npm test`.
+- `node scripts/scenarios.mjs --list` names them, `--print <name>` shows the actual outcome (paste it into `expect.json` after reading it), and `[--run] [name]` compares and prints the difference.
+- **Add one**: copy a close scenario, edit the ledger, run `--print`, check that every violation is the one you meant, save it as `expect.json`. A new `script` rule needs a scenario that expects its id (a test checks it).
+- **Why they fail on purpose**: `scenarios/pin.json` holds the `/decide`, operator and rules versions the scenarios were reviewed against. An edit that changes behaviour fails its scenario; an edit that does not change it still needs a version bump (manifest), which fails the pin until the scenarios are re-read and the pin is updated. Scenarios use the anonymised fixture only; a test rejects project, host and user names.
+
 ### Next steps (not built yet)
 - Hooks: block repo writes and `git commit|merge|push` in the operator session (OPR-01); check the trailer paragraph on the merge commit (DEC-08).
-- Golden scenarios: scripted ledgers and briefs with expected tracks and violations, run in `npm test`, so a skill edit that changes behaviour fails.
 - Cross-project diff: compare two profile blocks and flag the fields that differ.
 - Decision-record lint: parse the decision-record table for columns, verdict words and the three triage lines.
 - Condition ledger: `condition` events so every security condition has a proof test before the merge.

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,4 +134,29 @@ test("hooks, agents and templates/project.md join the shared hash", () => {
   writeFileSync(join(root, "agents/a.md"), "changed");
   assert.match(run(root, "--check").stdout, /edited without a version bump/);
   writeFileSync(join(root, "templates/other.md"), "not hashed");
+});
+
+test("the rules entry also hashes scenarios, the scenario test and the profile fixture", () => {
+  const m = JSON.parse(readFileSync(join(repo, "skills/MANIFEST.json"), "utf8")).entries["rules/rules.json"].files;
+  for (const f of ["scenarios/pin.json", "scenarios/lifecycle-clean/expect.json", "scenarios/lifecycle-clean/ledger.jsonl", "scripts/scenarios.test.mjs", "scripts/fixtures/real-profile.md"]) assert.ok(m.includes(f), f);
+  const root = tree();
+  mkdirSync(join(root, "rules"));
+  mkdirSync(join(root, "scenarios/s"), { recursive: true });
+  mkdirSync(join(root, "scripts/fixtures"), { recursive: true });
+  writeFileSync(join(root, "rules/rules.json"), JSON.stringify({ version: "1.0.0", rules: [] }));
+  writeFileSync(join(root, "scenarios/s/expect.json"), "{}");
+  writeFileSync(join(root, "scripts/fixtures/real-profile.md"), "p");
+  writeFileSync(join(root, "scripts/scenarios.test.mjs"), "t");
+  assert.equal(run(root, "--update").status, 0);
+  assert.equal(run(root, "--check").status, 0);
+  for (const [f, body] of [["scenarios/s/expect.json", '{"x":1}'], ["scripts/fixtures/real-profile.md", "q"], ["scripts/scenarios.test.mjs", "u"]]) {
+    const old = readFileSync(join(root, f), "utf8");
+    writeFileSync(join(root, f), body);
+    const r = run(root, "--check");
+    assert.equal(r.status, 1, f);
+    assert.match(r.stdout, /rules\/rules\.json: edited without a version bump/);
+    writeFileSync(join(root, f), old);
+  }
+  rmSync(join(root, "scenarios/s/expect.json"));
+  assert.equal(run(root, "--check").status, 1, "a deleted scenario file trips it");
 });

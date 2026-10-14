@@ -3,10 +3,10 @@
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
 //   triage{topic,sec,door,prod,track,files?}   topic is the branch name
-//   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?,resumed?,reason?}   phase: design | build | fix | delivery
+//   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?,resumed?,worker?,reason?}   phase: design | build | fix | delivery
 //   ci_run{branch?,sha,workflow?,state|conclusion}   branch (= topic) makes that topic's reviewers delivery reviewers by default; without it the run counts for no topic. green = state green or conclusion success
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
-//   merge_built{branch,merge_sha,tree_equal,ci_state,waived?,waiver_reason?}   waived: a profile standing_waivers entry, or "owner" + waiver_reason
+//   merge_built{branch (required),merge_sha,tree_equal,ci_state,waived?,waiver_reason?}   waived: a profile standing_waivers entry, or "owner" + waiver_reason
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
 //   issue_close{n,origin_base_sha,merge_sha}
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
@@ -33,11 +33,11 @@ const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built",
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["merge_sha"], push: ["ref"], issue_close: ["merge_sha"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
-const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict();
+const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
 const branchState = dict();           // per branch: reviewed shas, fixSince, reReviews since the last fix
 const merges = dict(), basePushes = new Set();
 const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
@@ -58,9 +58,10 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   }
   if (typeof e.session !== "string" || !e.session) v("LEDGER", n, "missing session");
   if (!e.rule_version || typeof e.rule_version !== "object") v("LEDGER", n, "missing rule_version");
-  const missing = NEEDS[e.kind].filter((f) => e[f] === undefined || e[f] === "");
+  const missing = NEEDS[e.kind].filter((f) => e[f] === undefined || e[f] === null || e[f] === "");
   if (e.kind === "ci_run" && e.state === undefined && e.conclusion === undefined) missing.push("state or conclusion");
   for (const f of missing) v("LEDGER", n, `${e.kind} needs ${f}`);
+  if (e.kind === "agent_start" && "worker" in e && (typeof e.worker !== "string" || e.worker === "")) { v("LEDGER", n, "agent_start worker must be a non-empty string"); continue; }
   if (missing.length) continue;
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
   const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false });
@@ -80,8 +81,10 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       const tr = triage[e.topic];
       if (!tr) v("DEC-03", n, `${e.role} started on ${e.topic} with no triage event before it`);
       if (e.role === "coder") {
-        const prev = lastCoder[e.topic];
+        const prev = lastCoder[e.topic], wprev = e.worker !== undefined ? workerModel[e.worker] : undefined;
         if (e.resumed === true && prev && prev !== e.model) v("DEC-04", n, `resumed coder on ${e.topic} changed model ${prev} -> ${e.model}; a resumed worker keeps its model, start a fresh coder to change it`);
+        else if (wprev && wprev !== e.model) v("DEC-04", n, `worker ${e.worker} on ${e.topic} changed model ${wprev} -> ${e.model}; a resumed worker keeps its model, start a fresh coder (new worker id) to change it`);
+        if (e.worker !== undefined) workerModel[e.worker] ??= e.model;
         if (e.reason === "ci-failed-twice" && e.model !== "opus") v("DEC-04", n, `coder re-run after CI failed twice on ${e.topic} needs opus, got ${e.model}`);
         lastCoder[e.topic] = e.model;
         if (e.phase === "fix") { bs(e.topic).fixSince = true; bs(e.topic).reReviews = 0; }

@@ -1,0 +1,10 @@
+{
+  "description": "a Makefile change forces security yes even when the line says no: full review, opus",
+  "triage": {
+    "files": [
+      "Makefile",
+      "src/a.go"
+    ],
+    "lines": "sec=no,door=no,prod=no"
+  }
+}

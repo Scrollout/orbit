@@ -1,0 +1,10 @@
+{
+  "description": "docs-only path, all lines no, kind small: just do it",
+  "triage": {
+    "files": [
+      "docs/a.md"
+    ],
+    "lines": "sec=no,door=no,prod=no",
+    "kind": "small"
+  }
+}

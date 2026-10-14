@@ -2,6 +2,7 @@
 //   node <plugin>/scripts/profile.mjs [--root .] [--profile .agents/project.md] [--json]
 // The block is a fenced code block whose info string is `yaml orbit-profile` (templates/project.md).
 // Subset of YAML: `key: value`, `key: [a, b]`, or `key:` followed by `- item` lines (indented or at column 0); `#` starts a comment.
+// A security_paths entry that is empty, `/`, `./` or `.` has no segment and would match every file: it is a gap.
 // Output: one `profile gap: <field>` line per missing, empty or TODO field; exit 1 if any. --json prints the parsed block.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -38,7 +39,7 @@ const splitInline = (s) => {
     else if (c === ",") { out.push(cur); cur = ""; } else cur += c;
   }
   out.push(cur);
-  return out.map(unquote).filter((x) => x !== "");
+  return out.map(unquote);
 };
 
 export function parseProfileText(text, warnings = []) {
@@ -67,7 +68,12 @@ export function parseProfileText(text, warnings = []) {
     if (key in data) warnings.push(`duplicate key ${key}`);
     const v = kv[2].trim();
     if (v === "") data[key] = "";
-    else if (v.startsWith("[") && v.endsWith("]")) { data[key] = splitInline(v.slice(1, -1)); Object.defineProperty(data[key], "inline", { value: true }); }
+    else if (v.startsWith("[") && v.endsWith("]")) {
+      const inner = v.slice(1, -1);
+      // security_paths keeps an empty entry ([a/, , b]) so gaps() can report it; every other list drops them
+      data[key] = inner.trim() ? splitInline(inner).filter((x) => key === "security_paths" || x !== "") : [];
+      Object.defineProperty(data[key], "inline", { value: true });
+    }
     else data[key] = unquote(v);
   }
   return data;
@@ -80,6 +86,8 @@ export function loadProfile(root, path) {
   return { file, data: parseProfileText(readFileSync(file, "utf8"), warnings), warnings };
 }
 
+// The segments of a glob, as globMatch reads them; none (`""`, `/`, `./`, `//`) would match every file.
+const globSegments = (g) => g.trim().replace(/^\.?\//, "").split("/").filter(Boolean).filter((x) => x !== ".");
 const isTodo = (s) => /^TODO\b/i.test(String(s).trim());
 export function gaps(data) {
   const out = [];
@@ -88,7 +96,8 @@ export function gaps(data) {
     const missing = v === undefined;
     const empty = missing || (spec.list && !Array.isArray(v)) || (Array.isArray(v) ? (v.length === 0 && spec.required) || v.some(isTodo) : v === "" || isTodo(v));
     if (missing && !spec.required) continue;
-    if (empty || (spec.enum && !spec.enum.includes(v))) out.push(name);
+    const matchAll = name === "security_paths" && Array.isArray(v) && v.some((x) => globSegments(String(x)).length === 0);
+    if (empty || matchAll || (spec.enum && !spec.enum.includes(v))) out.push(name);
   }
   return out;
 }
