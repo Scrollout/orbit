@@ -69,3 +69,38 @@ test("print lists a hash per entry", () => {
   const r = run(tree(), "--print");
   assert.match(r.stdout, /^[0-9a-f]{64}  1\.0\.0  commands\/cmd\.md$/m);
 });
+
+function treeWithShared() {
+  const root = tree();
+  mkdirSync(join(root, "rules"));
+  writeFileSync(join(root, "rules/rules.json"), JSON.stringify({ version: "1.0.0", rules: [] }));
+  writeFileSync(join(root, "rules/tracks.json"), JSON.stringify({ tracks: { x: { max: 1 } } }));
+  writeFileSync(join(root, "scripts-dummy.txt"), "");
+  mkdirSync(join(root, "scripts"));
+  writeFileSync(join(root, "scripts/a.mjs"), "// a");
+  writeFileSync(join(root, "scripts/a.test.mjs"), "// test, not hashed");
+  assert.equal(run(root, "--update").status, 0);
+  return root;
+}
+
+test("rules, tracks and scripts are hashed as one shared entry, versioned by rules.json", () => {
+  const root = treeWithShared();
+  assert.equal(run(root, "--check").status, 0);
+  const m = JSON.parse(readFileSync(join(root, "skills/MANIFEST.json"), "utf8")).entries["rules/rules.json"];
+  assert.deepEqual(m.files, ["rules/rules.json", "rules/tracks.json", "scripts/a.mjs"]);
+  writeFileSync(join(root, "rules/tracks.json"), JSON.stringify({ tracks: { x: { max: 2 } } }));
+  assert.match(run(root, "--check").stdout, /rules\/rules\.json: edited without a version bump/);
+  writeFileSync(join(root, "rules/tracks.json"), JSON.stringify({ tracks: { x: { max: 1 } } }));
+  writeFileSync(join(root, "scripts/a.mjs"), "// changed");
+  assert.match(run(root, "--check").stdout, /edited without a version bump/);
+  writeFileSync(join(root, "scripts/a.mjs"), "// a");
+  writeFileSync(join(root, "scripts/a.test.mjs"), "// test changed");
+  assert.equal(run(root, "--check").status, 0, "tests are not part of the hash");
+});
+
+test("a CRLF frontmatter still yields its version", () => {
+  const root = tree();
+  writeFileSync(join(root, "commands/cmd.md"), "---\r\nname: x\r\nversion: 1.0.0\r\n---\r\ncore\r\n");
+  const r = run(root, "--print");
+  assert.match(r.stdout, /  1\.0\.0  commands\/cmd\.md$/m);
+});

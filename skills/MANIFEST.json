@@ -43,6 +43,22 @@
       "files": [
         "skills/peer/SKILL.md"
       ]
+    },
+    "rules/rules.json": {
+      "version": "1.0.0",
+      "hash": "1b47d8d6de787a30c6f27eb4b3f1a424e32d742fd8479fef5875bb3b4ac2c26f",
+      "files": [
+        "rules/rules.json",
+        "rules/tracks.json",
+        "scripts/audit-ledger.mjs",
+        "scripts/check-size.mjs",
+        "scripts/decide-triage.mjs",
+        "scripts/ledger.mjs",
+        "scripts/manifest.mjs",
+        "scripts/okf-init.mjs",
+        "scripts/profile.mjs",
+        "scripts/validate-okf.mjs"
+      ]
     }
   }
 }

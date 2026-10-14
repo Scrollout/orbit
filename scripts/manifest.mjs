@@ -1,6 +1,6 @@
 // Content hash and version per skill and command, so an edit without a version bump is caught. Zero dependencies.
 //   node <plugin>/scripts/manifest.mjs [--root .] --check | --update | --print
-// An entry is a core file (commands/*.md, skills/*/SKILL.md) plus its refs (refs/<command>/ or skills/<skill>/refs/).
+// Also one shared entry for rules/*.json and scripts/*.mjs (version: rules/rules.json). An entry is a core file (commands/*.md, skills/*/SKILL.md) plus its refs (refs/<command>/ or skills/<skill>/refs/).
 // The version is the `version:` line of the core's frontmatter; the hash covers the core and its refs.
 // --check: exit 1 if an entry is missing, has no version, was edited without a version bump, or the manifest is stale.
 // --update: rewrite skills/MANIFEST.json; refuses an entry whose content changed but whose version did not.
@@ -14,17 +14,27 @@ const root = resolve(flag("root") ?? ".");
 const manifestPath = join(root, "skills", "MANIFEST.json");
 
 const ls = (d) => (existsSync(join(root, d)) ? readdirSync(join(root, d)).sort() : []);
+const hashOf = (files) => {
+  const h = createHash("sha256");
+  for (const f of files) h.update(`${f}\n${readFileSync(join(root, f), "utf8").replace(/\r\n/g, "\n")}\n`);
+  return h.digest("hex");
+};
 export function entries() {
   const out = [];
   for (const f of ls("commands").filter((f) => f.endsWith(".md"))) out.push({ core: `commands/${f}`, refs: `refs/${f.slice(0, -3)}` });
   for (const s of ls("skills")) if (existsSync(join(root, "skills", s, "SKILL.md"))) out.push({ core: `skills/${s}/SKILL.md`, refs: `skills/${s}/refs` });
-  return out.map((e) => {
+  const res = out.map((e) => {
     const files = [e.core, ...ls(e.refs).filter((f) => f.endsWith(".md")).map((f) => `${e.refs}/${f}`)];
-    const h = createHash("sha256");
-    for (const f of files) h.update(`${f}\n${readFileSync(join(root, f), "utf8").replace(/\r\n/g, "\n")}\n`);
-    const v = readFileSync(join(root, e.core), "utf8").match(/^---\n[\s\S]*?^version:[ \t]*(\S+)[ \t]*$[\s\S]*?^---/m);
-    return { core: e.core, files, version: v?.[1], hash: h.digest("hex") };
+    const v = readFileSync(join(root, e.core), "utf8").match(/^---\r?\n[\s\S]*?^version:[ \t]*(\S+)[ \t]*\r?$[\s\S]*?^---/m);
+    return { core: e.core, files, version: v?.[1], hash: hashOf(files) };
   });
+  // The rule registry, the track caps and the scripts (not their tests or fixtures) are one shared entry,
+  // versioned by the `version` field of rules/rules.json, so a cap or script change needs a version bump too.
+  if (existsSync(join(root, "rules/rules.json"))) {
+    const files = [...ls("rules").filter((f) => f.endsWith(".json")).map((f) => `rules/${f}`), ...ls("scripts").filter((f) => f.endsWith(".mjs") && !f.endsWith(".test.mjs")).map((f) => `scripts/${f}`)];
+    res.push({ core: "rules/rules.json", files, version: JSON.parse(readFileSync(join(root, "rules/rules.json"), "utf8")).version, hash: hashOf(files) });
+  }
+  return res;
 }
 
 const old = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")).entries ?? {} : {};

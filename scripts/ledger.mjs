@@ -15,7 +15,7 @@ const rule_version = {};
 const mf = join(root, "skills", "MANIFEST.json");
 if (existsSync(mf)) {
   const m = JSON.parse(readFileSync(mf, "utf8")).entries;
-  for (const [k, name] of [["commands/decide.md", "decide"], ["skills/operator/SKILL.md", "operator"]]) if (m[k]) rule_version[name] = m[k].version;
+  for (const [k, name] of [["commands/decide.md", "decide"], ["skills/operator/SKILL.md", "operator"], ["rules/rules.json", "rules"]]) if (m[k]) rule_version[name] = m[k].version;
 }
 const event = { ts: new Date().toISOString().replace(/\.\d+Z$/, "Z"), session, rule_version, kind };
 for (const p of pairs) {
