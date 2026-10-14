@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.12.2 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.12.3 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -49,13 +49,14 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 - `refs/decide/`, `skills/operator/refs/`: detail (tables, templates, per-step procedures) split out of the two long files; each core file keeps the numbered rules and the flow and says when to load each ref.
 - `scripts/`, `rules/`, `skills/MANIFEST.json`: the drift guard (see Drift guard below).
 - `hooks/operator-context.sh`: the operator's SessionStart hook (self-test: `sh hooks/operator-context.test.sh`).
+- `hooks/guard.mjs`: the PreToolUse guard for OPR-01 and DEC-08 (see Operator guard below; tests: `scripts/guard.test.mjs`).
 - `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
 
 ## Drift guard
 Keeps the skills and the sessions from drifting. Zero dependencies (Node built-ins, Node 20+); `npm test` runs every test and check below plus the hook self-test. Commands and skills call the scripts as `node "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.mjs"` (scripts are plugin files, so always the plugin root; a skill's own refs use `${CLAUDE_SKILL_DIR}`); from a shell, run `node <orbit clone>/scripts/<name>.mjs`. Known limit: that variable expansion follows the official Claude Code docs but has not been verified live here.
 
 ### Layout and rules
-- **Rule ids.** `/decide` (`DEC-01..`) and the `operator` skill (`OPR-01..`) each carry a numbered rule list, every rule tagged `script` (an orbit script checks it), `hook` (a hook or git check can enforce it; not built yet) or `judgment`. The prose and the refs explain the rules; the ids are stable. `rules/rules.json` registers them; a test checks each id appears once in its core and nowhere in a ref.
+- **Rule ids.** `/decide` (`DEC-01..`) and the `operator` skill (`OPR-01..`) each carry a numbered rule list, every rule tagged `script` (an orbit script checks it), `hook` (a hook enforces it: `enforced_by` in `rules/rules.json` names it, and a test checks the hook names the rule) or `judgment`. The prose and the refs explain the rules; the ids are stable. `rules/rules.json` registers them; a test checks each id appears once in its core and nowhere in a ref.
 - **Core plus refs.** A file over 10000 characters (about 2500 tokens) or 100 lines is split: the core keeps the rules and the flow, `refs/decide/` and `skills/operator/refs/` hold detail, loaded when the core's "load when" line says so. Pointers use `${CLAUDE_PLUGIN_ROOT}` (commands) and `${CLAUDE_SKILL_DIR}` (skills), which Claude Code substitutes; a test resolves every one. `node scripts/check-size.mjs` fails over the threshold and lists the largest files.
 - **Versions.** Each command and skill has `version:` in its frontmatter. `skills/MANIFEST.json` records version and a content hash for each core plus its refs, and one shared entry for `rules/*.json` and the scripts (versioned by `version` in `rules/rules.json`). `node scripts/manifest.mjs --check` fails on an edit without a version bump; after bumping, `--update` rewrites the manifest (it refuses an unbumped edit); `--print` lists hashes. Claude Code ignores unknown frontmatter keys. On other surfaces (claude.ai upload, the Skills API) unknown keys may be rejected: there the manifest is the source of truth, and the `version:` line can be stripped.
 - **Docs.** `node scripts/check-docs.mjs` checks that plugin.json, the CHANGELOG and the `Version:` line above agree and that links and referenced paths resolve.
@@ -91,17 +92,23 @@ The audit covers the `script` rules: reviews only on green CI of every recorded 
 - **Why they fail on purpose**: `scenarios/pin.json` holds the `/decide`, operator and rules versions the scenarios were reviewed against. An edit that changes behaviour fails its scenario; an edit that does not change it still needs a version bump (manifest), which fails the pin until the scenarios are re-read and the pin is updated. Scenarios use the anonymised fixture only; a test rejects project, host and user names.
 
 ### Next steps (not built yet)
-- Hooks: block repo writes and `git commit|merge|push` in the operator session (OPR-01); check the trailer paragraph on the merge commit (DEC-08).
 - Cross-project diff: compare two profile blocks and flag the fields that differ.
 - Decision-record lint: parse the decision-record table for columns, verdict words and the three triage lines.
 - Condition ledger: `condition` events so every security condition has a proof test before the merge.
 - Ledger auto-capture: hooks append `agent_start` and `push` events so the ledger does not depend on the operator remembering.
 
+## Operator guard
+`hooks/guard.mjs` runs before every Bash, Edit, Write, MultiEdit and NotebookEdit call and denies a breach with the rule id and what to delegate. A guardrail against slips, not a sandbox.
+- **Who is the operator**: the main thread of a session started with `claude --agent orbit:operator` (the hook input's `agent_type` is `orbit:operator` and it has no `agent_id`), or of a session started with `ORBIT_ROLE=operator claude`. A main checkout that only gets the SessionStart handoff is not detected: set `ORBIT_ROLE=operator` there. A subagent (hook input with `agent_id`) is never the operator, even when the variable is inherited.
+- **OPR-01** (operator only): edits only `.agents/operator.md`; git only read-only (`status`, `log`, `diff`, `show`, `fetch`, `rev-parse`, `ls-remote`, `worktree list`, `branch` and `tag` listings, ...), no `commit`, `merge`, `rebase`, `reset`, `checkout`, `switch`, `branch` change, `worktree add|remove`, `cherry-pick`, `stash`, `tag`, `git -c`; `push` only as a lone `git [-C <dir>] push origin HEAD:<base>` when the profile has a `base_pusher` (else no push); no `gh pr merge|checkout`; no shell write (redirect, `tee`, `sed -i`, `mv`, `cp`, `ln`, `install`, `rm`, `rmdir`, `mkdir`, `touch`, `truncate`) into any worktree of the repo. Nested `$(...)`, backticks, `sh -c` and `eval` are checked too; a command it cannot parse or resolve is denied (fail closed), and so is unreadable hook input with `ORBIT_ROLE=operator`.
+- **DEC-08** (every session, only with a profile whose `review_trailer` is set): `git merge --no-ff -m|-F` of a ref other than the base, and a `git commit -m|-F` that concludes such a merge, need the `review_trailer` line in the last paragraph, with every `Co-Authored-By` line. A message it cannot read before it runs (a variable, a missing file) is denied: pass `-F <file>`.
+- Other sessions see nothing from OPR-01. Without node the hook is silent (except with `ORBIT_ROLE=operator`, where it denies).
+
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).
 - `/orbit:okf-init` scaffolds the bundle (index, log, constitution, doc rules, a `roadmap/` folder with the milestones and the M1 plan, AGENTS.md/CLAUDE.md pointers, `.agents/okf.json`) and never overwrites.
 - `node ~/orbit/scripts/validate-okf.mjs --root .` lints it (zero dependencies; settings from flags or `.agents/okf.json`; defaults: bundle `docs/okf`, 4000 chars per doc, AGENTS.md at most 80 lines, pointer files CLAUDE.md, GEMINI.md, .github/copilot-instructions.md, .cursor/rules/agents.mdc). Skill `okf` has the rules.
-- `hooks/hooks.json` runs the validator after Write/Edit under the bundle (silent without node or a bundle). `templates/githooks/pre-commit` is a commit-time snippet.
+- `hooks/hooks.json` also runs the validator after Write/Edit under the bundle (silent without node or a bundle). `templates/githooks/pre-commit` is a commit-time snippet.
 
 ## Agents sync
 Instead of vendoring agent copies into `.claude/` (and keeping them in sync), install this plugin: the agents, command and skills load in every project. A project may still vendor its own copies in `.claude/agents`.

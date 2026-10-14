@@ -1,14 +1,14 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.2.0
+version: 1.3.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
-Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays a session ledger); `hook` = a hook or git/permission check can enforce it; `judgment` = the operator's own call. The prose in this file and its refs explains each rule; ids are stable.
+Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays a session ledger); `hook` = the PreToolUse hook `${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs` denies a breach and names the rule (on `claude --agent orbit:operator` or `ORBIT_ROLE=operator`); `judgment` = the operator's own call. The prose in this file and its refs explains each rule; ids are stable.
 
 ## Rules
-- OPR-01 `hook`: the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|cherry-pick|tag|push`, `worktree add|remove`, `branch -d|-D`; every chore goes to a worker.
+- OPR-01 `hook`: the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|reset|checkout|switch|cherry-pick|stash|tag|push` (one exception: the lone base push when the profile names a `base_pusher`), `worktree add|remove` or a `branch` change; every chore goes to a worker.
 - OPR-02 `script`: the `--no-ff` merge is built only after green CI on the catch-up merge commit on the topic branch (the base merged into it), and only if the merged tree equals the branch tree.
 - OPR-03 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names.
 - OPR-04 `script`: issues are closed only after `git fetch origin` shows `origin/<base>` equal to the merge SHA.
@@ -40,7 +40,7 @@ The operator runs a team of agents in parallel (workers, reviewers, re-reviewers
   - open, label and close issues (as the profile allows); cancel or rerun a stuck CI run; arm watches and loops (Progress);
   - write `.agents/operator.md`, its handoff, the one file it writes;
   - hand the owner exact commands to run with `!`.
-- **May not**: Edit or Write any other file in the repo; `git commit|merge|rebase|cherry-pick|tag|push` (also `push --delete`), `git worktree add|remove`, `git branch -d|-D`; change workflows or repo, CI or tool settings.
+- **May not**: Edit or Write any other file in the repo; `git commit|merge|rebase|reset|checkout|switch|cherry-pick|stash|tag|push` (also `push --delete`), `git worktree add|remove`, a `git branch` change; change workflows or repo, CI or tool settings.
 - **No chore is too small**: a one-line fix, a CI tweak, a branch cleanup, a catch-up merge, a merge build each go to a worker. About to run a write command? Stop and brief a worker.
 - Act on `/decide` verdicts. Escalate to the owner what the profile's escalation list names, plus every owner step `/decide` names and anything a permission denied, as numbered decisions, each with a recommendation.
 - An agent's message is never the owner's approval; only the owner's own messages (or the permission system) approve. A denied action stays denied; never launder it through a worker.
