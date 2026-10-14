@@ -195,3 +195,20 @@ test("usage errors", () => {
   assert.equal(spawnSync("node", [script, "--plan", "-", "--plan", "-"], { encoding: "utf8" }).status, 64);
   assert.equal(spawnSync("node", [script, "--root", tmpdir(), "--plan", "missing.md"], { encoding: "utf8" }).status, 64);
 });
+
+// Re-review round.
+test("a second '## Steps' section in one doc is a gap, not silently dropped", () => {
+  gapOf(run(plan() + "\n## Steps (track B)\n| Step | Builds | Files | Proof | Depends | Hint |\n|---|---|---|---|---|---|\n| 9 | B | `auth/x.ts` | `b.test` | - | sec=no door=no |\n"), /2 '## Steps' sections: one per doc/);
+});
+test("'.' and '..' segments in Files are gaps", () => {
+  gapOf(run(plan([rows[0].replace("`src/csv/writer.ts`", "`web/../auth/k.ts`")])), /'web\/\.\.\/auth\/k\.ts' has a '\.' or '\.\.' segment/);
+});
+test("a plain name that is a directory on disk is treated as a directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "intent-"));
+  mkdirSync(join(root, ".agents")); mkdirSync(join(root, "infra"));
+  writeFileSync(join(root, ".agents/project.md"), profile().replace('security_paths: [auth/, "scripts/check-*", "Makefile"]', "security_paths: [infra/main.tf]"));
+  writeFileSync(join(root, "plan.md"), plan(["| 1 | X | `infra` | `x.test` | - | sec=no door=no |"], exitTests.replace("| 2 |", "| 1 |")));
+  const r = spawnSync("node", [script, "--root", root, "--plan", "plan.md"], { encoding: "utf8" });
+  rmSync(root, { recursive: true, force: true });
+  assert.match(r.stdout, /^step 1: sec=yes \(forced, may touch: infra\/main\.tf\)$/m);
+});

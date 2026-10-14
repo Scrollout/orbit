@@ -13,7 +13,7 @@
 // prefix (one prefix inside the other), which over-reports and never misses ("may touch").
 // Prints forced lines, the dispatch waves (dependencies first, no two steps of a wave touching the same paths) and the
 // steps that go to /decide first. Exit codes: 0 ok, 1 profile gap (security_paths only), 2 plan gap, 64 usage.
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { gaps, globMatch, loadProfile } from "./profile.mjs";
 import { checkDoc } from "./okf-lib.mjs";
@@ -45,8 +45,10 @@ const placeholder = (s) => !s.trim() || /<[^>]*>/.test(s);
 
 // A markdown table under `## <heading>`: rows of cells keyed by the lower-cased header.
 function table(text, heading) {
-  const m = text.match(new RegExp(`^## ${heading}\\b[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
-  if (!m) return null;
+  const all = [...text.matchAll(new RegExp(`^## ${heading}\\b[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "gm"))];
+  if (!all.length) return null;
+  if (all.length > 1) gap(`a doc has ${all.length} '## ${heading}' sections: one per doc (split by track into separate docs)`);
+  const m = all[0];
   // Cells split on `|` but not on an escaped `\|` (GFM), which stays a literal pipe in the cell.
   const rows = m[1].split("\n").filter((l) => /^\s*\|/.test(l))
     .map((l) => l.trim().replace(/^\||(?<!\\)\|$/g, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|")));
@@ -82,9 +84,12 @@ if (!exits.length) gap("no ## Exit tests table with a row (in any plan doc)");
 // glob does (scripts/profile.mjs: a pattern covers everything below the path it matches; a plain name may be a
 // directory). Two such patterns may meet when their segments agree up to the shorter one, or up to a glob's first
 // `**`, which can absorb any depth.
+// A plain name that is a directory on disk counts as a directory even without the trailing `/`.
+const isDirOnDisk = (p) => { try { return statSync(resolve(root, p)).isDirectory(); } catch { return false; } };
 const parse = (e) => {
   const segs = e.replace(/^\.?\//, "").split("/").filter(Boolean);
-  return { e, segs, dir: e.endsWith("/"), wild: segs.findIndex((x) => /[*?]/.test(x)) };
+  const wild = segs.findIndex((x) => /[*?]/.test(x));
+  return { e, segs, dir: e.endsWith("/") || (wild < 0 && isDirOnDisk(segs.join("/"))), wild };
 };
 const concrete = (x) => x.wild < 0 && !x.dir;
 const segsAgree = (p, q) => (/[*?]/.test(p) ? (/[*?]/.test(q) ? true : globMatch(p, q)) : /[*?]/.test(q) ? globMatch(q, p) : p === q);
@@ -113,6 +118,7 @@ for (const s of steps.values()) {
   if (s.files.some((f) => /[<>]/.test(f))) gap(`step ${s.id}: Files is a placeholder`);
   s.parsed = s.files.map(parse);
   for (const x of s.parsed) if (x.wild >= 0 && x.wild < x.segs.length - 1) gap(`step ${s.id}: '${x.e}' has a wildcard outside the last segment`);
+  for (const x of s.parsed) if (x.segs.some((g) => g === "." || g === "..")) gap(`step ${s.id}: '${x.e}' has a '.' or '..' segment; write the path from the repo root`);
   for (const d of s.depends) if (!steps.has(d)) gap(`step ${s.id}: depends on unknown step ${d}`);
   const hits = securityPaths.filter((g) => s.parsed.some((x) => meets(x, parse(g), true)));
   if (hits.length) {
