@@ -1,0 +1,48 @@
+{
+  "entries": {
+    "commands/decide.md": {
+      "version": "1.0.0",
+      "hash": "50ab47394612b51fafa60889e624cd1a3e3d779d926a576ca969dd3659fdf386",
+      "files": [
+        "commands/decide.md",
+        "refs/decide/delivery.md",
+        "refs/decide/discovery-signoff.md",
+        "refs/decide/record.md",
+        "refs/decide/team-tracks.md"
+      ]
+    },
+    "commands/okf-init.md": {
+      "version": "1.0.0",
+      "hash": "42241a1e639e148c559602c7185261f0f547762b0b7194f14dc811dda22fc07d",
+      "files": [
+        "commands/okf-init.md"
+      ]
+    },
+    "skills/okf/SKILL.md": {
+      "version": "1.0.0",
+      "hash": "6515cc58d3cdc9618b21f736628ad7497f4e80f287fc7718f20dde72d216b59c",
+      "files": [
+        "skills/okf/SKILL.md"
+      ]
+    },
+    "skills/operator/SKILL.md": {
+      "version": "1.0.0",
+      "hash": "466d266278f58fc4561c6d30af8d210a3a4556669fb31e167028ad5a10ffa479",
+      "files": [
+        "skills/operator/SKILL.md",
+        "skills/operator/refs/handoff-budget.md",
+        "skills/operator/refs/merge-protocol.md",
+        "skills/operator/refs/pull-requests.md",
+        "skills/operator/refs/push-queue.md",
+        "skills/operator/refs/workers.md"
+      ]
+    },
+    "skills/peer/SKILL.md": {
+      "version": "1.0.0",
+      "hash": "156873699e0a86c9dd31dfaa929b8254fce25de8436e40880cb8b90a2c310b73",
+      "files": [
+        "skills/peer/SKILL.md"
+      ]
+    }
+  }
+}

@@ -1,6 +1,7 @@
 ---
 name: okf
 description: Write, index, log and validate project docs as an OKF v0.2 bundle (small docs, frontmatter, TL;DR, indexes, change log). Use when adding or editing docs under the project's bundle, when a docs check fails, or when deciding whether to split a doc.
+version: 1.0.0
 ---
 Read the project profile (.agents/project.md) for the bundle path and any project additions; the defaults are `docs/okf` and the settings in `.agents/okf.json` (keys `bundle`, `maxDocChars`, `maxAgentsLines`, `agentsFile`, `pointerFiles`, `maxPointerLines`, `okfVersion`). A bundle's own `constitution/doc-rules.md` wins over this skill.
 
