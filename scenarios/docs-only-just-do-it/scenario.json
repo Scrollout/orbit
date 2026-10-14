@@ -1,0 +1,13 @@
+{
+  "description": "docs-only change: just do it on sonnet; the merge cites the profile's docs-only standing waiver",
+  "profile_extra": [
+    "standing_waivers: [docs-only]"
+  ],
+  "triage": {
+    "files": [
+      "docs/a.md"
+    ],
+    "lines": "sec=no,door=no,prod=no",
+    "kind": "small"
+  }
+}

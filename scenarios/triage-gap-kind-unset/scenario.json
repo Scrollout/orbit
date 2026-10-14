@@ -1,0 +1,9 @@
+{
+  "description": "all lines no and no kind: triage gap (exit 2)",
+  "triage": {
+    "files": [
+      "docs/a.md"
+    ],
+    "lines": "sec=no,door=no,prod=no"
+  }
+}

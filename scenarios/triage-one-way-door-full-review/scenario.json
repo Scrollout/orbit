@@ -1,0 +1,9 @@
+{
+  "description": "door yes alone: full review, opus",
+  "triage": {
+    "files": [
+      "src/a.go"
+    ],
+    "lines": "sec=no,door=yes,prod=no"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "description": "docs-only path, kind design: light review",
+  "triage": {
+    "files": [
+      "docs/a.md"
+    ],
+    "lines": "sec=no,door=no,prod=no",
+    "kind": "design"
+  }
+}

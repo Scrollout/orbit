@@ -1,0 +1,8 @@
+{
+  "triage_exit": 0,
+  "track": "just do it",
+  "caps": "analyst 0, engineer 0, reviewer 0, security 0, techlead 0",
+  "coder_model": "sonnet",
+  "exit": 0,
+  "violations": {}
+}
