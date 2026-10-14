@@ -183,7 +183,7 @@ test("a review_start on a branch with no triage topic warns without failing", ()
   const r = run(e);
   assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /^warn: line 8: review_start branch orphan has no triage topic/m);
-  assert.doesNotMatch(run(clean()).stdout, /warn:/);
+  assert.doesNotMatch(run(clean()).stdout, /warn: line/);
 });
 
 const sh = (script, args, cwd) => spawnSync("node", [join(here, script), ...args], { encoding: "utf8", cwd });
@@ -323,4 +323,76 @@ test("worker must be a non-empty string; merge_built branch may not be null", ()
   const e = clean();
   e[6].branch = null;
   assert.match(run(e).stdout, /^LEDGER line 7: merge_built needs branch/m);
+});
+
+// OPR-09: releases
+const MERGE2 = "e".repeat(40);
+const tag = (o = {}) => ev("tag_push", { tag: "v1.2.0", sha: MERGE, by: "owner", annotated: true, chained: false, ...o, ref: o.ref ?? `refs/tags/${o.tag ?? "v1.2.0"}` });
+const rel = (o = {}) => ev("release", { tag: "v1.2.0", via: "session", verify_tag: true, latest: true, ...o });
+const merge2 = (o = {}) => [ev("merge_built", { branch: "t2", merge_sha: MERGE2, tree_equal: true, ci_state: "green", waived: "owner", waiver_reason: "test", ...o }),
+  ev("push", { ref: "main", sha: MERGE2, chained: false, by: "owner" })];
+const runP = (lines, events) => {
+  const f = join(mkdtempSync(join(tmpdir(), "led-")), "ledger.jsonl");
+  writeFileSync(f, events.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  return spawnSync("node", [audit, f, "--profile", mkProfile(lines)], { encoding: "utf8" });
+};
+const CS = "release_when: change-set";
+
+test("OPR-09: a merge released before the next merge is pushed passes", () => {
+  const r = runP(CS, [...clean(), tag(), rel(), ...merge2(), tag({ tag: "v1.2.1", sha: MERGE2 }), rel({ tag: "v1.2.1" })]);
+  assert.equal(r.status, 0, r.stdout);
+  assert.doesNotMatch(r.stdout, /warn:/);
+});
+
+test("OPR-09: the next merge pushed before the previous one's release is a violation; the last unreleased merge warns", () => {
+  const r = runP(CS, [...clean(), ...merge2()]);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /^OPR-09 line 12: base main pushed at eeeeeeee while merge bbbbbbbb \(pushed line 9\) has no release/m);
+  assert.match(r.stdout, /^warn: line 12: merge eeeeeeee pushed to main has no release yet/m);
+  assert.equal(runP(CS, [...clean(), ...merge2({ release_skip: "docs only, no version change" })]).status, 1, "a skip on the later merge does not excuse the earlier one");
+  const e = clean(); e[6].release_skip = "docs only";
+  assert.equal(runP(CS, [...e, ...merge2()]).status, 0, "a merge with a release_skip reason is not due");
+  e[6].release_skip = true;
+  assert.match(runP(CS, [...e, ...merge2()]).stdout, /^OPR-09 .*release_skip must give the reason/m);
+  assert.equal(runP(`${CS}\nrelease_tool: release-please`, [...clean(), ...merge2()]).status, 0, "a release tool owns the cadence");
+  assert.equal(runP("release_when: milestone", [...clean(), ...merge2()]).status, 0);
+});
+
+test("OPR-09: per-event tag and release checks", () => {
+  const bad = [
+    ["tag on a sha never pushed to the base", [tag({ sha: SHA2 })], /no earlier push of main/],
+    ["lightweight tag", [tag({ annotated: false })], /not annotated/],
+    ["chained tag push", [tag({ chained: true })], /pushed chained/],
+    ["tag pushed by its short name", [tag({ ref: "v1.2.0" })], /not by its full ref/],
+    ["tag pushed by the agent when the owner pushes the base", [tag({ by: "agent" })], /pushed by agent/],
+    ["not SemVer", [tag({ tag: "1.2.0" })], /not SemVer/],
+    ["moved tag", [tag(), tag({ sha: SHA })], /moved from/],
+    ["release without its tag", [rel()], /no tag_push/],
+    ["release without --verify-tag", [tag(), rel({ verify_tag: false })], /without --verify-tag/],
+    ["pre-release not marked", [tag({ tag: "v1.3.0-rc.1" }), rel({ tag: "v1.3.0-rc.1", latest: false })], /not marked prerelease/],
+    ["pre-release marked latest", [tag({ tag: "v1.3.0-rc.1" }), rel({ tag: "v1.3.0-rc.1", prerelease: true })], /pre-release marked latest/],
+    ["latest on a lower version", [tag({ tag: "v1.3.0" }), tag({ tag: "v1.2.9" }), rel({ tag: "v1.2.9" })], /marked latest, but v1\.3\.0 is higher/],
+    ["release re-created", [tag(), rel(), rel({ latest: false })], /created twice/],
+  ];
+  for (const [name, extra, re] of bad) {
+    const r = run([...clean(), ...extra]);
+    assert.equal(r.status, 1, name);
+    assert.match(r.stdout, new RegExp(`^OPR-09 line \\d+: .*${re.source}`, "m"), name);
+  }
+  assert.match(runP("release_when: never", [...clean(), tag()]).stdout, /^OPR-09 .*release_when is never/m);
+  assert.match(runP("release_via: ci", [...clean(), tag(), rel()]).stdout, /^OPR-09 .*release_via is ci/m);
+  assert.equal(runP("release_via: ci", [...clean(), tag(), ev("release", { tag: "v1.2.0", via: "ci", latest: true })]).status, 0, "a CI release needs no verify_tag field");
+  assert.equal(run([...clean(), tag({ tag: "v1.3.0-rc.1" }), rel({ tag: "v1.3.0-rc.1", latest: false, prerelease: true })]).status, 0);
+  assert.equal(runP("release_tool: release-please", [...clean(), tag({ by: "ci" })]).status, 0, "a release tool tags from CI");
+  assert.equal(runP("release_tool: release-please", [...clean(), tag({ by: "ci", sha: SHA2, ref: "x" })]).status, 0, "a tool's release-PR merge is not in the ledger");
+  assert.match(run([...clean(), tag({ by: "ci" })]).stdout, /pushed by ci/);
+  const line = ev("push", { ref: "release/1.1", sha: SHA2, chained: false, by: "owner" });
+  assert.equal(run([...clean(), tag({ tag: "v1.3.0" }), line, tag({ tag: "v1.1.4", sha: SHA2 }), rel({ tag: "v1.1.4", latest: false })]).status, 0, "a fix on a maintenance line");
+  assert.match(run([...clean(), { ...line, by: "agent" }, tag({ tag: "v1.1.4", sha: SHA2 })]).stdout, /no earlier push/);
+});
+
+test("OPR-09: release_when unset or TODO warns once there is a base push", () => {
+  assert.match(run(clean()).stdout, /^warn: release_when unset in the profile/m);
+  assert.match(runP("release_when: TODO", clean()).stdout, /^warn: release_when is "TODO"/m);
+  assert.doesNotMatch(runP(CS, clean().slice(0, 7)).stdout, /warn: release_when/);
 });

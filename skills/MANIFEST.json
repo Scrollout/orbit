@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.3.1",
-      "hash": "93d5bcc5977e50d7e58933ddcbcb4f763f2cc806a86e151f27994d0e6c75ec02",
+      "version": "1.3.3",
+      "hash": "e684d714fcdc51b080242b24c2bab49d41f747bea051dd409c2fb68f3504e30c",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -34,8 +34,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.3.0",
-      "hash": "fd2a2cc7ac553a4b7e3daec0187d280961d68f26312fec119b2dac311523f624",
+      "version": "1.4.1",
+      "hash": "66de46fe0fd2737eada8cbb34d1764a6d7245415cbfa886dd5215918f5b93327",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -53,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.5.2",
-      "hash": "cc13655b94eee65e594e226ba0039304ee5d3d50e4917a8d7147c6d131b7fd8a",
+      "version": "1.6.1",
+      "hash": "430bfec7da438ed25ba09c2b3dd65a2953a21ce33f23b591432fe1f047a153a9",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -68,6 +68,7 @@
         "scripts/okf-init.mjs",
         "scripts/okf-lib.mjs",
         "scripts/profile.mjs",
+        "scripts/release-check.mjs",
         "scripts/run-tests.mjs",
         "scripts/scenarios.mjs",
         "scripts/validate-okf.mjs",
@@ -157,6 +158,24 @@
         "scenarios/opr-04-close-before-base-push/expect.json",
         "scenarios/opr-04-close-before-base-push/ledger.jsonl",
         "scenarios/opr-04-close-before-base-push/scenario.json",
+        "scenarios/opr-09-change-set-clean/expect.json",
+        "scenarios/opr-09-change-set-clean/ledger.jsonl",
+        "scenarios/opr-09-change-set-clean/scenario.json",
+        "scenarios/opr-09-ci-release/expect.json",
+        "scenarios/opr-09-ci-release/ledger.jsonl",
+        "scenarios/opr-09-ci-release/scenario.json",
+        "scenarios/opr-09-latest-not-highest/expect.json",
+        "scenarios/opr-09-latest-not-highest/ledger.jsonl",
+        "scenarios/opr-09-latest-not-highest/scenario.json",
+        "scenarios/opr-09-lightweight-or-chained-tag/expect.json",
+        "scenarios/opr-09-lightweight-or-chained-tag/ledger.jsonl",
+        "scenarios/opr-09-lightweight-or-chained-tag/scenario.json",
+        "scenarios/opr-09-next-merge-before-release/expect.json",
+        "scenarios/opr-09-next-merge-before-release/ledger.jsonl",
+        "scenarios/opr-09-next-merge-before-release/scenario.json",
+        "scenarios/opr-09-tag-not-on-pushed-merge/expect.json",
+        "scenarios/opr-09-tag-not-on-pushed-merge/ledger.jsonl",
+        "scenarios/opr-09-tag-not-on-pushed-merge/scenario.json",
         "scenarios/pin.json",
         "scenarios/security-contest-rebuttal-needs-reason/expect.json",
         "scenarios/security-contest-rebuttal-needs-reason/ledger.jsonl",

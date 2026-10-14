@@ -6,9 +6,11 @@
 //   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?,resumed?,worker?,reason?}   phase: design | build | fix | delivery
 //   ci_run{branch?,sha,workflow?,state|conclusion}   branch (= topic) makes that topic's reviewers delivery reviewers by default; without it the run counts for no topic. green = state green or conclusion success
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
-//   merge_built{branch (required),merge_sha,tree_equal,ci_state,waived?,waiver_reason?}   waived: a profile standing_waivers entry, or "owner" + waiver_reason
+//   merge_built{branch (required),merge_sha,tree_equal,ci_state,waived?,waiver_reason?,release_skip?}   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
 //   issue_close{n,origin_base_sha,merge_sha}
+//   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
+//   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,17 +31,27 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
 const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
 const branchState = dict();           // per branch: reviewed shas, fixSince, reReviews since the last fix
 const merges = dict(), basePushes = new Set();
+// OPR-09: releases. release_when TODO or unset: per-event checks only, and a warn once a base push exists.
+const isSet = (x) => typeof x === "string" && x !== "" && !/^TODO\b/i.test(x);
+const relWhen = ["change-set", "milestone", "never"].includes(profile.release_when) ? profile.release_when : null;
+const relVia = ["ci", "session"].includes(profile.release_via) ? profile.release_via : null;
+const relTool = isSet(profile.release_tool) && profile.release_tool !== "none" ? profile.release_tool : null;
+const SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+const semCmp = (a, b) => { for (let i = 1; i <= 3; i++) { const d = Number(a[i]) - Number(b[i]); if (d) return d; } return 0; };
+const linePushes = new Set();         // pushes to a release/X.Y maintenance line, alone and by base_pusher: its tags are allowed
+const tagSha = dict(), releasedTags = new Set(), releasedShas = new Set();
+let pendingRelease = null;            // change-set mode without a release tool: the last base-pushed merge awaiting its release
 const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
 let n = 0, events = 0;
 
@@ -140,15 +152,22 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         else if (e.waived === "owner") { if (!e.waiver_reason) v("DEC-20", n, `merge of ${e.branch}: owner waiver needs a waiver_reason`); }
         else if (!standing.includes(e.waived)) v("DEC-20", n, `merge of ${e.branch}: waived must cite a standing waiver of the profile (${standing.join(", ") || "none defined"}) or be "owner", got ${JSON.stringify(e.waived)}`);
       }
+      if ("release_skip" in e && (typeof e.release_skip !== "string" || !e.release_skip)) v("OPR-09", n, `merge ${short(e.merge_sha)}: release_skip must give the reason as a string`);
       merges[e.merge_sha] = e;
       break;
     }
     case "push": {
+      if (/^release\//.test(norm(e.ref)) && e.chained === false && e.by === profile.base_pusher) linePushes.add(e.sha);
       if (norm(e.ref) !== base) break;
       if (e.chained !== false) v(["DEC-06", "OPR-03"], n, `base ${base} pushed chained after another command`);
       if (e.by !== profile.base_pusher) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
       if (!merges[e.sha]) v(["DEC-06", "OPR-03"], n, `base ${base} pushed at ${short(e.sha)} with no merge_built for that sha before it`);
       basePushes.add(e.sha);
+      if (relWhen === "change-set" && !relTool) {
+        if (pendingRelease && pendingRelease.sha !== e.sha && !releasedShas.has(pendingRelease.sha))
+          v("OPR-09", n, `base ${base} pushed at ${short(e.sha)} while merge ${short(pendingRelease.sha)} (pushed line ${pendingRelease.n}) has no release`);
+        if (!(pendingRelease && pendingRelease.sha === e.sha)) pendingRelease = typeof merges[e.sha]?.release_skip === "string" && merges[e.sha].release_skip ? null : { sha: e.sha, n };
+      }
       break;
     }
     case "issue_close": {
@@ -157,8 +176,43 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (e.origin_base_sha !== e.merge_sha) v(["DEC-07", "OPR-04"], n, `issue #${e.n} closed while origin/${base} (${short(e.origin_base_sha)}) is not the merge sha (${short(e.merge_sha)})`);
       break;
     }
+    case "tag_push": {
+      const r = (m) => v("OPR-09", n, `tag ${e.tag}: ${m}`);
+      if (relWhen === "never") r("pushed, but the profile's release_when is never");
+      if (!SEMVER.test(e.tag)) r("not SemVer (vMAJOR.MINOR.PATCH, optional -pre-release)");
+      const toolTag = relTool && e.by === "ci";   // a release tool tags the merge of its release PR, which the ledger did not see pushed
+      if (!toolTag && e.ref !== `refs/tags/${e.tag}`) r(`pushed as ${JSON.stringify(e.ref ?? null)}, not by its full ref refs/tags/${e.tag}`);
+      if (!toolTag && !basePushes.has(e.sha) && !linePushes.has(e.sha)) r(`on ${short(e.sha)}, which no earlier push of ${base} (or of a release/X.Y line) pushed`);
+      if (e.annotated !== true) r("not annotated (git tag -a, or -s when signing)");
+      if (e.chained !== false) r("pushed chained after another command (push it alone, by its full ref)");
+      const tagger = toolTag ? "ci" : profile.base_pusher;
+      if (e.by !== tagger) r(`pushed by ${e.by}, the profile's base_pusher is ${profile.base_pusher}`);
+      if (tagSha[e.tag] && tagSha[e.tag] !== e.sha) r(`moved from ${short(tagSha[e.tag])} to ${short(e.sha)} (never move a published tag; fix forward)`);
+      tagSha[e.tag] ??= e.sha;
+      break;
+    }
+    case "release": {
+      const r = (m) => v("OPR-09", n, `release ${e.tag}: ${m}`);
+      const sv = SEMVER.exec(e.tag), pre = sv?.[4], via = e.via ?? "session";
+      if (!tagSha[e.tag]) r("no tag_push of that tag before it");
+      if (!["ci", "session"].includes(via)) r(`via must be ci or session, got ${JSON.stringify(via)}`);
+      else if (relVia && via !== relVia) r(`made by ${via}, the profile's release_via is ${relVia}`);
+      if (via === "session" && e.verify_tag !== true) r("created without --verify-tag");
+      if (pre && e.prerelease !== true) r("a pre-release version not marked prerelease");
+      if (pre && e.latest === true) r("a pre-release marked latest");
+      if (sv && !pre && e.latest === true) {
+        const higher = Object.keys(tagSha).map((t) => [t, SEMVER.exec(t)]).filter(([, x]) => x && !x[4] && semCmp(x, sv) > 0).map(([t]) => t);
+        if (higher.length) r(`marked latest, but ${higher.join(", ")} is higher`);
+      }
+      if (releasedTags.has(e.tag)) r("created twice (never delete or re-create a published release)");
+      releasedTags.add(e.tag);
+      if (tagSha[e.tag]) releasedShas.add(tagSha[e.tag]);
+      break;
+    }
   }
 }
+if (pendingRelease && !releasedShas.has(pendingRelease.sha)) warns.push(`warn: line ${pendingRelease.n}: merge ${short(pendingRelease.sha)} pushed to ${base} has no release yet (OPR-09: release it before the next merge is pushed)`);
+if (basePushes.size && !relWhen) warns.push(`warn: release_when ${profile.release_when === undefined ? "unset" : `is ${JSON.stringify(profile.release_when)}`} in the profile: OPR-09 checks release events but not when they are due`);
 for (const w of warns) console.log(w);
 if (!events && !violations.length) v("LEDGER", 1, "empty ledger");
 if (violations.length) {

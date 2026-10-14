@@ -19,7 +19,14 @@ export const FIELDS = {
   production_env: { required: false },
   standing_waivers: { required: false, list: true },
   ledger_path: { required: false },
+  // Releases (OPR-09). Optional: unset means the audit checks release events but not when they are due.
+  release_when: { required: false, enum: ["change-set", "milestone", "never"] },
+  release_via: { required: false, enum: ["ci", "session"] },
+  release_tool: { required: false, enum: ["none", "release-please", "changesets", "semantic-release", "goreleaser", "other"] },
+  changelog: { required: false },
+  version_files: { required: false, list: true },
 };
+export const RELEASE_FIELDS = ["release_when", "release_via", "release_tool", "changelog", "version_files"];
 
 const unquote = (s) => s.trim().replace(/^(["'])(.*)\1$/, "$2");
 const stripComment = (s) => {
