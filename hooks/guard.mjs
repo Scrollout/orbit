@@ -28,8 +28,10 @@ const REDIR = /^(\d*)(&>>|&>|>>|>\||>&|>|<<<|<<-|<<|<>|<&|<)/;
 const WRITE_OPS = new Set([">", ">>", ">|", "&>", "&>>", "<>", ">&"]);
 
 export function parseShell(src, env = {}) {
-  const p = { s: src, i: 0, cmds: [], env };
+  // complex: an ||, a pipe, a background & or a condition, loop, case or function: a cd's effect is then unknown.
+  const p = { s: src, i: 0, cmds: [], env, f: { complex: false } };
   list(p, 0, null);
+  p.cmds.complex = p.f.complex;
   return p.cmds;
 }
 
@@ -55,16 +57,18 @@ function list(p, depth, close) {
     }
     if (c === "(") {
       // `name()`: a function definition; its body is checked like any other commands.
-      if (cmd.words.length === 1 && !cmd.redirs.length && /^\(\s*\)/.test(s.slice(p.i))) { p.i = s.indexOf(")", p.i) + 1; cmd.words = []; continue; }
+      if (cmd.words.length === 1 && !cmd.redirs.length && /^\(\s*\)/.test(s.slice(p.i))) { p.f.complex = true; p.i = s.indexOf(")", p.i) + 1; cmd.words = []; continue; }
       if (cmd.words.length) throw new ParseError("( inside a command");
       finish(); p.i++; list(p, depth + 1, ")"); continue;
     }
     if (!cmd.words.length && !cmd.redirs.length) {
       const kw = /^(case|esac)(?=[\s;&|()<>]|$)/.exec(s.slice(p.i))?.[1];
       if (kw === "esac" && close === "case") { if (pending.length) throw new ParseError("heredoc not terminated"); finish(); return; }
-      if (kw === "case") { p.i += 4; caseBody(p, depth); continue; }
+      if (kw === "case") { p.f.complex = true; p.i += 4; caseBody(p, depth); continue; }
+      if (/^(if|elif|while|until|select|function)(?=[\s;&|()<>]|$)/.test(s.slice(p.i))) p.f.complex = true;
     }
     if ((c === ";" || c === "|" || c === "&") && !(c === "&" && s[p.i + 1] === ">")) {
+      if (!(c === "&" && s[p.i + 1] === "&") && c !== ";") p.f.complex = true;
       finish(); p.i += s[p.i + 1] === c || (c === "|" && s[p.i + 1] === "&") ? 2 : 1; continue;
     }
     const m = REDIR.exec(s.slice(p.i));
@@ -162,7 +166,7 @@ function word(p, depth) {
     let j = p.i + 1, inner = "";
     for (; j < s.length && s[j] !== "`"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; inner += s[j]; } else inner += s[j]; }
     if (j >= s.length) throw new ParseError("unclosed `");
-    const q = { s: inner, i: 0, cmds: p.cmds, env: p.env }, from = p.cmds.length;
+    const q = { s: inner, i: 0, cmds: p.cmds, env: p.env, f: p.f }, from = p.cmds.length;
     list(q, depth + 1, null);
     subs.push([from, p.cmds.length]); dyn = unexp = true; p.i = j + 1;
   };
@@ -317,57 +321,150 @@ export function realCtx(cwd, env) {
 const inside = (root, f) => f === root || f.startsWith(root.endsWith(sep) ? root : root + sep);
 const shown = (w) => w.raw;
 
-function gitSplit(args, cwd) {
-  let i = 0, dir = cwd;
+// Global options before the subcommand. A dynamic -C leaves the directory unknown (null): the operator is denied,
+// a worker's DEC-08 check still runs, with the session's cwd for the repo state.
+function gitSplit(args, cwd, op) {
+  let i = 0, dir = cwd, config = false;
   while (i < args.length) {
     const a = args[i].lit;
     if (a === null) return { bad: "a dynamic git option" };
     if (a === "-C") {
       const d = args[i + 1]?.exp;
-      if (d == null) return { bad: "a dynamic git -C path" };
+      if (d == null) { if (op || !args[i + 1]) return { bad: "a dynamic git -C path" }; dir = null; i += 2; continue; }
       dir = isAbsolute(d) ? d : dir && resolve(dir, d); i += 2; continue;
     }
+    if (a === "-c" || a === "--config-env") { config = true; i += 2; continue; }
+    if (/^(-c.|--config-env=)/.test(a)) { config = true; i++; continue; }
     if (["--git-dir", "--work-tree", "--namespace"].includes(a)) { i += 2; continue; }
     if (/^--(git-dir|work-tree|namespace)=/.test(a) || ["--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--bare"].includes(a)) { i++; continue; }
-    if (["--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"].includes(a)) return { dir, sub: "version", rest: [] };
+    if (["--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"].includes(a)) return { dir, config, sub: "version", rest: [] };
     if (a.startsWith("-")) return { bad: `git option ${a}` };
-    return { dir, sub: a, rest: args.slice(i + 1) };
+    return { dir, config, sub: a, rest: args.slice(i + 1) };
   }
-  return { dir, sub: null, rest: [] };
+  return { dir, config, sub: null, rest: [] };
 }
 
-const READ_GIT = new Set(["status", "log", "diff", "show", "fetch", "rev-parse", "ls-remote", "ls-files", "ls-tree", "cat-file", "rev-list", "merge-base", "describe", "blame", "grep", "shortlog", "show-ref", "for-each-ref", "name-rev", "check-ignore", "help", "version", "whatchanged", "diff-tree", "diff-files", "diff-index", "show-branch", "count-objects", "var", "range-diff", "cherry"]);
-const BRANCH_LIST = ["--list", "-l", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "-a", "--all", "-r", "--remotes"];
-const BRANCH_FLAG = /^(-a|--all|-r|--remotes|-v|-vv|--verbose|--show-current|--list|-l|--contains|--no-contains|--merged|--no-merged|--points-at|-i|--ignore-case|--no-color|--color(=.*)?|--column(=.*)?|--no-column|--sort=.*|--format=.*|--abbrev=.*|--no-abbrev|-q|--quiet|--omit-empty)$/;
-// Options of otherwise read-only subcommands that run a program or write a file.
-const GIT_RUN_OR_WRITE = /^(--upload-pack|--receive-pack|--exec|--output|--output-file)(=|$)|^-O|^--open-files-in-pager/;
-const CONFIG_READ = /^(--get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|--list|-l|get|list)$/;
-const CONFIG_SCOPE = /^(--global|--system|--local|--worktree|--file|-f|--blob|--show-origin|--show-scope|-z|--null|--name-only|--includes|--no-includes|--type(=.*)?|--bool|--int|--path|--expiry-date|--default(=.*)?)$/;
-const CONFIG_WRITE = /^(--add|--unset|--unset-all|--replace-all|--rename-section|--remove-section|-e|--edit|set|unset|rename-section|remove-section|edit)$/;
+// Read-only git: a per-subcommand allowlist of options (default deny; no abbreviations). A spec has
+// `bool` long options, `eq` long options that take `=value`, `req` long options whose value may also be the next
+// argument, `s` short flags, `sv` short options with a value (attached or next), `so` short options whose value can
+// only be attached (the rest of the cluster), and `num` for `-<n>`.
+const sp = (o) => ({ bool: new Set((o.bool ?? "").split(" ").filter(Boolean)), eq: new Set((o.eq ?? "").split(" ").filter(Boolean)), req: new Set((o.req ?? "").split(" ").filter(Boolean)), s: o.s ?? "", sv: o.sv ?? "", so: o.so ?? "", num: !!o.num });
+const merge = (a, b) => ({ bool: `${a.bool ?? ""} ${b.bool ?? ""}`, eq: `${a.eq ?? ""} ${b.eq ?? ""}`, req: `${a.req ?? ""} ${b.req ?? ""}`, s: (a.s ?? "") + (b.s ?? ""), sv: (a.sv ?? "") + (b.sv ?? ""), so: (a.so ?? "") + (b.so ?? ""), num: a.num || b.num });
+const LOG = {
+  bool: "oneline stat shortstat numstat name-only name-status graph all decorate no-decorate reverse first-parent merges no-merges patch no-patch raw abbrev-commit no-abbrev-commit full-diff follow cc summary color no-color word-diff color-words cached staged ignore-all-space ignore-space-change ignore-space-at-eol ignore-blank-lines ignore-cr-at-eol minimal patience histogram check exit-code quiet full-index binary no-renames find-renames find-copies find-copies-harder no-ext-diff no-textconv relative no-relative topo-order date-order author-date-order left-right left-only right-only cherry-pick cherry-mark cherry boundary ancestry-path simplify-by-decoration simplify-merges dense sparse full-history show-signature notes no-notes source mailmap use-mailmap no-mailmap remotes branches tags show-pulls dirstat compact-summary show-linear-break children parents ignore-missing all-match invert-grep regexp-ignore-case basic-regexp extended-regexp fixed-strings perl-regexp no-walk do-walk count objects objects-edge single-worktree reflog walk-reflogs irreversible-delete function-context text merge-base no-index no-prefix default-prefix color-moved no-color-moved pickaxe-all pickaxe-regex abbrev no-abbrev root no-commit-id always expand-tabs no-expand-tabs indent-heuristic no-indent-heuristic dual-color no-dual-color submodule ignore-submodules standard-notes no-standard-notes remerge-diff combined-all-paths",
+  eq: "format pretty since after until before author committer grep max-count skip date abbrev decorate color word-diff stat dirstat find-renames find-copies diff-filter diff-algorithm unified relative encoding notes show-notes max-parents min-parents exclude glob branches tags remotes submodule ignore-submodules inter-hunk-context anchored color-moved color-moved-ws line-prefix src-prefix dst-prefix output-indicator-new output-indicator-old output-indicator-context break-rewrites rotate-to skip-to diff-merges decorate-refs decorate-refs-exclude creation-factor stat-width stat-name-width stat-graph-width stat-count word-diff-regex expand-tabs ws-error-highlight",
+  req: "since after until before author committer grep max-count skip date encoding format",
+  s: "pusbzwRaiEFPqtWDmcr", sv: "nLSGl", so: "MCBU", num: true,
+};
+const GIT_SPECS = {
+  log: LOG, show: LOG, whatchanged: LOG, "rev-list": LOG, diff: LOG, "diff-tree": LOG, "diff-files": LOG, "diff-index": LOG, cherry: { s: "v", eq: "abbrev" },
+  "range-diff": merge(LOG, { bool: "no-dual-color left-only right-only", eq: "creation-factor" }),
+  shortlog: { bool: `${LOG.bool} committer numbered summary email`, eq: `${LOG.eq} group`, req: LOG.req, s: "nsec", so: "w", num: true },
+  status: { bool: "short branch long porcelain verbose ahead-behind no-ahead-behind renames no-renames show-stash column no-column null", eq: "porcelain untracked-files ignored ignore-submodules column find-renames", s: "sbvz", so: "u" },
+  fetch: { bool: "all prune prune-tags tags no-tags dry-run quiet verbose unshallow force progress no-progress no-recurse-submodules recurse-submodules multiple atomic append refetch write-fetch-head no-write-fetch-head update-shallow no-auto-gc auto-gc ipv4 ipv6 show-forced-updates no-show-forced-updates", eq: "depth deepen shallow-since shallow-exclude recurse-submodules jobs filter", req: "depth deepen shallow-since shallow-exclude jobs filter", s: "pPtnqvfa46", sv: "j" },
+  "ls-remote": { bool: "heads tags branches refs quiet exit-code symref get-url", eq: "sort", req: "sort", s: "htbq" },
+  "rev-parse": { bool: "verify quiet short abbrev-ref symbolic symbolic-full-name show-toplevel git-dir git-common-dir absolute-git-dir is-inside-work-tree is-inside-git-dir is-bare-repository is-shallow-repository show-prefix show-cdup show-superproject-working-tree all branches tags remotes revs-only no-revs flags no-flags sq not local-env-vars show-object-format show-ref-format keep-dashdash stop-at-non-option", eq: "short abbrev-ref path-format branches tags remotes glob exclude since after until before show-object-format disambiguate", req: "git-path default prefix resolve-git-dir", s: "q" },
+  "merge-base": { bool: "all octopus independent is-ancestor fork-point", s: "a" },
+  describe: { bool: "tags all long always contains exact-match first-parent dirty broken debug", eq: "abbrev match exclude dirty broken candidates", req: "match exclude candidates" },
+  blame: { bool: "porcelain line-porcelain incremental root show-stats show-name show-number reverse first-parent color-lines color-by-age progress no-progress score-debug minimal", eq: "date since abbrev ignore-rev ignore-revs-file encoding", req: "ignore-rev ignore-revs-file date", s: "ltsewpcnfb", sv: "L", so: "MC" },
+  "cat-file": { bool: "batch batch-check batch-all-objects buffer unordered follow-symlinks allow-unknown-type batch-command", eq: "batch batch-check batch-command", s: "tsepZ" },
+  "ls-files": { bool: "cached deleted modified others ignored stage unmerged killed directory no-empty-directory eol exclude-standard full-name recurse-submodules error-unmatch deduplicate sparse debug resolve-undo abbrev", eq: "exclude exclude-from exclude-per-directory with-tree format abbrev", req: "exclude exclude-from exclude-per-directory with-tree format", s: "cdmoisuktvfz", sv: "xX" },
+  "ls-tree": { bool: "long name-only name-status object-only full-name full-tree abbrev", eq: "abbrev format", req: "format", s: "drtlz" },
+  grep: { bool: "cached untracked no-index exclude-standard no-exclude-standard recurse-submodules text ignore-case no-ignore-case word-regexp invert-match full-name extended-regexp basic-regexp fixed-strings perl-regexp line-number no-line-number column name-only files-with-matches files-without-match null count color no-color break heading show-function function-context only-matching quiet all-match and or not", eq: "max-depth threads color context after-context before-context max-count", req: "max-depth threads context after-context before-context max-count", s: "aiIwvhHEGFPnlLczqopW", sv: "eABCm" },
+  "show-ref": { bool: "head heads branches tags dereference verify quiet exists exclude-existing hash abbrev", eq: "hash abbrev exclude-existing", s: "dsq" },
+  "for-each-ref": { bool: "merged no-merged contains no-contains shell perl python tcl color ignore-case omit-empty stdin include-root-refs", eq: "format sort count points-at merged no-merged contains no-contains color exclude", req: "format sort count points-at exclude" },
+  "name-rev": { bool: "tags all annotate-stdin name-only no-undefined always stdin", eq: "refs exclude", req: "refs exclude" },
+  "check-ignore": { bool: "quiet verbose non-matching no-index stdin", s: "qvnz" },
+  "show-branch": { bool: "all remotes topo-order date-order current sparse list merge-base independent no-name sha1-name topics color no-color reflog", eq: "more color reflog", s: "ar" },
+  "count-objects": { bool: "verbose human-readable", s: "vH" }, var: { s: "l" }, help: { bool: "all guides", s: "ag" }, version: { bool: "build-options" },
+  "symbolic-ref": { bool: "short quiet", s: "q" },
+};
+for (const k of Object.keys(GIT_SPECS)) GIT_SPECS[k] = sp(GIT_SPECS[k]);
+const WORKTREE_LIST = sp({ bool: "porcelain verbose", eq: "expire", req: "expire", s: "vz" });
+const BRANCH_SPEC = sp({ bool: "all remotes verbose show-current list contains no-contains merged no-merged points-at ignore-case no-color color column no-column no-abbrev quiet omit-empty", eq: "color column sort format abbrev contains no-contains merged no-merged points-at", s: "arvliq" });
+const TAG_SPEC = sp({ bool: "list contains no-contains merged no-merged points-at ignore-case column no-column color omit-empty", eq: "sort format contains no-contains merged no-merged points-at column color", req: "sort format", s: "li", so: "n" });
+const CONFIG_SPEC = sp({ bool: "get get-all get-regexp get-urlmatch get-color get-colorbool list global system local worktree show-origin show-scope null name-only includes no-includes bool int bool-or-int path expiry-date", eq: "type default file blob", req: "file blob default type", s: "lz", sv: "f" });
+const REMOTE_SHOW = sp({ s: "n" }), REMOTE_URL = sp({ bool: "push all" });
 
-function gitReadOnly(sub, rest) {
+// Returns { bad: option } or { pos: positionals } for args read against a spec.
+function readOpts(spec, args) {
+  const pos = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") { pos.push(...args.slice(i + 1)); break; }
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("="), name = eq < 0 ? a.slice(2) : a.slice(2, eq);
+      if (eq < 0 && spec.bool.has(name)) continue;
+      if (eq >= 0 && (spec.eq.has(name) || spec.req.has(name))) continue;
+      if (eq < 0 && spec.req.has(name)) { i++; continue; }
+      return { bad: a };
+    }
+    if (a.length > 1 && a.startsWith("-")) {
+      if (spec.num && /^-\d+$/.test(a)) continue;
+      for (let k = 1; k < a.length; k++) {
+        const ch = a[k];
+        if (spec.sv.includes(ch)) { if (k === a.length - 1) i++; break; }
+        if (spec.so.includes(ch)) break;
+        if (!spec.s.includes(ch)) return { bad: a };
+      }
+      continue;
+    }
+    pos.push(a);
+  }
+  return { pos };
+}
+
+// Returns null when the git subcommand is read-only with these arguments, else the reason.
+function gitNotReadOnly(sub, rest) {
   const a = rest.map((w) => w.lit);
-  if (a.includes(null)) return false;
-  if (a.some((x) => GIT_RUN_OR_WRITE.test(x))) return false;
-  if (sub === "fetch" || sub === "ls-remote") {
-    if (sub === "ls-remote" && a.includes("-u")) return false;
-    if (a.filter((x) => !x.startsWith("-")).slice(1).some((x) => x.includes(":"))) return false;
+  if (a.includes(null)) return "an argument it cannot read before it runs";
+  const opt = (spec, args = a) => { const r = readOpts(spec, args); return r.bad !== undefined ? { bad: `option ${r.bad} (not on its read-only list)` } : r; };
+  const check = (spec, args = a) => opt(spec, args).bad ?? null;
+  if (GIT_SPECS[sub]) {
+    const r = opt(GIT_SPECS[sub]);
+    if (r.bad) return r.bad;
+    if ((sub === "fetch" || sub === "ls-remote") && r.pos.slice(1).some((x) => x.includes(":"))) return "a src:dst refspec (a fetch writes refs)";
+    if (sub === "symbolic-ref" && r.pos.length > 1) return "a symbolic-ref update";
+    return null;
   }
-  if (READ_GIT.has(sub)) return true;
-  if (sub === "worktree") return a[0] === "list";
-  if (sub === "branch") return a.every((x) => BRANCH_FLAG.test(x) || (!x.startsWith("-") && a.some((y) => BRANCH_LIST.includes(y))));
-  if (sub === "tag") return a.length === 0 || a[0] === "-l" || a[0] === "--list";
-  if (sub === "remote") return a.length === 0 || ["-v", "--verbose", "show", "get-url"].includes(a[0]);
-  if (sub === "config") {
+  if (sub === "worktree") return a[0] === "list" ? check(WORKTREE_LIST, a.slice(1)) : "a worktree change";
+  if (sub === "branch") {
+    const r = opt(BRANCH_SPEC);
+    if (r.bad) return r.bad;
+    return r.pos.length && !a.some((x) => /^(-[a-z]*[lar][a-z]*|--list|--all|--remotes|--(no-)?contains.*|--(no-)?merged.*|--points-at.*)$/.test(x)) ? "a branch change" : null;
+  }
+  if (sub === "tag") {
+    const r = opt(TAG_SPEC);
+    if (r.bad) return r.bad;
+    return r.pos.length && !a.some((x) => /^(-[a-z]*l[a-z]*|--list|--(no-)?contains.*|--(no-)?merged.*|--points-at.*)$/.test(x)) ? "a tag change" : null;
+  }
+  if (sub === "remote") {
     let i = 0;
-    while (i < a.length && CONFIG_SCOPE.test(a[i])) i += ["--file", "-f", "--blob"].includes(a[i]) ? 2 : 1;
-    return CONFIG_READ.test(a[i] ?? "") && !a.some((x) => CONFIG_WRITE.test(x));
+    while (a[i] === "-v" || a[i] === "--verbose") i++;
+    if (i === a.length) return null;
+    if (a[i] === "show") return check(REMOTE_SHOW, a.slice(i + 1));
+    if (a[i] === "get-url") return check(REMOTE_URL, a.slice(i + 1));
+    return "a remote change";
   }
-  if (sub === "reflog") return a.length === 0 || a[0] === "show" || (a[0].startsWith("-") && !a.some((x) => ["expire", "delete", "drop"].includes(x)));
-  if (sub === "stash") return a[0] === "list" || a[0] === "show";
-  if (sub === "notes") return a[0] === "show" || a[0] === "list";
-  if (sub === "symbolic-ref") return !a.some((x) => ["-d", "--delete", "-m"].includes(x)) && a.filter((x) => !x.startsWith("-")).length <= 1;
-  return false;
+  if (sub === "config") {
+    const r = opt(CONFIG_SPEC);
+    if (r.bad) return r.bad;
+    const read = a.some((x) => /^(--get|--get-all|--get-regexp|--get-urlmatch|--get-color|--get-colorbool|--list|-[a-z]*l[a-z]*)$/.test(x)) || ["get", "list"].includes(r.pos[0]);
+    const n = ["get", "list"].includes(r.pos[0]) ? r.pos.length - 1 : r.pos.length;
+    return read && n <= 2 ? null : "a config write";
+  }
+  if (sub === "reflog") {
+    if (a[0] === "exists") return a.length === 2 && !a[1].startsWith("-") ? null : "a reflog change";
+    if (["expire", "delete", "drop"].includes(a[0])) return "a reflog change";
+    return check(GIT_SPECS.log, a[0] === "show" ? a.slice(1) : a);
+  }
+  if (sub === "stash") return a[0] === "list" || a[0] === "show" ? check(GIT_SPECS.log, a.slice(1)) : "a stash change";
+  if (sub === "notes") {
+    if (a[0] !== "show" && a[0] !== "list") return "a notes change";
+    const o = a.slice(1).find((x) => x.startsWith("-"));
+    return o ? `option ${o} (not on its read-only list)` : null;
+  }
+  return "a subcommand that is not read-only";
 }
 
 // ---------- gh ----------
@@ -395,7 +492,7 @@ function ghDeny(args) {
   if (p0 !== "api") return null;
   const endpoint = p1;
   if (endpoint === "graphql") {
-    if (input || fields.some((f) => f.lit === null || /\bmutation\b/.test(f.lit))) return `run a GraphQL mutation (or a query it cannot read) through "gh api graphql"`;
+    if (input || fields.some((f) => f.lit === null || /\bmutation\b/.test(f.lit) || /^[^=]*=@/.test(f.lit))) return `run a GraphQL mutation, or a query it cannot read (a variable, @file or --input), through "gh api graphql"`;
     return null;
   }
   const m = (method ?? (fields.length || input ? "POST" : "GET")).toUpperCase();
@@ -523,8 +620,6 @@ function messageOf(w, cmds) {
   return c[0].heredoc.replace(/\n+$/, "");
 }
 
-const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 function dec08(sub, rest, dir, cmd, cmds, ctx, st) {
   if (sub !== "merge" && sub !== "commit") return null;
   const prof = ctx.profile(dir);
@@ -541,7 +636,7 @@ function dec08(sub, rest, dir, cmd, cmds, ctx, st) {
     if (a === "--file") { files.push(rest[++i]?.exp ?? null); continue; }
     if (a.startsWith("--message=")) { msgs.push(a.slice(10)); continue; }
     if (a.startsWith("--file=")) { files.push(a.slice(7)); continue; }
-    if (sub === "commit" && /^--(reuse|reedit)-message(=|$)/.test(a)) { flags.add("reuse"); if (!a.includes("=")) i++; continue; }
+    if (sub === "commit" && /^--(reuse|reedit)-message$/.test(a)) { i++; continue; }
     if (a.startsWith("--")) { flags.add(a.split("=")[0]); if (valued.includes(a)) i++; continue; }
     if (/^-[a-zA-Z]+$/.test(a)) {
       for (let k = 1; k < a.length; k++) {
@@ -550,7 +645,6 @@ function dec08(sub, rest, dir, cmd, cmds, ctx, st) {
           const v = a.length > k + 1 ? { lit: a.slice(k + 1), exp: a.slice(k + 1) } : rest[++i];
           if (ch === "m") msgs.push(messageOf(v, cmds));
           else if (ch === "F") files.push(v?.exp ?? null);
-          else if (ch === "C" || ch === "c") flags.add("reuse");
           break;
         }
         flags.add(`-${ch}`);
@@ -561,24 +655,22 @@ function dec08(sub, rest, dir, cmd, cmds, ctx, st) {
   }
   const why = `DEC-08: the merge commit message needs the "${prof.trailer}:" trailer (the reviewer that ran and the review pointer, or "<owner> waived - <reason>") in the same last paragraph as Co-Authored-By`;
   const explicit = `${why}; give the message explicitly: use -F with a message file.`;
+  const gdir = dir ?? st.cwd;
   const inMerge = () => {
     if (st.merging) return true;
-    const head = dir && ctx.mergeHead(dir);
-    return !!head && !(base && ctx.baseShas(dir, base).includes(head));
+    const head = gdir && ctx.mergeHead(gdir);
+    return !!head && !(base && ctx.baseShas(gdir, base).includes(head));
   };
   if (sub === "merge") {
     if (flags.has("--abort") || flags.has("--quit")) return null;
     if (flags.has("--continue")) return inMerge() ? explicit : null;
     if (!flags.has("--no-ff") || !pos.length) return null;
     const baseRefs = base ? [base, `origin/${base}`, `refs/heads/${base}`, `refs/remotes/origin/${base}`] : [];
-    const catchUpRef = (w) => w.lit === "FETCH_HEAD" || baseRefs.includes(w.lit) || (/^[0-9a-f]{7,40}$/.test(w.lit ?? "") && !!base && ctx.baseShas(dir, base).some((h) => h.startsWith(w.lit)));
+    const catchUpRef = (w) => w.lit === "FETCH_HEAD" || baseRefs.includes(w.lit) || (/^[0-9a-f]{7,40}$/.test(w.lit ?? "") && !!base && !!gdir && ctx.baseShas(gdir, base).some((h) => h.startsWith(w.lit)));
     if (pos.every(catchUpRef)) return null;
-    const catchUpMsg = base && new RegExp(`^(catch[ -]?up\\b|Merge (remote-tracking )?(branch )?'?(origin/)?${escapeRe(base)}'?( |$))`, "i");
-    if (catchUpMsg && msgs[0] != null && catchUpMsg.test(msgs[0])) return null;
     if (flags.has("--no-commit")) { st.merging = true; return null; }
   } else {
     if (flags.has("--amend") || !inMerge()) return null;
-    if (flags.has("reuse")) return explicit;
   }
   if (!msgs.length && !files.length) return explicit;
   const texts = [...msgs];
@@ -589,7 +681,8 @@ function dec08(sub, rest, dir, cmd, cmds, ctx, st) {
 
 // ---------- the walk over the commands ----------
 const DECLARE = new Set(["export", "declare", "typeset", "local", "readonly"]);
-const MKTEMP = /^([A-Za-z_]\w*)=("?)\$\(\s*mktemp\b[^()`;|&<>$]*\)\2$/;
+// `$(mktemp)`, `$(mktemp -d)`, `$(mktemp [-d] -t NAME.XXXX)`: a new path in the temp dir. Not -p, --tmpdir or a template path.
+const MKTEMP = /^([A-Za-z_]\w*)=("?)\$\(\s*mktemp((\s+(-d|-q|--directory|--quiet|-[dq]*t\s+[\w.-]+))*)\s*\)\2$/;
 
 // Records the variables a command assigns: prefix assignments, export/declare, read, for, mapfile.
 function assigns(cmd, r, st) {
@@ -616,6 +709,7 @@ function assigns(cmd, r, st) {
     }
   }
   if ((r.name === "mapfile" || r.name === "readarray") && r.args.length) set(r.args[r.args.length - 1].raw);
+  if (r.name === "printf") for (let k = 0; k < r.args.length; k++) { const a = r.args[k].raw; if (a === "-v" && r.args[k + 1]) set(r.args[++k].raw); else if (/^-v\w/.test(a)) set(a.slice(2)); }
 }
 
 const deny = (what) => `OPR-01: the operator session does not ${what}; ${DELEGATE}.`;
@@ -632,7 +726,7 @@ function checkCmds(cmds, st, ctx, op, total) {
     if (r.name === "cd" || r.name === "pushd") {
       const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
       const e = t ? expOf(t, st) : st.env.HOME;
-      st.cwd = cmd.depth > 0 || e == null || e === "-" ? null : isAbsolute(e) ? e : st.cwd && resolve(st.cwd, e);
+      st.cwd = cmd.depth > 0 || st.complex || e == null || e === "-" ? null : isAbsolute(e) ? e : st.cwd && resolve(st.cwd, e);
       continue;
     }
     if (r.name === "popd") { st.cwd = null; continue; }
@@ -642,15 +736,20 @@ function checkCmds(cmds, st, ctx, op, total) {
       if (r.inner === null) { if (op) return deny(`run ${r.name} with a script it cannot read (run it via a worker)`); continue; }
       let inner;
       try { inner = parseShell(r.inner, st.env); } catch { if (op) return deny(`run a ${r.name} script it cannot parse (run it via a worker)`); continue; }
-      const d = checkCmds(inner, { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp) }, ctx, op, total + inner.length);
+      // eval runs in this shell (shared cwd and variables); sh -c in a child (a copy).
+      const sub = r.name === "eval" ? st : { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp) };
+      sub.complex ||= inner.complex;
+      const d = checkCmds(inner, sub, ctx, op, total + inner.length);
       if (d) return d;
       continue;
     }
     if (r.name === "git") {
-      const g = gitSplit(r.args, st.cwd);
+      const g = gitSplit(r.args, st.cwd, op);
       if (g.bad) { if (op) return deny(`run git with ${g.bad}`); continue; }
+      if (op && g.config) return deny("run git with -c (a config override can run a program)");
       if (!g.sub) continue;
-      if (!op || gitReadOnly(g.sub, g.rest)) {
+      const why = op ? gitNotReadOnly(g.sub, g.rest) : null;
+      if (!why) {
         const d8 = dec08(g.sub, g.rest, g.dir, cmd, cmds, ctx, st);
         if (d8) return d8;
         continue;
@@ -663,7 +762,7 @@ function checkCmds(cmds, st, ctx, op, total) {
         if (total !== 1) return deny(`chain the base push with other commands (OPR-03: the base is pushed alone)`);
         continue;
       }
-      return deny(`run "git ${g.sub}${g.rest.length ? " " + g.rest.map(shown).join(" ") : ""}"`);
+      return deny(`run "git ${g.sub}${g.rest.length ? " " + g.rest.map(shown).join(" ") : ""}" (${why})`);
     }
     if (!op) continue;
     if (r.name === "gh") { const d = ghDeny(r.args); if (d) return deny(d); continue; }
@@ -709,7 +808,7 @@ export function guard(input, env = {}, ctx = null) {
   let cmds;
   try { cmds = parseShell(ti.command, env); } catch (e) { return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : null; }
   if (!op && !/\bgit\b/.test(ti.command)) return null;
-  return checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false }, getCtx(), op, cmds.length);
+  return checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
 }
 
 // The hook entry: raw stdin in, { code, stdout, stderr } out. Fails closed only for the operator.

@@ -313,8 +313,8 @@ test("finding 6: DEC-08 covers merges without a readable message, --continue, re
   assert.equal(run(bash("git merge --no-ff -m 'x' FETCH_HEAD", w)), null);
   assert.equal(run(bash("git merge --no-ff -m 'x' def5678", w), merging), null, "a sha equal to the base tip is a catch-up");
   assert.match(run(bash("git merge --no-ff -m 'x' 0123abc", w), merging) ?? "", /^DEC-08/);
-  assert.equal(run(bash("git merge --no-ff -m 'catch up with main' 0123abc", w)), null);
-  assert.equal(run(bash("git merge --no-ff -m \"Merge remote-tracking branch 'origin/main' into t\" 0123abc", w)), null);
+  assert.match(run(bash("git merge --no-ff -m 'catch up with main' 0123abc", w)) ?? "", /^DEC-08/, "no message-prefix exemption (round 3 D)");
+  assert.match(run(bash("git merge --no-ff -m \"Merge remote-tracking branch 'origin/main' into t\" 0123abc", w)) ?? "", /^DEC-08/);
   assert.equal(run(bash("git merge abc1234", w)), null, "no --no-ff: a catch-up");
 });
 
@@ -377,4 +377,66 @@ test("the hook entry fails closed for the operator when guard() throws, and stay
   assert.deepEqual(w, { code: 0, stdout: "", stderr: "" });
   assert.equal(hookMain("{", { ORBIT_ROLE: "operator" }).code, 2);
   assert.equal(hookMain("{", {}).code, 0);
+});
+
+// ---------- fix round 2 ----------
+test("round 2 C: read-only git subcommands take only allowlisted options, named in the deny", () => {
+  for (const [c, opt] of [
+    ["git fetch --receive-pack=x origin", "--receive-pack=x"], ["git fetch --upload-p=x origin", "--upload-p=x"], ["git grep --open-files=vi x", "--open-files=vi"],
+    ["git ls-remote -qu'touch x' origin", "-qutouch x"], ["git grep -nOecho x", "-nOecho"], ["git diff --outp=x", "--outp=x"], ["git log --outp x", "--outp"],
+    ["git status --porcelain --fsmonitor=x", "--fsmonitor=x"], ["git show --ext-diff HEAD", "--ext-diff"], ["git log --textconv", "--textconv"],
+    ["git rev-parse --parseopt", "--parseopt"], ["git cat-file --filters HEAD:x", "--filters"], ["git worktree list --lock", "--lock"],
+    ["git tag v1", null], ["git tag -d v1", "-d"], ["git tag -a v1 -m x", "-a"], ["git remote -v add x y", null], ["git remote -v set-url origin y", null],
+    ["git remote show -v origin --oops", null], ["git branch --sort x", "--sort"], ["git stash list --output=x", "--output=x"],
+    ["git config --get a.b --add", null], ["git config --list --file x --edit", null], ["git reflog show --output=x", "--output=x"],
+    ["git symbolic-ref HEAD refs/heads/x", null], ["git notes show --ref=x", "--ref=x"],
+  ]) {
+    const r = deniedOp(c);
+    if (opt) assert.ok(r.includes(opt), `${c}: ${r}`);
+  }
+  for (const c of [
+    "git log --oneline --graph --decorate -n 20 --format='%h %s' --since=2.weeks --author me -- docs/", "git log -5 -p --stat", "git log -L 1,5:README.md",
+    "git show --name-only --format= HEAD", "git show -s --format=%H HEAD", "git diff --name-status --cached", "git diff -U5 -M50% a b", "git diff --stat=100 a..b",
+    "git status -sb", "git status --porcelain=v1 -uno", "git fetch -p --tags origin", "git fetch --depth 1 origin main", "git ls-remote --heads origin",
+    "git rev-parse --abbrev-ref --symbolic-full-name @{u}", "git rev-parse --git-path MERGE_HEAD", "git grep -n -i -e foo -- '*.md'", "git grep -C 2 foo",
+    "git blame -L 1,10 README.md", "git cat-file -p HEAD", "git ls-files -z --others --exclude-standard", "git ls-tree -r --name-only HEAD",
+    "git shortlog -sn", "git merge-base --is-ancestor a b", "git describe --tags --always", "git for-each-ref --format='%(refname)' refs/heads",
+    "git tag -l 'v*' --sort=-v:refname", "git tag", "git tag -n", "git remote show origin", "git remote get-url --push origin", "git worktree list --porcelain",
+    "git config --show-origin --get-all remote.origin.url", "git reflog exists refs/heads/x", "git stash show -p stash@{0}", "git notes list",
+    "git symbolic-ref --short HEAD", "git show-ref --heads", "git rev-list --count HEAD", "git range-diff a...b", "git diff --output-indicator-new=+ HEAD",
+  ]) allowedOp(c);
+});
+
+test("round 2 A: only a plain mktemp in the temp dir is a safe write prefix", () => {
+  for (const c of ["D=$(mktemp -p /r/main); echo x > $D/a", "D=$(mktemp --tmpdir=/r/main); echo x > $D", "D=$(mktemp body.XXXX); echo x > $D",
+    "D=$(mktemp /r/main/x.XXXX); echo x > $D", "D=$(mktemp -d -p .); echo x > $D/a"]) deniedOp(c);
+  for (const c of ["D=$(mktemp); echo x > $D", "D=$(mktemp -d); echo x > $D/a", "D=$(mktemp -t body.XXXX); echo x > $D", "D=$(mktemp -d -t orbit.XXXX); echo x > $D/a"]) allowedOp(c);
+});
+
+test("round 2 B: eval shares the caller's cwd and variables", () => {
+  deniedOp("cd /tmp && eval cd /r/main && touch x");
+  deniedOp("eval 'TMPDIR=/r/main'; echo x > $TMPDIR/x");
+  allowedOp("eval cd /tmp && touch x");
+});
+
+test("round 2 E: cd under ||, a pipe, background or a condition leaves the cwd unknown; printf -v and declare -n assign", () => {
+  for (const c of ["cd /r/main || cd /tmp; touch x", "false || cd /tmp && touch x", "if true; then cd /tmp; fi; touch x", "cd /tmp | cat; touch x",
+    "printf -v D %s /r/main; echo x > $D/a", "declare -n R=HOME; echo x > $R/a", "while false; do cd /tmp; done; touch x"]) deniedOp(c);
+  allowedOp("cd /tmp && touch x; cd /tmp; touch y");
+});
+
+test("round 2 graphql: a query from a file or --input is denied", () => {
+  for (const c of ["gh api graphql -F query=@q.graphql", "gh api graphql -f query=@q", "gh api graphql --input q.json", "gh api graphql --field=query=@q"]) deniedOp(c);
+  allowedOp("gh api graphql -f query='{ viewer { login } }' -F n=3");
+});
+
+test("round 2 DEC-08: global -c and -C do not hide a worker's merge", () => {
+  const w = { agent_id: "w1", agent_type: "orbit:coder", cwd: "/r/main" };
+  for (const c of ["git -c user.name=x merge --no-ff -m x topic", "git -C \"$DIR\" merge --no-ff -m x topic", "git -C /r/main-topic -c a.b=c merge --no-ff topic"]) {
+    assert.match(run(bash(c, w)) ?? "", /^DEC-08/, c);
+  }
+  assert.equal(run(bash("git -c user.name=x merge --no-ff -F msg-ok.txt topic", w)), null);
+  deniedOp("git -C \"$DIR\" status");
+  deniedOp("git -c user.name=x log");
+  assert.equal(run(bash("git commit -C HEAD -F msg-ok.txt", w), ctx({ mergeHead: () => "abc1234", baseShas: () => [] })), null, "-C consumes its value; the file is checked");
 });
