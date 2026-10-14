@@ -327,7 +327,7 @@ test("worker must be a non-empty string; merge_built branch may not be null", ()
 
 // OPR-09: releases
 const MERGE2 = "e".repeat(40);
-const tag = (o = {}) => ev("tag_push", { tag: "v1.2.0", sha: MERGE, by: "owner", annotated: true, chained: false, ...o });
+const tag = (o = {}) => ev("tag_push", { tag: "v1.2.0", sha: MERGE, by: "owner", annotated: true, chained: false, ...o, ref: o.ref ?? `refs/tags/${o.tag ?? "v1.2.0"}` });
 const rel = (o = {}) => ev("release", { tag: "v1.2.0", via: "session", verify_tag: true, latest: true, ...o });
 const merge2 = (o = {}) => [ev("merge_built", { branch: "t2", merge_sha: MERGE2, tree_equal: true, ci_state: "green", waived: "owner", waiver_reason: "test", ...o }),
   ev("push", { ref: "main", sha: MERGE2, chained: false, by: "owner" })];
@@ -363,6 +363,7 @@ test("OPR-09: per-event tag and release checks", () => {
     ["tag on a sha never pushed to the base", [tag({ sha: SHA2 })], /no earlier push of main/],
     ["lightweight tag", [tag({ annotated: false })], /not annotated/],
     ["chained tag push", [tag({ chained: true })], /pushed chained/],
+    ["tag pushed by its short name", [tag({ ref: "v1.2.0" })], /not by its full ref/],
     ["tag pushed by the agent when the owner pushes the base", [tag({ by: "agent" })], /pushed by agent/],
     ["not SemVer", [tag({ tag: "1.2.0" })], /not SemVer/],
     ["moved tag", [tag(), tag({ sha: SHA })], /moved from/],
@@ -383,6 +384,7 @@ test("OPR-09: per-event tag and release checks", () => {
   assert.equal(runP("release_via: ci", [...clean(), tag(), ev("release", { tag: "v1.2.0", via: "ci", latest: true })]).status, 0, "a CI release needs no verify_tag field");
   assert.equal(run([...clean(), tag({ tag: "v1.3.0-rc.1" }), rel({ tag: "v1.3.0-rc.1", latest: false, prerelease: true })]).status, 0);
   assert.equal(runP("release_tool: release-please", [...clean(), tag({ by: "ci" })]).status, 0, "a release tool tags from CI");
+  assert.equal(runP("release_tool: release-please", [...clean(), tag({ by: "ci", sha: SHA2, ref: "x" })]).status, 0, "a tool's release-PR merge is not in the ledger");
   assert.match(run([...clean(), tag({ by: "ci" })]).stdout, /pushed by ci/);
   const line = ev("push", { ref: "release/1.1", sha: SHA2, chained: false, by: "owner" });
   assert.equal(run([...clean(), tag({ tag: "v1.3.0" }), line, tag({ tag: "v1.1.4", sha: SHA2 }), rel({ tag: "v1.1.4", latest: false })]).status, 0, "a fix on a maintenance line");

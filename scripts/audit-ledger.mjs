@@ -9,7 +9,7 @@
 //   merge_built{branch (required),merge_sha,tree_equal,ci_state,waived?,waiver_reason?,release_skip?}   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
 //   issue_close{n,origin_base_sha,merge_sha}
-//   tag_push{tag,sha,by,annotated,chained,signed?}   by: agent or owner (ci when a release_tool tags)
+//   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { existsSync, readFileSync } from "node:fs";
@@ -180,10 +180,12 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       const r = (m) => v("OPR-09", n, `tag ${e.tag}: ${m}`);
       if (relWhen === "never") r("pushed, but the profile's release_when is never");
       if (!SEMVER.test(e.tag)) r("not SemVer (vMAJOR.MINOR.PATCH, optional -pre-release)");
-      if (!basePushes.has(e.sha) && !linePushes.has(e.sha)) r(`on ${short(e.sha)}, which no earlier push of ${base} (or of a release/X.Y line) pushed`);
+      const toolTag = relTool && e.by === "ci";   // a release tool tags the merge of its release PR, which the ledger did not see pushed
+      if (!toolTag && e.ref !== `refs/tags/${e.tag}`) r(`pushed as ${JSON.stringify(e.ref ?? null)}, not by its full ref refs/tags/${e.tag}`);
+      if (!toolTag && !basePushes.has(e.sha) && !linePushes.has(e.sha)) r(`on ${short(e.sha)}, which no earlier push of ${base} (or of a release/X.Y line) pushed`);
       if (e.annotated !== true) r("not annotated (git tag -a, or -s when signing)");
       if (e.chained !== false) r("pushed chained after another command (push it alone, by its full ref)");
-      const tagger = relTool && e.by === "ci" ? "ci" : profile.base_pusher;
+      const tagger = toolTag ? "ci" : profile.base_pusher;
       if (e.by !== tagger) r(`pushed by ${e.by}, the profile's base_pusher is ${profile.base_pusher}`);
       if (tagSha[e.tag] && tagSha[e.tag] !== e.sha) r(`moved from ${short(tagSha[e.tag])} to ${short(e.sha)} (never move a published tag; fix forward)`);
       tagSha[e.tag] ??= e.sha;

@@ -161,3 +161,35 @@ test("usage errors exit 64; gh failing exits 70", () => {
   assert.equal(check(".", ["--repo", "--next"]).status, 64);
   assert.equal(repoCheck(repoRoot(), {}).status, 70);
 });
+
+test("review fixes: post-tag notes, only Conventional Commit types count, case-insensitive", () => {
+  const root = repo(["fix: x"], "1.0.1");
+  git(root, "tag", "-a", "v1.0.1", "-m", "R 1.0.1");
+  const notes = join(root, "n.md");
+  const r = check(root, ["--next", ...VF, "--notes", notes]);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /^last: v1\.0\.0$/m);
+  assert.match(r.stdout, /^tagged: v1\.0\.1 is at HEAD/m);
+  assert.match(readFileSync(notes, "utf8"), /compare\/v1\.0\.0\.\.\.v1\.0\.1/);
+  const area = check(repo(["parser: add streaming mode", "Feat: new API"], "1.0.0", { releaseMsg: "Release" }), ["--next"]);
+  assert.match(area.stdout, /conventional: 1, computed bump: minor/);
+  assert.match(area.stdout, /^next: v1\.1\.0$/m);
+  const none = check(mkdtempSync(join(tmpdir(), "rel0-")), ["--next"]);
+  assert.equal(none.status, 70);
+});
+
+test("review fixes: tag ruleset excludes, tags keys outside the push trigger, boolean gpgSign spellings", () => {
+  const excl = { ...good, [`api ${S}/rulesets/7`]: { status: 200, json: { conditions: { ref_name: { include: ["~ALL"], exclude: ["refs/tags/v*"] } }, rules: [{ type: "update" }, { type: "deletion" }] } } };
+  assert.match(repoCheck(repoRoot(), excl).stdout, /^gap: no active tag ruleset/m);
+  const v1 = { ...good, [`api ${S}/rulesets/7`]: { status: 200, json: { conditions: { ref_name: { include: ["refs/tags/v1*"] } }, rules: [{ type: "update" }, { type: "deletion" }] } } };
+  assert.match(repoCheck(repoRoot(), v1).stdout, /^gap: no active tag ruleset/m);
+  const root = repoRoot(true, "on:\n  push:\n    branches: [main]\njobs:\n  x:\n    steps:\n      - uses: docker/metadata-action@v5\n        with:\n          tags: type=semver\n");
+  mkdirSync(join(root, ".agents"));
+  writeFileSync(join(root, ".agents", "project.md"), "```yaml orbit-profile\nbase_branch: main\nrelease_via: ci\n```\n");
+  assert.match(repoCheck(root, good).stdout, /^gap: release_via is ci but no workflow runs on tag pushes/m);
+  writeFileSync(join(root, ".github", "workflows", "r.yml"), "on:\n  push: { tags: ['v*'] }\n");
+  assert.equal(repoCheck(root, good).status, 0);
+  const yes = repoRoot(false);
+  git(yes, "config", "tag.gpgSign", "yes"); git(yes, "config", "user.signingkey", "k");
+  assert.equal(repoCheck(yes, good).status, 0, repoCheck(yes, good).stdout);
+});

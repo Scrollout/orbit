@@ -34,6 +34,23 @@ const git = (...a) => spawnSync("git", ["-C", root, ...a], { encoding: "utf8" })
 
 const SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
+// A workflow runs on tag pushes: a `tags:` key nested under the `push:` trigger (block or flow form).
+function onTagPush(text) {
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(\s*)push\s*:\s*(.*)$/);
+    if (!m) continue;
+    if (/\btags\s*:/.test(m[2])) return true;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (!lines[j].trim() || /^\s*#/.test(lines[j])) continue;
+      const ind = lines[j].match(/^\s*/)[0].length;
+      if (ind <= m[1].length) break;
+      if (/^\s*tags\s*:/.test(lines[j])) return true;
+    }
+  }
+  return false;
+}
+
 function finish() {
   for (const w of warns) console.log(`warn: ${w}`);
   for (const g of gaps) console.log(g);
@@ -81,14 +98,16 @@ if (mode === "repo") {
   // Tags: an active tag ruleset covering refs/tags/v* with update and deletion rules.
   const list = gh("api", `repos/${slug}/rulesets?includes_parents=true`);
   if (!list.ok) warns.push(`cannot list rulesets (HTTP ${list.status || "?"})`);
-  const covers = (inc) => (inc ?? []).some((p) => ["~ALL", "refs/tags/*", "refs/tags/**/*", "refs/tags/v*"].includes(p) || /^refs\/tags\/v[\d*]/.test(p) && p.endsWith("*"));
+  // Covers every v* tag: an include of all tags or of refs/tags/v*, and no exclude that could match a v* tag.
+  const ALL = ["~ALL", "refs/tags/*", "refs/tags/**", "refs/tags/**/*", "refs/tags/v*"];
+  const covers = (rn) => (rn?.include ?? []).some((p) => ALL.includes(p)) && !(rn?.exclude ?? []).some((p) => p === "~ALL" || /^refs\/tags\/(v|\*)/.test(p));
   let tagOk = false;
   for (const rs of list.ok && Array.isArray(list.json) ? list.json : []) {
     if (rs.target !== "tag" || rs.enforcement !== "active") continue;
     const d = gh("api", `repos/${slug}/rulesets/${Number(rs.id)}`);
     if (!d.ok) { warns.push(`cannot read tag ruleset ${rs.id}`); continue; }
     const t = new Set((d.json.rules ?? []).map((x) => x.type));
-    if (covers(d.json.conditions?.ref_name?.include) && t.has("update") && t.has("deletion")) tagOk = true;
+    if (covers(d.json.conditions?.ref_name) && t.has("update") && t.has("deletion")) tagOk = true;
   }
   if (!tagOk) gap("no active tag ruleset protects v* tags from update and deletion", `${settings}/rules/new?target=tag (include refs/tags/v*; restrict updates, restrict deletions)`);
 
@@ -101,11 +120,10 @@ if (mode === "repo") {
   const wf = join(root, ".github", "workflows");
   const files = existsSync(wf) ? readdirSync(wf).filter((f) => /\.ya?ml$/.test(f)) : [];
   if (!files.length) gap("no CI workflow in .github/workflows (tagging a green commit cannot be checked)", "add a workflow that runs the profile's full check on pushes to the base and on pull requests");
-  else if (P.release_via === "ci" && !files.some((f) => /^\s*tags\s*:/m.test(readFileSync(join(wf, f), "utf8"))))
+  else if (P.release_via === "ci" && !files.some((f) => onTagPush(readFileSync(join(wf, f), "utf8"))))
     gap("release_via is ci but no workflow runs on tag pushes", "adapt the plugin's templates/release.yml to .github/workflows/release.yml");
 
-  const cfg = (k) => git("config", "--get", k).stdout.trim();
-  if (cfg("tag.gpgSign") !== "true" || !cfg("user.signingkey"))
+  if (git("config", "--type=bool", "--get", "tag.gpgSign").stdout.trim() !== "true" || !git("config", "--get", "user.signingkey").stdout.trim())
     gap("tags are not signed (tag.gpgSign and user.signingkey unset)", "git config --global gpg.format ssh && git config --global user.signingkey ~/.ssh/id_ed25519.pub && git config --global tag.gpgSign true && gh ssh-key add ~/.ssh/id_ed25519.pub --type signing");
   console.log(`repo: ${slug} base: ${base}`);
   finish();
@@ -114,35 +132,6 @@ if (mode === "repo") {
 // --next
 const cmp = (a, b) => { for (let i = 1; i <= 3; i++) { const d = Number(a[i]) - Number(b[i]); if (d) return d; } return 0; };
 if (git("rev-parse", "--git-dir").status !== 0) die(70, `${root} is not a git repository`);
-const tags = git("tag", "--merged", "HEAD", "--list", "v*").stdout.split("\n").map((t) => t.trim()).filter((t) => SEMVER.test(t) && !SEMVER.exec(t)[4]);
-tags.sort((a, b) => cmp(SEMVER.exec(b), SEMVER.exec(a)));
-const last = tags[0] ?? null;
-const RANK = { none: 0, patch: 1, minor: 2, major: 3 };
-let computed = "none", conventional = 0, total = 0;
-const log = git("log", "--no-merges", "--format=%s%x1f%b%x1e", ...(last ? [`${last}..HEAD`] : ["HEAD"]));
-if (log.status !== 0 && last) die(70, "git log failed");
-for (const c of (log.stdout ?? "").split("\x1e").map((x) => x.trim()).filter(Boolean)) {
-  total++;
-  const [subject, body = ""] = c.split("\x1f");
-  const m = subject.match(/^(\w+)(?:\([^)]*\))?(!)?:\s/);
-  let level = null;
-  if (m) { conventional++; level = m[2] ? "major" : m[1] === "feat" ? "minor" : "patch"; }
-  if (/^BREAKING[ -]CHANGE:/m.test(body)) { level = "major"; if (!m) conventional++; }
-  if (level && RANK[level] > RANK[computed]) computed = level;
-}
-const forced = flag("bump");
-if (forced && !["major", "minor", "patch"].includes(forced)) die(64, `bad --bump ${forced}`);
-const lastV = last ? SEMVER.exec(last) : ["", "0", "0", "0"];
-const unstable = Number(lastV[1]) === 0;
-const bumpOf = (v) => (Number(v[1]) > Number(lastV[1]) ? "major" : Number(v[2]) > Number(lastV[2]) ? "minor" : Number(v[3]) > Number(lastV[3]) ? "patch" : "none");
-const apply = (lvl) => {
-  const [M, m, p] = [1, 2, 3].map((i) => Number(lastV[i]));
-  if (lvl === "major" && !unstable) return `v${M + 1}.0.0`;
-  if (lvl === "major" || lvl === "minor") return `v${M}.${m + 1}.0`;
-  return `v${M}.${m}.${p + 1}`;
-};
-const need = forced ?? (computed === "none" ? null : unstable && computed === "major" ? "minor" : computed);
-
 const list = (s) => (Array.isArray(s) ? s : String(s ?? "").split(",")).map((x) => x.trim()).filter((x) => x && !/^TODO\b/i.test(x));
 const vfiles = list(flag("version-files") ?? P.version_files);
 const declared = [];
@@ -172,10 +161,42 @@ if (clog) {
   }
 }
 
+// Post-tag: when HEAD already carries the declared version's tag (the release step after tagging), that tag is the
+// release being described, not the last one.
+const atHead = decl && git("tag", "--points-at", "HEAD", "--list", decl).stdout.trim() === decl;
+const tags = git("tag", "--merged", "HEAD", "--list", "v*").stdout.split("\n").map((t) => t.trim()).filter((t) => SEMVER.test(t) && !SEMVER.exec(t)[4] && !(atHead && t === decl));
+tags.sort((a, b) => cmp(SEMVER.exec(b), SEMVER.exec(a)));
+const last = tags[0] ?? null;
+const RANK = { none: 0, patch: 1, minor: 2, major: 3 };
+let computed = "none", conventional = 0, total = 0;
+const log = git("log", "--no-merges", "--format=%s%x1f%b%x1e", ...(last ? [`${last}..HEAD`] : ["HEAD"]));
+if (log.status !== 0 && last) die(70, "git log failed");
+for (const c of (log.stdout ?? "").split("\x1e").map((x) => x.trim()).filter(Boolean)) {
+  total++;
+  const [subject, body = ""] = c.split("\x1f");
+  const m = subject.match(/^(feat|fix|docs|chore|refactor|perf|test|build|ci|style|revert)(?:\([^)]*\))?(!)?:\s/i);
+  let level = null;
+  if (m) { conventional++; level = m[2] ? "major" : m[1].toLowerCase() === "feat" ? "minor" : "patch"; }
+  if (/^BREAKING[ -]CHANGE:/m.test(body)) { level = "major"; if (!m) conventional++; }
+  if (level && RANK[level] > RANK[computed]) computed = level;
+}
+const forced = flag("bump");
+if (forced && !["major", "minor", "patch"].includes(forced)) die(64, `bad --bump ${forced}`);
+const lastV = last ? SEMVER.exec(last) : ["", "0", "0", "0"];
+const unstable = Number(lastV[1]) === 0;
+const bumpOf = (v) => (Number(v[1]) > Number(lastV[1]) ? "major" : Number(v[2]) > Number(lastV[2]) ? "minor" : Number(v[3]) > Number(lastV[3]) ? "patch" : "none");
+const apply = (lvl) => {
+  const [M, m, p] = [1, 2, 3].map((i) => Number(lastV[i]));
+  if (lvl === "major" && !unstable) return `v${M + 1}.0.0`;
+  if (lvl === "major" || lvl === "minor") return `v${M}.${m + 1}.0`;
+  return `v${M}.${m}.${p + 1}`;
+};
+const need = forced ?? (computed === "none" ? null : unstable && computed === "major" ? "minor" : computed);
+
 const next = decl ?? (need ? apply(need) : null);
 if (last) console.log(`last: ${last}`); else console.log("last: none");
 console.log(`commits: ${total}, conventional: ${conventional}, computed bump: ${computed}${unstable && computed === "major" ? " (minor while 0.y.z)" : ""}`);
-if (!total) gap(`no commits since ${last}: nothing to release`);
+if (!total) gap(`no commits since ${last ?? "the start"}: nothing to release`);
 if (vfiles.length && decl) {
   const nv = SEMVER.exec(decl);
   if (nv && last && cmp(nv, lastV) <= 0) gap(`version files declare ${decl}, not above ${last} (bump them in the change)`);
@@ -184,7 +205,8 @@ if (vfiles.length && decl) {
 if (!vfiles.length) warns.push("no version files (profile version_files or --version-files): the version is computed only");
 if (!conventional && !forced) warns.push(`no Conventional Commit types since ${last ?? "the start"}: bump not derived from the commits${decl ? `, ${decl} taken from the version files` : ""}`);
 if (clog && clogVersion && next && clogVersion !== next) gap(`changelog top section is ${clogVersion}, the release is ${next}`);
-if (next && git("rev-parse", "-q", "--verify", `refs/tags/${next}`).status === 0) gap(`tag ${next} already exists (never move a published tag; bump again)`);
+if (atHead) console.log(`tagged: ${decl} is at HEAD (notes for the release of that tag)`);
+else if (next && git("rev-parse", "-q", "--verify", `refs/tags/${next}`).status === 0) gap(`tag ${next} already exists (never move a published tag; bump again)`);
 if (next) console.log(`next: ${next}${SEMVER.exec(next)?.[4] ? " (pre-release: --prerelease, never --latest)" : ""}`);
 else gap("cannot tell the next version: no version files, no Conventional Commits and no --bump");
 
