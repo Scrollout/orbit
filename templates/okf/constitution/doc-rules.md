@@ -4,11 +4,11 @@ title: Doc rules
 description: How docs in this OKF v0.2 bundle are written, indexed and logged; enforced by validate-okf.
 tags: [constitution, docs]
 status: draft
-generated: { by: process:okf-init, at: {{TIMESTAMP}} }
+generated: { by: process:orbit-okf-init, at: {{TIMESTAMP}} }
 ---
 **TL;DR:** Docs live in the bundle (`{{BUNDLE}}`): small docs, one idea each, indexed, linked not copied. `node <orbit>/scripts/validate-okf.mjs --root .` enforces it.
 
-- **Frontmatter**: every doc that is not `index.md` or `log.md` starts with YAML frontmatter: `type`, `title`, `description` (all required), and `tags`, `status` (`draft`, `stable`, `deprecated`), `generated: { by, at }` (`by` required). Volatile external facts add `stale_after` and `sources` (each entry needs `resource`); a person who checked a doc adds `verified: { by: human:<id>, at }` (one or a list, each with `by` and `at`) and sets `status: stable`, since `draft` means not yet reviewed.
+- **Frontmatter**: every doc that is not `index.md` or `log.md` starts with YAML frontmatter: `type`, `title`, `description` (all required), and `tags`, `status` (`draft`, `stable`, `deprecated`), `generated: { by, at }` (`by` required). Volatile external facts add `stale_after` and `sources` (each entry needs `resource`); a person who checked a doc adds `verified: { by: human:<id>, at }` (one or a list, each with `by` and `at`) and sets `status: stable`, since `draft` means not yet reviewed. On an approved roadmap plan, a change to its intent, steps or exit tests needs a new approval, appended to `verified`.
 - **Actors**: `<tool>/<model>` for an AI assistant, `human:<id>` for a person, `process:<id>` for automation.
 - **Body**: begins with a `**TL;DR:**` line (readers stop there if it is enough). Prefer lists, headings and tables over prose.
 - **Size**: target under 400 tokens, hard cap 4000 characters. Split rather than grow.

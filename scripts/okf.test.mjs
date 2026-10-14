@@ -158,3 +158,10 @@ test("on failure, warnings are printed after the errors and labelled", () => {
   assert.equal(r.status, 1);
   assert.match(r.stderr, /FAILED[\s\S]*Warnings \(not failures\):\nwarn: .*status draft/);
 });
+
+test("a footnote without a definition or a source fails cleanly (no crash)", () => {
+  const r = check(base, "**TL;DR:** Cited.[^s1]\n");
+  fails(r, /footnote \[\^s1\] has no definition/);
+  assert.match(r.stderr, /footnote \[\^s1\] matches no sources id/);
+  assert.doesNotMatch(r.stderr, /TypeError/);
+});

@@ -4,7 +4,7 @@ title: Working principles
 description: The principles every person and AI assistant follows in this project; the single source that AGENTS.md links to.
 tags: [constitution, process]
 status: draft
-generated: { by: process:okf-init, at: {{TIMESTAMP}} }
+generated: { by: process:orbit-okf-init, at: {{TIMESTAMP}} }
 ---
 **TL;DR:** Don't assume, build the minimum, touch only what you must, define success and loop until verified; read wide in subagents; one worktree per session.
 

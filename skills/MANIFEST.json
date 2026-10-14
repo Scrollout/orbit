@@ -19,9 +19,16 @@
         "commands/okf-init.md"
       ]
     },
+    "skills/intent/SKILL.md": {
+      "version": "1.0.1",
+      "hash": "3ddd51d6e22ab7e1430270cb187747da53e3aa34b8bb9894e31ab5dcfc8eb10e",
+      "files": [
+        "skills/intent/SKILL.md"
+      ]
+    },
     "skills/okf/SKILL.md": {
-      "version": "1.0.2",
-      "hash": "c32c5a2957f12a7c4c92c374bce2b4c379fa30e62d7eb07adbe59a7f4ba9ec54",
+      "version": "1.0.3",
+      "hash": "96ac6079ce966fa8b88806ae0556bbda0f7e05536a5850a849277921c9c01771",
       "files": [
         "skills/okf/SKILL.md"
       ]
@@ -46,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.4.5",
-      "hash": "215ad60acc3f947c84fe87fe1d6922f35bd16317862826013a6c5dc009b5d77d",
+      "version": "1.5.2",
+      "hash": "cc13655b94eee65e594e226ba0039304ee5d3d50e4917a8d7147c6d131b7fd8a",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -55,9 +62,11 @@
         "scripts/check-docs.mjs",
         "scripts/check-size.mjs",
         "scripts/decide-triage.mjs",
+        "scripts/intent-plan.mjs",
         "scripts/ledger.mjs",
         "scripts/manifest.mjs",
         "scripts/okf-init.mjs",
+        "scripts/okf-lib.mjs",
         "scripts/profile.mjs",
         "scripts/run-tests.mjs",
         "scripts/scenarios.mjs",

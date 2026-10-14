@@ -12,6 +12,7 @@ const cores = [
   ["skills/operator/SKILL.md", "skills/operator"],
   ["skills/peer/SKILL.md", "skills/peer"],
   ["skills/okf/SKILL.md", "skills/okf"],
+  ["skills/intent/SKILL.md", "skills/intent"],
 ];
 const walk = (d) => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : [p]; });
 const docs = () => [...cores.map(([f, s]) => [f, s]), ...["refs", "skills/operator/refs"].flatMap((d) => walk(join(repo, d)).map((p) => [p.slice(repo.length + 1), null]))];
