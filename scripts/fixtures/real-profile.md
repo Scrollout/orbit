@@ -96,10 +96,15 @@ security_paths:
   - docs/okf/decisions/
   - docs/okf/architecture/resource-model/
   - docs/okf/security/
+  - .github/dependabot.yml
+  - SECURITY.md
+  - .github/CODEOWNERS
+  - scripts/vuln-switch.sh
+  - ci/**
 review_trailer: Reviewed-by
 labels: [bug, feature, chore, docs, ci, research, security, decision]
 issue_tracker: github
 base_pusher: owner
-production_env: TODO
+production_env: none
 ci_policy: ci-only
 ```

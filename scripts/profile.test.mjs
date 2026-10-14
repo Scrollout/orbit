@@ -25,13 +25,16 @@ issue_tracker: github
 base_pusher: agent
 ci_policy: ci-only`;
 
-test("fixture copy of a real profile: only the TODO optional field is a gap", () => {
+test("fixture copy of a real profile has no gap and covers the supply-chain paths", async () => {
   const root = mkdtempSync(join(tmpdir(), "prof-"));
   mkdirSync(join(root, ".agents"));
   cpSync(fixture, join(root, ".agents", "project.md"));
   const r = run(root);
-  assert.equal(r.stdout.trim(), "profile gap: production_env");
-  assert.equal(r.status, 1);
+  assert.equal(r.stdout.trim(), "");
+  assert.equal(r.status, 0);
+  const { loadProfile, matchesAny } = await import("./profile.mjs");
+  const g = loadProfile(root).data.security_paths;
+  for (const f of [".github/dependabot.yml", "SECURITY.md", ".github/CODEOWNERS", "scripts/vuln-switch.sh", "ci/images.mk", "ci/x/y.mk"]) assert.ok(matchesAny(f, g), f);
 });
 
 test("complete profile: no gap, exit 0, --json parses lists", () => {

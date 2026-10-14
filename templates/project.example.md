@@ -55,7 +55,7 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 ## Machine profile
 ```yaml orbit-profile
 base_branch: develop
-security_paths: [internal/auth/, internal/payments/, migrations/]
+security_paths: [internal/auth/, internal/payments/, migrations/, .github/workflows/, .github/dependabot.yml, .github/CODEOWNERS, SECURITY.md, ci/**]
 review_trailer: Reviewed-By
 labels: [bug, test, review, enhancement, security, deferred]
 issue_tracker: github
