@@ -82,5 +82,18 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Production-like environment(s) and what needs a policy check plus audit record: <...>, or `none`.
 - Extra one-way doors beyond data, migrations, API contract, security boundary, money/destructive operations: <...>
 
+## Machine profile
+Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs: `*` within a directory, `**` across, a trailing `/` or a plain directory name covers everything below it, no leading slash); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name).
+```yaml orbit-profile
+base_branch: TODO
+security_paths: [TODO]
+review_trailer: TODO
+labels: [TODO]
+issue_tracker: TODO
+base_pusher: TODO
+ci_policy: TODO
+production_env: none
+```
+
 ## Non-negotiable rules
 <!-- secrets, hardcoded values, hooks, entry points, ... -->

@@ -1,0 +1,64 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, cpSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const script = join(here, "profile.mjs");
+const fixture = join(here, "fixtures", "real-profile.md");
+const run = (root, ...a) => spawnSync("node", [script, "--root", root, ...a], { encoding: "utf8" });
+const rootWith = (text) => {
+  const root = mkdtempSync(join(tmpdir(), "prof-"));
+  mkdirSync(join(root, ".agents"));
+  writeFileSync(join(root, ".agents", "project.md"), text);
+  return root;
+};
+const block = (body) => "# P\n\n```yaml orbit-profile\n" + body + "\n```\n";
+const full = `base_branch: main
+security_paths: ["a/**", Makefile]
+review_trailer: Reviewed-by
+labels: [bug, chore]
+issue_tracker: github
+base_pusher: agent
+ci_policy: ci-only`;
+
+test("fixture copy of a real profile: only the TODO optional field is a gap", () => {
+  const root = mkdtempSync(join(tmpdir(), "prof-"));
+  mkdirSync(join(root, ".agents"));
+  cpSync(fixture, join(root, ".agents", "project.md"));
+  const r = run(root);
+  assert.equal(r.stdout.trim(), "profile gap: production_env");
+  assert.equal(r.status, 1);
+});
+
+test("complete profile: no gap, exit 0, --json parses lists", () => {
+  const root = rootWith(block(full));
+  const r = run(root, "--json");
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const p = JSON.parse(r.stdout);
+  assert.deepEqual(p.security_paths, ["a/**", "Makefile"]);
+  assert.equal(p.base_branch, "main");
+});
+
+test("missing and TODO fields are gaps, never guessed", () => {
+  const root = rootWith(block(full.replace("base_branch: main\n", "").replace("github", "TODO").replace("[bug, chore]", "[]")));
+  const r = run(root);
+  assert.deepEqual(r.stdout.trim().split("\n").sort(), ["profile gap: base_branch", "profile gap: issue_tracker", "profile gap: labels"]);
+  assert.equal(r.status, 1);
+});
+
+test("no block: every required field is a gap", () => {
+  const r = run(rootWith("# P\nno block\n"));
+  assert.match(r.stdout, /profile gap: base_branch/);
+  assert.match(r.stdout, /profile gap: ci_policy/);
+  assert.doesNotMatch(r.stdout, /production_env/);
+  assert.equal(r.status, 1);
+});
+
+test("bad enum value is a gap", () => {
+  const r = run(rootWith(block(full.replace("ci-only", "whatever"))));
+  assert.equal(r.stdout.trim(), "profile gap: ci_policy");
+});

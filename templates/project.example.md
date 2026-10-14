@@ -52,5 +52,17 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 - Threat model: `docs/threat-model.md`.
 - Production-like environment: `prod` (payments, destructive operations) needs a policy check and an audit record.
 
+## Machine profile
+```yaml orbit-profile
+base_branch: develop
+security_paths: [internal/auth/, internal/payments/, migrations/]
+review_trailer: Reviewed-By
+labels: [bug, test, review, enhancement, security, deferred]
+issue_tracker: github
+base_pusher: owner
+ci_policy: ci-only
+production_env: prod
+```
+
 ## Non-negotiable rules
 - Never log or commit secrets. No hardcoded URLs or hosts; use config. Never bypass git hooks.
