@@ -1,7 +1,7 @@
 ---
 name: okf
 description: Write, index, log and validate project docs as an OKF v0.2 bundle (small docs, frontmatter, TL;DR, indexes, change log). Use when adding or editing docs under the project's bundle, when a docs check fails, or when deciding whether to split a doc.
-version: 1.0.0
+version: 1.0.1
 ---
 Read the project profile (.agents/project.md) for the bundle path and any project additions; the defaults are `docs/okf` and the settings in `.agents/okf.json` (keys `bundle`, `maxDocChars`, `maxAgentsLines`, `agentsFile`, `pointerFiles`, `maxPointerLines`, `okfVersion`). A bundle's own `constitution/doc-rules.md` wins over this skill.
 
@@ -33,4 +33,4 @@ Read the project profile (.agents/project.md) for the bundle path and any projec
 A doc over the cap, or one covering two ideas a reader would load separately: split by idea, link the parts from the index, leave the old doc as the short overview or remove it and fix links. Never raise the cap to fit.
 
 ## Validate
-`node <orbit>/scripts/validate-okf.mjs --root .` (flags override the config: `--bundle`, `--max-doc-chars`, `--max-agents-lines`, `--agents-file`, `--pointer-files a,b`, `--max-pointer-lines`, `--okf-version`, `--config`). Exit 1 lists `file: problem` lines. The plugin's PostToolUse hook runs it after edits under the bundle; `templates/githooks/pre-commit` runs it at commit. New bundle: `/orbit:okf-init`.
+`node "${CLAUDE_PLUGIN_ROOT}/scripts/validate-okf.mjs" --root .` (flags override the config: `--bundle`, `--max-doc-chars`, `--max-agents-lines`, `--agents-file`, `--pointer-files a,b`, `--max-pointer-lines`, `--okf-version`, `--config`). Exit 1 lists `file: problem` lines. The plugin's PostToolUse hook runs it after edits under the bundle; `templates/githooks/pre-commit` runs it at commit. New bundle: `/orbit:okf-init`.

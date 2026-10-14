@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.0.0",
-      "hash": "50ab47394612b51fafa60889e624cd1a3e3d779d926a576ca969dd3659fdf386",
+      "version": "1.0.1",
+      "hash": "90fb950046077009727f9d0de9bff0cf10a816abcae81b8858240064b2c20e29",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -19,15 +19,15 @@
       ]
     },
     "skills/okf/SKILL.md": {
-      "version": "1.0.0",
-      "hash": "6515cc58d3cdc9618b21f736628ad7497f4e80f287fc7718f20dde72d216b59c",
+      "version": "1.0.1",
+      "hash": "54fa2502ba708470598e629a16add8c261a0e80c87baa776f37c7169654fc5a9",
       "files": [
         "skills/okf/SKILL.md"
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.0.0",
-      "hash": "466d266278f58fc4561c6d30af8d210a3a4556669fb31e167028ad5a10ffa479",
+      "version": "1.0.1",
+      "hash": "f08cdfe69bdd9d75aafeced8e6c0a18a3a3047a89598c893b28332c037b8531f",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",

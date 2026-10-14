@@ -1,7 +1,7 @@
 ---
 description: Act as project manager and run a decision the way a team does - triage, discovery, proposals, design review, sign-off, decision record, delivery - with only the people the question needs
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.0.0
+version: 1.0.1
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
@@ -26,15 +26,15 @@ Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scrip
 Load the ref for a step when you reach it; the ref holds detail only, the rules above hold the constraints.
 **Team.** Name every call `<role>:<focus>` in its description (it shows in the task list), the focus chosen for this question (`analyst:write-paths`, `engineer:root-fix`, `reviewer:concurrency`), with one line on why. Pick focuses fresh each time; there is no catalog. Pass `model` as this table says.
 
-Load `refs/decide/team-tracks.md` (relative to the plugin root, the parent of `commands/`) when naming calls, choosing models, or fixing the track and its caps: the Team table (role, agent, model) and the Track table.
+Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` when naming calls, choosing models, or fixing the track and its caps: the Team table (role, agent, model) and the Track table.
 
 1. **Triage.** Question the question: real problem or symptom, a missing option (including "not yet"), does it overturn a decision record (index in the profile). Write these three lines, your judgment of the substance:
    - Security paths: would it change the behaviour of a path the profile lists as security-sensitive? yes/no, which. A wording, comment, formatting or ordering change is no; a change to what a verifier accepts or caches is yes. A security matter with no listed path yet (a new secret, principal, grant, or what a verifier accepts or caches, in a new place) is "yes, no path yet". Re-check against `git diff --name-only <base>..<branch>` before review; a branch that touches one is a yes from then on.
    - One-way door (persistent data, migrations, API contract, security boundary, money or destructive operations, plus the profile's additions)? yes/no, why.
    - Touches the profile's production-like environment (money, destructive or cross-tenant operations), or state shared across tenants (a process-wide cache counts)? yes/no, why. Skip if the profile defines none.
 2. **Track.** The cheapest that is safe; say which. Caps are agent calls at most; research and the answer after it, the one-way-door re-check of hypotheses (step 3), a missing-fact round, the rebuttal and delivery are outside them. A narrow question uses fewer.
-   Compute it: `node <orbit>/scripts/decide-triage.mjs --root . --base <base> --branch <branch> --lines sec=..,door=..,prod=..`. Load `refs/decide/team-tracks.md` for the table.
-3. to 7. **Discovery, proposal, design review, research, sign-off.** Load `refs/decide/discovery-signoff.md` before step 3 and follow it through step 7; it covers the brief and hypotheses, engineer focuses, reviewers, the security officer, the one research round, the tech lead's sign-off, the missing-fact round and the Contest escalation.
-8. **Decision record.** Always. Load `refs/decide/record.md` for the table shape and the lines after it.
+   Compute it: `node "${CLAUDE_PLUGIN_ROOT}/scripts/decide-triage.mjs" --root . --base <base> --branch <branch> --lines sec=..,door=..,prod=..`. Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` for the table.
+3. to 7. **Discovery, proposal, design review, research, sign-off.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/discovery-signoff.md` before step 3 and follow it through step 7; it covers the brief and hypotheses, engineer focuses, reviewers, the security officer, the one research round, the tech lead's sign-off, the missing-fact round and the Contest escalation.
+8. **Decision record.** Always. Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/record.md` for the table shape and the lines after it.
 9. **Act.** Update the docs with the decision (a decision record when it is new, in the profile's format and location), write the failing test or check first, and implement. Delegate a decided build step with a clear spec to `coder` on a new worktree branch (the profile's convention), passing the conditions and the `proof` test; commit there only. With an operator session, every write (docs, decision record, failing test, implementation) goes to a worker; the PM writes nothing in the repo. Merge as step 10 says, the base pushed by whoever the profile's "who pushes the base" names; deploy stays with the owner unless the profile says otherwise.
-10. **Delivery.** Load `refs/decide/delivery.md` when delegating or delivering a build: step split, coder and re-reviewer models, caps, CI test policy, review, issues, triage of findings, merge build, fix round.
+10. **Delivery.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/delivery.md` when delegating or delivering a build: step split, coder and re-reviewer models, caps, CI test policy, review, issues, triage of findings, merge build, fix round.

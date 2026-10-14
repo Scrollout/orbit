@@ -34,9 +34,9 @@ test("every ref file is linked from its core and every link resolves", () => {
   const dirs = { "commands/decide.md": "refs/decide", "skills/operator/SKILL.md": "skills/operator/refs" };
   for (const [core, dir] of Object.entries(dirs)) {
     const text = readFileSync(join(repo, core), "utf8");
-    const linked = [...text.matchAll(new RegExp(`${dir.replace(/\//g, "\\/")}\\/[\\w-]+\\.md`, "g"))].map((m) => m[0]);
-    for (const l of linked) assert.ok(existsSync(join(repo, l)), `${core} links missing ${l}`);
-    for (const f of readdirSync(join(repo, dir))) assert.ok(linked.includes(`${dir}/${f}`), `${dir}/${f} not linked from ${core}`);
+    const linked = [...text.matchAll(/\$\{CLAUDE_(?:PLUGIN_ROOT|SKILL_DIR)\}\/(?:refs\/decide|refs)\/([\w-]+\.md)/g)].map((m) => m[1]);
+    for (const l of linked) assert.ok(existsSync(join(repo, dir, l)), `${core} links missing ${l}`);
+    for (const f of readdirSync(join(repo, dir))) assert.ok(linked.includes(f), `${dir}/${f} not linked from ${core}`);
   }
 });
 

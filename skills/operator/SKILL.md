@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.0.0
+version: 1.0.1
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -20,11 +20,11 @@ Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays 
 
 ## Refs
 Load a ref when you reach its topic; refs hold detail, the rules above hold the constraints.
-- `skills/operator/refs/workers.md`: load when starting, briefing or resuming a worker or peer (briefs, fresh-per-task, peer standing orders).
-- `skills/operator/refs/push-queue.md`: load before a push GO or a CI watch.
-- `skills/operator/refs/pull-requests.md`: load when the profile says `Pull requests: yes`.
-- `skills/operator/refs/merge-protocol.md`: load when a branch is green and ready for review and merge, on a release, or when opening or closing issues.
-- `skills/operator/refs/handoff-budget.md`: load when updating the handoff, after a compaction or restart, or when cost is a concern.
+- `${CLAUDE_SKILL_DIR}/refs/workers.md`: load when starting, briefing or resuming a worker or peer (briefs, fresh-per-task, peer standing orders).
+- `${CLAUDE_SKILL_DIR}/refs/push-queue.md`: load before a push GO or a CI watch.
+- `${CLAUDE_SKILL_DIR}/refs/pull-requests.md`: load when the profile says `Pull requests: yes`.
+- `${CLAUDE_SKILL_DIR}/refs/merge-protocol.md`: load when a branch is green and ready for review and merge, on a release, or when opening or closing issues.
+- `${CLAUDE_SKILL_DIR}/refs/handoff-budget.md`: load when updating the handoff, after a compaction or restart, or when cost is a concern.
 
 ## Role
 The operator runs a team of agents in parallel (workers, reviewers, re-reviewers, `/decide` agents) and changes nothing in the repo itself.
