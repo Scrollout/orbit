@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 const audit = join(here, "audit-ledger.mjs");
 const append = join(here, "ledger.mjs");
 const profile = join(here, "fixtures", "real-profile.md");
+const mkProfile = (extraLine) => {
+  const f = join(mkdtempSync(join(tmpdir(), "prof-")), "p.md");
+  writeFileSync(f, readFileSync(profile, "utf8").replace("ci_policy: ci-only", `ci_policy: ci-only\n${extraLine}`));
+  return f;
+};
 const T0 = "2026-10-14T10:00:00Z";
 const ev = (kind, o = {}) => ({ ts: T0, session: "s1", rule_version: { decide: "1.0.0", operator: "1.0.0" }, kind, ...o });
 const SHA = "a".repeat(40), MERGE = "b".repeat(40);
@@ -59,6 +64,7 @@ const bad = [
   ["DEC-14", "fix-round review on the old sha", (e) => { e.splice(6, 0, fix(), ev("review_start", { branch: "t", sha: SHA, ci_state: "green", role: "re-reviewer" })); }],
   ["DEC-14", "re-reviewer twice for one fix round", (e) => { e.splice(6, 0, fix(), ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" })); }],
   ["DEC-20", "merge of a branch nobody reviewed, no waiver", (e) => { e.splice(4, 2); }],
+  ["DEC-20", "waived:true does not cite a standing waiver", (e) => { e.splice(4, 2); e[4].waived = true; }],
   ["DEC-05", "tree mismatch", (e) => { e[6].tree_equal = false; }],
   ["OPR-02", "merge built without green CI on the catch-up merge", (e) => { e[6].ci_state = "red"; }],
   ["DEC-06", "chained base push", (e) => { e[8].chained = true; }],
@@ -84,13 +90,6 @@ for (const [id, name, fn] of bad) {
     assert.match(r.stdout, new RegExp(`^${id} `, "m"));
   });
 }
-
-test("an owner waiver lets a merge pass without a review", () => {
-  const e = clean();
-  e.splice(4, 2);
-  e[4].waived = true;
-  assert.equal(run(e).status, 0, run(e).stdout);
-});
 
 test("a delivery reviewer is not counted against the design-review caps (explicit phase, or by order after CI)", () => {
   const e = clean();
@@ -185,4 +184,113 @@ test("a review_start on a branch with no triage topic warns without failing", ()
   assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /^warn: line 8: review_start branch orphan has no triage topic/m);
   assert.doesNotMatch(run(clean()).stdout, /warn:/);
+});
+
+const sh = (script, args, cwd) => spawnSync("node", [join(here, script), ...args], { encoding: "utf8", cwd });
+
+test("ledger.mjs: manifest is found relative to the script, from a foreign cwd and a foreign --root", () => {
+  const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl");
+  const r = sh("ledger.mjs", ["--root", "/", "--ledger", f, "--session", "s", "push", "ref=x"], "/");
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(Object.keys(JSON.parse(readFileSync(f, "utf8")).rule_version).length >= 3);
+});
+
+test("ledger.mjs refuses reserved keys and bad json with exit 64", () => {
+  const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl");
+  for (const field of ["ts=1", "session=x", "kind=y", "rule_version:={}"]) {
+    const r = sh("ledger.mjs", ["--ledger", f, "--session", "s", "push", field]);
+    assert.equal(r.status, 64, field);
+    assert.match(r.stderr, /^ledger: /);
+  }
+  const bad = sh("ledger.mjs", ["--ledger", f, "--session", "s", "push", "x:={nope"]);
+  assert.equal(bad.status, 64);
+  assert.match(bad.stderr, /^ledger: bad JSON for x/);
+  assert.equal(existsSync(f), false);
+});
+
+test("ledger.mjs and audit-ledger.mjs default to the profile's ledger_path", () => {
+  const root = mkdtempSync(join(tmpdir(), "led-"));
+  mkdirSync(join(root, ".agents"));
+  writeFileSync(join(root, ".agents/project.md"), readFileSync(profile, "utf8").replace("ci_policy: ci-only", "ci_policy: ci-only\nledger_path: .agents/my.jsonl"));
+  assert.equal(sh("ledger.mjs", ["--root", root, "--session", "s", "triage", "topic=t", "sec=no", "door=no", "prod=no", "track=just do it", "files:=[]"]).status, 0);
+  assert.ok(existsSync(join(root, ".agents/my.jsonl")));
+  const a = sh("audit-ledger.mjs", ["--root", root], undefined);
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  const d = mkdtempSync(join(tmpdir(), "led-"));
+  mkdirSync(join(d, ".agents"));
+  writeFileSync(join(d, ".agents/project.md"), readFileSync(profile, "utf8"));
+  sh("ledger.mjs", ["--root", d, "--session", "s", "push", "ref=x"]);
+  assert.ok(existsSync(join(d, ".agents/ledger.jsonl")), "default path");
+});
+
+test("audit-ledger.mjs on a missing ledger exits 64 with one line", () => {
+  const r = sh("audit-ledger.mjs", ["/nonexistent/ledger.jsonl", "--profile", profile]);
+  assert.equal(r.status, 64);
+  assert.match(r.stderr, /^audit-ledger: cannot read /);
+});
+
+test("DEC-03: outside_cap needs a cap_reason; an explicit delivery phase needs a ci_run for the topic", () => {
+  const e = clean();
+  e.splice(2, 0, eng({ outside_cap: true }));
+  assert.match(run(e).stdout, /^DEC-03 .*outside_cap without a cap_reason/m);
+  const f = clean();
+  f.splice(1, 0, ev("agent_start", { role: "reviewer", model: "opus", topic: "t", phase: "delivery" }));
+  assert.match(run(f).stdout, /^DEC-03 .*delivery reviewer.*no ci_run/m);
+});
+
+test("topics named like Object.prototype members do not break the audit", () => {
+  for (const name of ["constructor", "toString", "__proto__"]) {
+    const e = [ev("triage", { topic: name, sec: "no", door: "no", prod: "no", track: "light review", files: [] }),
+      ev("agent_start", { role: "engineer", model: "sonnet", topic: name }),
+      ev("agent_start", { role: "engineer", model: "sonnet", topic: name })];
+    const r = run(e);
+    assert.equal(r.status, 1, name + r.stdout);
+    assert.match(r.stdout, /^DEC-03 .*engineer call 2/m, name);
+  }
+});
+
+test("required fields per kind: missing session, rule_version, sha, door, prod are LEDGER violations; triage without files warns", () => {
+  const e = clean();
+  delete e[1].session;
+  delete e[2].rule_version;
+  delete e[4].sha;
+  delete e[0].door;
+  const r = run(e);
+  assert.equal(r.status, 1);
+  for (const m of [/LEDGER line 2: missing session/, /LEDGER line 3: missing rule_version/, /LEDGER line 5: ci_run needs sha/, /LEDGER line 1: triage needs door/]) assert.match(r.stdout, m);
+  const w = clean();
+  delete w[0].files;
+  const r2 = run(w);
+  assert.match(r2.stdout, /^warn: line 1: triage without files: DEC-02 not checked/m);
+});
+
+test("a force-push refspec still counts as the base (+main, +HEAD:main)", () => {
+  for (const ref of ["+main", "+HEAD:main"]) {
+    const e = mutate((x) => { x[8].ref = ref; x[8].chained = true; });
+    assert.match(run(e).stdout, /^DEC-06 /m, ref);
+  }
+});
+
+test("waived must cite a standing waiver of the profile or be an owner waiver with a reason", () => {
+  const mk = (w, extra = {}) => { const e = clean(); e.splice(4, 2); e[4].waived = w; Object.assign(e[4], extra); return e; };
+  const p = mkProfile("standing_waivers: [docs-only]");
+  const runP = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
+  assert.equal(runP(mk("docs-only")).status, 0, runP(mk("docs-only")).stdout);
+  assert.equal(runP(mk("owner", { waiver_reason: "tiny" })).status, 0);
+  assert.match(runP(mk(true)).stdout, /^DEC-20 .*cite/m);
+  assert.match(runP(mk("other-class")).stdout, /^DEC-20 /m);
+  assert.match(runP(mk("owner")).stdout, /^DEC-20 .*reason/m);
+});
+
+test("a resumed coder cannot change model; ci-failed-twice needs opus", () => {
+  const f = clean();
+  f.splice(4, 0, ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "fix", resumed: true }));
+  f[3].model = "opus";
+  assert.equal(run(f).status, 0, run(f).stdout);
+  const g = [ev("triage", { topic: "t", sec: "no", door: "no", prod: "no", track: "just do it", files: [] }),
+    ev("agent_start", { role: "coder", model: "sonnet", topic: "t", phase: "build" }),
+    ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "fix", resumed: true })];
+  assert.match(run(g).stdout, /^DEC-04 .*resumed/m);
+  const h = [g[0], ev("agent_start", { role: "coder", model: "sonnet", topic: "t", phase: "fix", reason: "ci-failed-twice" })];
+  assert.match(run(h).stdout, /^DEC-04 .*CI failed twice/m);
 });

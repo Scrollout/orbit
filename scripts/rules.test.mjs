@@ -62,3 +62,17 @@ test("check-size fails over the threshold and lists the largest first", () => {
   assert.equal(size(root, "--max-chars", "100", "--max-lines", "1000").status, 1);
   assert.equal(size(root, "--max-chars", "1000").status, 0);
 });
+
+test("check-size skips node_modules and .git and does not follow symlinks", async () => {
+  const { symlinkSync } = await import("node:fs");
+  const root = mkdtempSync(join(tmpdir(), "sz-"));
+  const big = "x".repeat(500);
+  for (const d of ["node_modules/p/refs", ".git/refs", "elsewhere/dir"]) { mkdirSync(join(root, d), { recursive: true }); writeFileSync(join(root, d, "huge.md"), big); }
+  mkdirSync(join(root, "refs"));
+  symlinkSync(join(root, "elsewhere/dir"), join(root, "refs/linked"));
+  symlinkSync(join(root, "elsewhere/dir/huge.md"), join(root, "refs/link.md"));
+  writeFileSync(join(root, "refs/ok.md"), "ok");
+  const r = size(root, "--max-chars", "100");
+  assert.equal(r.status, 0, r.stdout);
+  assert.doesNotMatch(r.stdout, /huge|link|node_modules/);
+});

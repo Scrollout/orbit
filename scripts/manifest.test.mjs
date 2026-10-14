@@ -104,3 +104,34 @@ test("a CRLF frontmatter still yields its version", () => {
   const r = run(root, "--print");
   assert.match(r.stdout, /  1\.0\.0  commands\/cmd\.md$/m);
 });
+
+test("--check on a nonexistent or empty root fails; --root without a value is a usage error", () => {
+  const empty = mkdtempSync(join(tmpdir(), "man-"));
+  const r = run(empty, "--check");
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /no commands or skills found/);
+  assert.equal(run(join(empty, "nope"), "--check").status, 1);
+  const bad = spawnSync("node", [script, "--root", "--check"], { encoding: "utf8" });
+  assert.equal(bad.status, 64);
+});
+
+test("only the first frontmatter block gives the version", () => {
+  const root = tree();
+  writeFileSync(join(root, "commands/cmd.md"), "---\nname: x\n---\nbody\n---\nversion: 9.9.9\n---\n");
+  assert.match(run(root, "--check").stdout, /commands\/cmd\.md: no version/);
+});
+
+test("hooks, agents and templates/project.md join the shared hash", () => {
+  const root = treeWithShared();
+  mkdirSync(join(root, "hooks")); mkdirSync(join(root, "agents")); mkdirSync(join(root, "templates"));
+  writeFileSync(join(root, "hooks/h.sh"), "h"); writeFileSync(join(root, "hooks/h.test.sh"), "t");
+  writeFileSync(join(root, "agents/a.md"), "a"); writeFileSync(join(root, "templates/project.md"), "p"); writeFileSync(join(root, "templates/other.md"), "o");
+  assert.match(run(root, "--check").stdout, /rules\/rules\.json: edited without a version bump/);
+  writeFileSync(join(root, "rules/rules.json"), JSON.stringify({ version: "1.0.1", rules: [] }));
+  assert.equal(run(root, "--update").status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, "skills/MANIFEST.json"), "utf8")).entries["rules/rules.json"].files,
+    ["rules/rules.json", "rules/tracks.json", "scripts/a.mjs", "hooks/h.sh", "agents/a.md", "templates/project.md"]);
+  writeFileSync(join(root, "agents/a.md"), "changed");
+  assert.match(run(root, "--check").stdout, /edited without a version bump/);
+  writeFileSync(join(root, "templates/other.md"), "not hashed");
+});

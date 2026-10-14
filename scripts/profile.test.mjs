@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, cpSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, cpSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,4 +87,59 @@ test("globs: root-anchored, ** crosses directories, **/ matches nested and root,
   assert.ok(!matchesAny("fooMakefile", ["**/Makefile"]));
   assert.ok(matchesAny("ci/images.mk", ["ci/**"]));
   assert.ok(!matchesAny("a.go", ["{a,b}.go"]));
+});
+
+test("a column-0 list under a key is accepted", () => {
+  const body = full.replace('security_paths: ["a/**", Makefile]', "security_paths:\n- a/**\n- Makefile");
+  const r = run(rootWith(block(body)), "--json");
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).security_paths, ["a/**", "Makefile"]);
+});
+
+test("a scalar followed by list items is a gap with a warning, never a silent replace", () => {
+  const body = full.replace('security_paths: ["a/**", Makefile]', "security_paths: x\n  - y");
+  const r = run(rootWith(block(body)));
+  assert.equal(r.stdout.trim(), "profile gap: security_paths");
+  assert.match(r.stderr, /profile warning: security_paths: list items after a scalar/);
+});
+
+test("__proto__ keys are ignored with a warning", () => {
+  const r = run(rootWith(block(full + "\n__proto__: x")), "--json");
+  assert.match(r.stderr, /profile warning: ignored key __proto__/);
+  assert.equal(Object.keys(JSON.parse(r.stdout)).includes("__proto__"), false);
+});
+
+test("optional fields: standing_waivers list (empty is fine, scalar is a gap), ledger_path scalar", () => {
+  assert.equal(run(rootWith(block(full + "\nstanding_waivers: [docs-only]\nledger_path: .agents/ledger.jsonl"))).status, 0);
+  assert.equal(run(rootWith(block(full + "\nstanding_waivers: []"))).status, 0);
+  assert.equal(run(rootWith(block(full + "\nstanding_waivers: docs-only"))).stdout.trim(), "profile gap: standing_waivers");
+});
+
+test("glob semantics as documented: * and ? stay in a segment, a match covers everything below, case-sensitive", async () => {
+  const { matchesAny } = await import("./profile.mjs");
+  assert.ok(matchesAny("src/a", ["src/*"]));
+  assert.ok(matchesAny("src/a/b.go", ["src/*"]), "covers below a matched segment");
+  assert.ok(!matchesAny("src", ["src/*"]));
+  assert.ok(matchesAny("ab", ["a?"]));
+  assert.ok(!matchesAny("a", ["a?"]));
+  assert.ok(!matchesAny("a/b", ["a?"]));
+  assert.ok(matchesAny("README.md", ["*.md"]));
+  assert.ok(!matchesAny("docs/README.md", ["*.md"]));
+  assert.ok(!matchesAny("readme.MD", ["*.md"]));
+  assert.ok(matchesAny("a/b/c", ["a/**"]));
+  assert.ok(matchesAny("a/x/y/z.go", ["a/**/z.go"]));
+});
+
+test("a pattern of many stars is not a ReDoS", async () => {
+  const { matchesAny } = await import("./profile.mjs");
+  const t = Date.now();
+  assert.equal(matchesAny("a".repeat(40), ["*".repeat(30) + "Z"]), false);
+  assert.equal(matchesAny("a/".repeat(20), ["**/".repeat(15) + "Z"]), false);
+  assert.equal(matchesAny("ab".repeat(20), ["*a*a*a*a*a*a*a*a*a*a*Z"]), false);
+  assert.ok(Date.now() - t < 500, `took ${Date.now() - t} ms`);
+});
+
+test("the fixture is anonymised: no project, host, user or lab names", () => {
+  const text = readFileSync(fixture, "utf8");
+  for (const bad of [/portfolio/i, /scrollout/i, /\/home\//, /marius/i, /platform-lab/, /k3s/i, /\blab\b/i, /gologan/i]) assert.doesNotMatch(text, bad);
 });

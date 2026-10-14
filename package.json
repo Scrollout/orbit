@@ -3,6 +3,6 @@
   "private": true,
   "description": "Orbit plugin: no dependencies, Node built-ins only. `npm test` runs every self-test and the drift checks.",
   "scripts": {
-    "test": "node --test scripts/*.test.mjs && sh hooks/operator-context.test.sh && node scripts/check-size.mjs && node scripts/manifest.mjs --check && node scripts/check-docs.mjs"
+    "test": "node scripts/run-tests.mjs && sh hooks/operator-context.test.sh && node scripts/check-size.mjs && node scripts/manifest.mjs --check && node scripts/check-docs.mjs"
   }
 }

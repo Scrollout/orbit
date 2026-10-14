@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,4 +134,38 @@ test("production_env: TODO needs prod= (a triage gap), none or absent skips it",
   assert.equal(g.status, 2);
   assert.match(g.stdout, /triage gap: prod/);
   assert.equal(run(root, "--lines", "sec=no,door=no,prod=no", "--kind", "small").status, 0);
+});
+
+test("a ref that looks like an option is rejected before git runs: no file is written", () => {
+  const root = repo(["a.md"]);
+  const out = join(root, "pwned.txt");
+  const r = spawnSync("node", [script, "--root", root, "--base", `--output=${out}`, "--branch", "topic", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
+  assert.equal(r.status, 64);
+  assert.equal(existsSync(out), false);
+  const r2 = spawnSync("node", [script, "--root", root, "--base", "main", "--branch", `--output=${out}`, "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
+  assert.equal(r2.status, 64);
+  assert.equal(existsSync(out), false);
+});
+
+test("a forced security yes does not hide unset door or prod lines: they stay triage gaps", () => {
+  const r = run(repo([".github/workflows/ci.yml"]), "--lines", "sec=no");
+  assert.equal(r.status, 2);
+  assert.match(r.stdout, /triage gap: door/);
+  assert.doesNotMatch(r.stdout, /triage gap: sec/);
+});
+
+test("--files triages planned paths with no git branch", () => {
+  const root = repo(["a.md"]);
+  const r = spawnSync("node", [script, "--root", root, "--files", "docs/x.md,Makefile", "--lines", "sec=no,door=no,prod=no"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(get(r.stdout, "security"), /^yes \(forced: Makefile\)/);
+  assert.equal(get(r.stdout, "track"), "full review");
+});
+
+test("a git failure has its own exit code (70) and a one-line message", () => {
+  const r = run(repo(["a.md"]), "--lines", "sec=no,door=no,prod=no", "--kind", "small");
+  assert.equal(r.status, 0);
+  const bad = spawnSync("node", [script, "--root", repo(["a.md"]), "--base", "nope", "--branch", "topic", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
+  assert.equal(bad.status, 70);
+  assert.match(bad.stderr, /^decide-triage: git diff failed/);
 });
