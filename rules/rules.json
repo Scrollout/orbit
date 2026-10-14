@@ -1,5 +1,5 @@
 {
-  "version": "1.1.2",
+  "version": "1.2.0",
   "rules": [
     {
       "id": "DEC-01",
@@ -11,7 +11,7 @@
       "id": "DEC-02",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "a branch whose `git diff --name-only <base>...<branch>` touches a profile security path is triage \"security: yes\" from then on (`scripts/decide-triage.mjs`)."
+      "text": "a branch whose `git diff --name-only <base>...<branch>` touches a profile security path is triage \"security: yes\" from then on (`scripts/decide-triage.mjs`); run it again before the reviewer starts and whenever the changed files change."
     },
     {
       "id": "DEC-03",
@@ -23,7 +23,7 @@
       "id": "DEC-04",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "`coder` runs on Sonnet; override to `opus` when any triage line is yes, for the first build and for a fix round that changes a security path's behaviour (a tests-or-docs-only fix round stays on Sonnet)."
+      "text": "`coder` runs on Sonnet; Opus when any triage line is yes (the first build and every code fix round; a tests-or-docs-only fix round may stay on Sonnet) and for one re-run after CI failed twice on its step. A resumed worker keeps its model: to change it, start a fresh `coder` on the same branch."
     },
     {
       "id": "DEC-05",
@@ -47,7 +47,7 @@
       "id": "DEC-08",
       "file": "commands/decide.md",
       "tag": "hook",
-      "text": "the review trailer sits in the same last paragraph as `Co-Authored-By` on the merge commit, names the reviewer that ran, never a session name."
+      "text": "the review trailer sits in the same last paragraph as `Co-Authored-By` on the merge commit, names the reviewer that ran and the review of the branch head it reviewed (before the catch-up merge), never a session name."
     },
     {
       "id": "DEC-09",
@@ -89,7 +89,7 @@
       "id": "DEC-15",
       "file": "commands/decide.md",
       "tag": "judgment",
-      "text": "a review is waived only by the profile's waiver holder (the owner), per branch or for a named class; the merge trailer then says `<owner> waived - <reason>`."
+      "text": "a review is waived only by the profile's waiver holder (the owner), per branch or for a class named in the profile's `standing_waivers`; the merge trailer then says `<owner> waived - <reason>`."
     },
     {
       "id": "DEC-16",
@@ -119,7 +119,7 @@
       "id": "DEC-20",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "build a merge only for a branch with a review on record (`review_start`), unless the owner waived the review."
+      "text": "build a merge only for a branch with a review on record (`review_start`), unless the review was waived: `merge_built` then cites a `standing_waivers` class of the profile, or `owner` with a `waiver_reason`."
     },
     {
       "id": "OPR-01",
@@ -155,7 +155,7 @@
       "id": "OPR-06",
       "file": "skills/operator/SKILL.md",
       "tag": "judgment",
-      "text": "a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`)."
+      "text": "a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`); a dead worker, or a needed model change (a resumed worker keeps its model), gets a fresh worker on the same branch."
     },
     {
       "id": "OPR-07",

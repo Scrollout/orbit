@@ -1,12 +1,13 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.2.2",
-      "hash": "f6ece24ca79e130f069109e0d97ade1ff471f9510ddcde76ff468bfde5d6d553",
+      "version": "1.3.0",
+      "hash": "135bdf9340b48bce4b94091f5c83c5e15f8d5113cae9e1b50ccff46c4a4c1dae",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
         "refs/decide/discovery-signoff.md",
+        "refs/decide/ledger.md",
         "refs/decide/record.md",
         "refs/decide/team-tracks.md"
       ]
@@ -26,8 +27,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.1.1",
-      "hash": "085f4db5dac74efb0c98868352a24504ebf2be7abcadb405eabbbe2d8fba6d26",
+      "version": "1.2.0",
+      "hash": "7d71a6b198606a648f493214219d0ee754700b85861d1d159852b98b07317e6c",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -45,8 +46,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.1.2",
-      "hash": "bee8120ed5e26245e46d95062e21744075bafa657ca38a4209e6009712132ae4",
+      "version": "1.2.0",
+      "hash": "15bc611b1f1fe419b41a48600592ef41ed3a9294e2b398926c6f95102a39b274",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -58,7 +59,21 @@
         "scripts/manifest.mjs",
         "scripts/okf-init.mjs",
         "scripts/profile.mjs",
-        "scripts/validate-okf.mjs"
+        "scripts/run-tests.mjs",
+        "scripts/validate-okf.mjs",
+        "hooks/hooks.json",
+        "hooks/okf-check.sh",
+        "hooks/okf-hook.mjs",
+        "hooks/operator-context.sh",
+        "agents/architect.md",
+        "agents/coder.md",
+        "agents/designer.md",
+        "agents/explorer.md",
+        "agents/operator.md",
+        "agents/re-reviewer.md",
+        "agents/reviewer.md",
+        "agents/security.md",
+        "templates/project.md"
       ]
     }
   }

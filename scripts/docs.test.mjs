@@ -46,3 +46,10 @@ test("this repo's docs are consistent", () => {
   const r = run(join(here, ".."));
   assert.equal(r.status, 0, r.stdout);
 });
+
+test("the README ledger table equals refs/decide/ledger.md", async () => {
+  const { readFileSync } = await import("node:fs");
+  const tbl = (f) => readFileSync(join(here, "..", f), "utf8").split("\n").filter((l) => /^\| (kind|---|`)/.test(l)).join("\n");
+  assert.equal(tbl("README.md"), tbl("refs/decide/ledger.md"));
+  assert.match(tbl("README.md"), /`merge_built`/);
+});

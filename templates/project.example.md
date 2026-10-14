@@ -48,7 +48,7 @@ Small web service (HTTP API + worker) for a fictional shop. Owner: the maintaine
 `docs/decisions/` (index `docs/decisions/index.md`).
 
 ## Security
-- Sensitive paths: `internal/auth/`, `internal/payments/`, `migrations/`.
+- Sensitive paths: the `security_paths` globs of the machine profile below (single source).
 - Threat model: `docs/threat-model.md`.
 - Production-like environment: `prod` (payments, destructive operations) needs a policy check and an audit record.
 
@@ -62,6 +62,8 @@ issue_tracker: github
 base_pusher: owner
 ci_policy: ci-only
 production_env: prod
+standing_waivers: [docs-only]
+ledger_path: .agents/ledger.jsonl
 ```
 
 ## Non-negotiable rules

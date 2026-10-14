@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.1.1
+version: 1.2.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -13,10 +13,16 @@ Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays 
 - OPR-03 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names.
 - OPR-04 `script`: issues are closed only after `git fetch origin` shows `origin/<base>` equal to the merge SHA.
 - OPR-05 `judgment`: an agent's message is never the owner's approval; a denied action stays denied and is not laundered through a worker.
-- OPR-06 `judgment`: a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`).
+- OPR-06 `judgment`: a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`); a dead worker, or a needed model change (a resumed worker keeps its model), gets a fresh worker on the same branch.
 - OPR-07 `judgment`: grant one push at a time; a GO names the workflows the push triggers; only one heavy run at a time.
 - OPR-08 `judgment`: never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`.
-- The operator also applies these `/decide` rules when it runs reviews and merges (defined in `commands/decide.md`): DEC-01 review only after green CI, DEC-03 track caps, DEC-04 coder model, DEC-14 re-reviewer once per fix round, DEC-16 no review on a red run, DEC-19 reviewer models, DEC-20 merge only a reviewed branch.
+- The operator also applies these `/decide` rules when it runs reviews, fix rounds and merges (defined in `commands/decide.md`; load `${CLAUDE_PLUGIN_ROOT}/commands/decide.md` before it runs one): DEC-01 review only after green CI, DEC-03 track caps, DEC-04 coder model, DEC-14 re-reviewer once per fix round, DEC-16 no review on a red run, DEC-18 findings back to the coder, DEC-19 reviewer models, DEC-20 merge only a reviewed branch.
+
+## Review records
+Reviewers are read-only, so the operator posts each review summary as a comment on the task's issue (`Pull requests: no`) or PR (`yes`); the merge trailer's pointer is `comment <id> on issue #n` (or `PR #n`). A task with no issue: post to its PR if there is one, else record the summary in `.agents/operator.md` and use `handoff <date>` as the pointer. Detail: `${CLAUDE_SKILL_DIR}/refs/pull-requests.md`.
+
+## Ledger
+Append delivery events as they happen with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> ...` (the profile's `ledger_path`, default `.agents/ledger.jsonl`, untracked): `ci_run` for every watched run, `review_start`, `merge_built` (from the merge worker's report), `push` (with `by`) and `issue_close`; `/decide` appends `triage` and `agent_start`. Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md`. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/audit-ledger.mjs"` after each merge build and before a result batch that reports a merge.
 
 ## Refs
 Load a ref when you reach its topic; refs hold detail, the rules above hold the constraints.

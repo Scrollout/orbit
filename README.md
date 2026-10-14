@@ -52,7 +52,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 - `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
 
 ## Drift guard
-Keeps the skills and the sessions from drifting. Zero dependencies (Node built-ins, Node 20+); `npm test` runs every test and check below plus the hook self-test. In a project, run the scripts as `node <orbit clone>/scripts/<name>.mjs`.
+Keeps the skills and the sessions from drifting. Zero dependencies (Node built-ins, Node 20+); `npm test` runs every test and check below plus the hook self-test. Commands and skills call the scripts as `node "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.mjs"` (scripts are plugin files, so always the plugin root; a skill's own refs use `${CLAUDE_SKILL_DIR}`); from a shell, run `node <orbit clone>/scripts/<name>.mjs`. Known limit: that variable expansion follows the official Claude Code docs but has not been verified live here.
 
 ### Layout and rules
 - **Rule ids.** `/decide` (`DEC-01..`) and the `operator` skill (`OPR-01..`) each carry a numbered rule list, every rule tagged `script` (an orbit script checks it), `hook` (a hook or git check can enforce it; not built yet) or `judgment`. The prose and the refs explain the rules; the ids are stable. `rules/rules.json` registers them; a test checks each id appears once in its core and nowhere in a ref.
@@ -61,12 +61,12 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 - **Docs.** `node scripts/check-docs.mjs` checks that plugin.json, the CHANGELOG and the `Version:` line above agree and that links and referenced paths resolve.
 
 ### Project profile block
-`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`.
+`templates/project.md` ends with a fenced code block whose info string is `yaml orbit-profile`: `base_branch`, `security_paths` (globs anchored at the repo root: `*`, `**`, `**/Makefile` for any depth, a trailing `/` for a directory; no braces), `review_trailer`, `labels`, `issue_tracker`, `base_pusher` (`agent` or `owner`), `ci_policy` (`ci-only` or `local-full`) and optional `production_env`, optional `standing_waivers` (review-waived classes such as `docs-only`; `merge_built.waived` must cite one or be `owner` with a reason) and optional `ledger_path` (default `.agents/ledger.jsonl`, untracked).
 - `node scripts/profile.mjs --root .` prints `profile gap: <field>` for each missing, empty, TODO, wrongly typed or out-of-enum field (exit 1), warns on duplicate keys, and never guesses. `--json` prints the parsed block.
 
 ### Triage and track
 - `node scripts/decide-triage.mjs --root . --base <ref> --branch <ref> [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident]`
-- It lists `git diff --no-renames --name-only <base>...<branch>` (three dots: the branch's own changes; both paths of a rename), forces security yes when a path matches a profile glob, and prints the track, the per-role caps (`rules/tracks.json`, checked against the Track table) and the coder model (opus if any line is yes or the kind is incident). A line left unset is a `triage gap` (exit 2); `production_env: TODO` needs `prod=` on every run; an unfilled profile reports `profile gap`.
+- It lists `git diff --no-renames --name-only <base>...<branch>` (three dots: the branch's own changes; both paths of a rename), forces security yes when a path matches a profile glob, and prints the track, the per-role caps (`rules/tracks.json`, checked against the Track table) and the coder model (opus if any line is yes or the kind is incident). `--files a,b` triages planned paths before a branch exists. A line left unset is a `triage gap` (exit 2), even when a security glob forces security yes (the one-way-door question is separate); exit 64 is bad usage (an option-like ref is refused), 70 a git failure; `production_env: TODO` needs `prod=` on every run; an unfilled profile reports `profile gap`.
 
 ### Session ledger and audit
 - Append events: `node scripts/ledger.mjs --ledger L.jsonl --session S <kind> key=value key:=<json> ...` (adds `ts` and `rule_version`). Replay: `node scripts/audit-ledger.mjs L.jsonl --profile .agents/project.md` prints violations by rule id (exit 1; also for an empty ledger or a profile gap).
@@ -75,10 +75,10 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 | kind | fields |
 |---|---|
 | `triage` | `topic`, `sec`, `door`, `prod`, `track`, `files` (changed paths) |
-| `agent_start` | `role`, `model`, `topic`; `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason` or `outside_cap` (excludes the call from the caps) |
+| `agent_start` | `role`, `model`, `topic`; `resumed` (a resumed worker keeps its model), `reason` (`ci-failed-twice` needs opus); `phase` (`design`, `build`, `fix`, `delivery`; a reviewer defaults to `delivery` once a `ci_run` with that `branch` exists); `fix_scope` (`tests-docs` or `code`); `cap_reason`, or `outside_cap` (excludes the call from the caps; needs a `cap_reason`) |
 | `ci_run` | `branch` (= topic; a run without it counts for no topic's phase default), `sha`, `workflow` (default `default`), `state` (`green`, `red`, `pending`) or `conclusion` (`success`, `failure`, ...); the latest run per workflow counts |
 | `review_start` | `branch`, `sha`, `ci_state`, `role` (`reviewer` or `re-reviewer`) |
-| `merge_built` | `branch`, `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (owner waived the review) |
+| `merge_built` | `branch`, `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`) |
 | `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |
 | `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
 
