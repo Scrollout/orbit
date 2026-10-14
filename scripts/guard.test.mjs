@@ -134,10 +134,11 @@ test("operator: Edit/Write/MultiEdit/NotebookEdit only on .agents/operator.md", 
   const edit = (tool_name, tool_input) => run({ ...op, tool_name, tool_input });
   assert.equal(edit("Write", { file_path: ".agents/operator.md" }), null);
   assert.equal(edit("Edit", { file_path: "/r/main/.agents/operator.md" }), null);
-  for (const [t, i] of [["Write", { file_path: "README.md" }], ["Edit", { file_path: "/r/main-topic/.agents/operator.md" }], ["MultiEdit", { file_path: "/r/main/a.md" }], ["NotebookEdit", { notebook_path: "/r/main/n.ipynb" }], ["Write", { file_path: "/tmp/scratch/x" }], ["Write", {}]]) {
+  for (const [t, i] of [["Write", { file_path: "README.md" }], ["Edit", { file_path: "/r/main-topic/.agents/operator.md" }], ["MultiEdit", { file_path: "/r/main/a.md" }], ["NotebookEdit", { notebook_path: "/r/main/n.ipynb" }], ["Write", {}]]) {
     assert.match(edit(t, i) ?? "", /^OPR-01: .*worker/, `${t} ${JSON.stringify(i)}`);
   }
   assert.equal(edit("Read", { file_path: "README.md" }), null);
+  assert.equal(edit("Write", { file_path: "/tmp/scratch/body.md" }), null, "outside the repo is allowed (finding 7)");
 });
 
 test("operator detection: agent_type on the main thread, or ORBIT_ROLE=operator; a subagent never is", () => {
@@ -152,7 +153,8 @@ test("operator detection: agent_type on the main thread, or ORBIT_ROLE=operator;
 
 test("non-operator sessions: OPR-01 does nothing", () => {
   const worker = { agent_id: "w1", agent_type: "orbit:coder", cwd: "/r/main-topic" };
-  for (const [c] of DENIED) assert.equal(run(bash(c, worker)), null, c);
+  for (const [c] of DENIED) assert.doesNotMatch(run(bash(c, worker)) ?? "", /OPR-01/, c);
+  assert.match(run(bash("git merge --no-ff topic", worker)) ?? "", /^DEC-08/, "workers still get DEC-08");
   assert.equal(run({ ...worker, tool_name: "Write", tool_input: { file_path: "README.md" } }), null);
   assert.equal(run({ cwd: "/r/main", tool_name: "Bash", tool_input: {} }), null);
 });
@@ -167,7 +169,6 @@ test("DEC-08: a --no-ff merge of a topic needs the trailer in the last paragraph
     "git merge --no-ff -m 'Merge topic' -m 'Reviewed-By: owner waived - docs-only\nCo-Authored-By: A <a@example.com>' topic",
     "git merge --no-ff -m 'catch-up' origin/main",
     "git merge -m 'no trailer, fast-forward allowed' topic",
-    "git merge --no-ff topic",
     "git merge --abort",
     "git commit -m 'plain commit, no merge in progress'",
   ];
@@ -179,6 +180,9 @@ test("DEC-08: a --no-ff merge of a topic needs the trailer in the last paragraph
     "git merge --no-ff -m \"$MSG\" topic",
     "git merge --no-ff -F missing.txt topic",
     "cd /r/main && git merge --no-ff -m 'x' topic",
+    "git merge --no-ff topic",
+    "git merge --no-ff --no-edit topic",
+    "git merge --no-ff -qm 'Merge topic' topic",
   ];
   for (const c of bad) assert.match(run(bash(c, w)) ?? "", /^DEC-08: /, c);
   const merging = ctx({ mergeHead: () => "abc", baseShas: () => ["def"] });
@@ -228,4 +232,149 @@ test("hooks.json registers the guard as a PreToolUse hook for Bash and the edit 
   const g = h.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard")));
   assert.ok(g, "guard registered");
   for (const t of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"]) assert.ok(g.matcher.split("|").includes(t), t);
+});
+
+// ---------- fix round 1 ----------
+const deniedOp = (c, c2 = ctx()) => { const r = run(bash(c), c2); assert.match(r ?? "", /^OPR-01: /, `not denied: ${c}`); return r; };
+const allowedOp = (c, c2 = ctx()) => assert.equal(run(bash(c), c2), null, c);
+
+test("finding 1: read-only git subcommands with options that write or run code are denied", () => {
+  for (const c of [
+    "git fetch --upload-pack='touch x' origin", "git ls-remote --upload-pack=evil origin", "git ls-remote -u evil origin",
+    "git log --exec=x", "git grep -O foo", "git grep --open-files-in-pager=vi foo", "git diff --output=README.md",
+    "git log --output-file x", "git -c alias.x=y status", "git fetch origin main:main", "git fetch origin +refs/heads/*:refs/remotes/x/*",
+    "git ls-remote origin a:b", "git config user.name x", "git config --global user.name x", "git config --add a.b c",
+    "git config --get a.b --unset", "git config --unset a.b", "git config -e", "git config set a.b c",
+    "git remote add x y", "git remote set-url origin y", "git remote remove origin", "git remote prune origin",
+    "git reflog expire --all", "git reflog delete HEAD@{1}", "git reflog drop",
+  ]) deniedOp(c);
+  for (const c of [
+    "git fetch origin main", "git fetch https://example.com/x.git main", "git ls-remote https://example.com/x.git",
+    "git diff --output-indicator-new=+ HEAD", "git config --get user.name", "git config --get-regexp alias", "git config --list",
+    "git config -l", "git config --global --get user.name", "git remote", "git remote -v", "git remote show origin", "git remote get-url origin",
+    "git reflog", "git reflog show topic", "git reflog -n 5",
+  ]) allowedOp(c);
+});
+
+test("finding 2: a write target with a variable assigned in the command is denied; mktemp dirs are safe", () => {
+  for (const c of [
+    "D=/r/main; echo x > $D/a", "export D=/r/main && echo x > \"$D/a\"", "declare D=/r/main; touch $D/a", "read D; rm $D",
+    "for D in /r/main; do echo x > $D/a; done", "TMPDIR=/r/main; echo x > $TMPDIR/x", "D=$(mktemp -d); echo x > /r/main/$D",
+    "D=$(pwd); echo x > $D/a",
+  ]) deniedOp(c);
+  for (const c of [
+    "D=$(mktemp -d); echo x > \"$D/body.md\"", "F=$(mktemp); gh issue comment 3 --body-file \"$F\" && echo x > $F",
+    "D=\"$(mktemp -d)\"; cp README.md \"$D/\"", "N=3; echo $N",
+  ]) allowedOp(c);
+});
+
+test("finding 3: cd - leaves the directory unknown", () => {
+  deniedOp("cd /tmp && cd - && touch x");
+  allowedOp("cd /tmp && touch x");
+});
+
+test("finding 4: shells, sourcing and opaque wrappers fail closed or are parsed", () => {
+  for (const c of [
+    "bash -c -- 'git commit -m x'", "sh script.sh", "bash <<'EOF'\ngit commit -m x\nEOF", "echo 'git commit' | sh", "bash -s",
+    "source ./x.sh", ". ./x.sh", "builtin eval git commit", "env -S 'git commit -m x'", "watch git status", "script -c 'git commit' /dev/null",
+    "flock /tmp/l git commit -m x", "setsid git commit -m x", "chronic git commit -m x", "stdbuf -oL git commit -m x", "ionice -c 3 git commit -m x",
+  ]) deniedOp(c);
+  for (const c of ["bash -c -- 'git status'", "setsid git status", "ionice -c 3 git log -1", "bash --version"]) allowedOp(c);
+  assert.match(run(bash("sh script.sh")), /via a worker/);
+});
+
+test("finding 5: gh merges and ref writes are denied wherever the flags sit; reads stay allowed", () => {
+  for (const c of [
+    "gh pr -R o/r merge 4", "gh -R o/r pr merge 4", "gh pr --repo o/r checkout 4", "gh --repo=o/r pr merge 4 --squash",
+    "gh api -X PUT repos/o/r/pulls/4/merge", "gh api --method POST repos/o/r/merges -f base=main -f head=t",
+    "gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", "gh api -XPATCH repos/o/r/git/refs/heads/main -f sha=abc",
+    "gh api --method=DELETE repos/o/r/git/refs/heads/t", "gh api -X PUT repos/o/r/contents/README.md --input body.json",
+    "gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'",
+    "gh api graphql -f query=\"$Q\"",
+  ]) deniedOp(c);
+  for (const c of [
+    "gh api repos/o/r/pulls/4", "gh api repos/o/r/git/refs/heads/main", "gh api -X GET repos/o/r/contents/README.md",
+    "gh api repos/o/r/issues/3/comments -f body=hi", "gh api graphql -f query='query { viewer { login } }'",
+    "gh pr view 4 -R o/r", "gh -R o/r pr list",
+  ]) allowedOp(c);
+});
+
+test("finding 6: DEC-08 covers merges without a readable message, --continue, reuse and clustered -m", () => {
+  const w = { agent_id: "w1", agent_type: "orbit:coder", cwd: "/r/main" };
+  const merging = ctx({ mergeHead: () => "abc1234", baseShas: () => ["def5678"] });
+  for (const c of ["git merge --continue", "git commit --no-edit", "git commit", "git commit -C HEAD", "git commit --reuse-message=HEAD", "git commit -c HEAD", "git commit -am 'Merge topic'"]) {
+    assert.match(run(bash(c, w), merging) ?? "", /^DEC-08: .*-F/, c);
+  }
+  assert.match(run(bash("git merge --no-ff --no-commit topic && git commit --no-edit", w)) ?? "", /^DEC-08/);
+  assert.equal(run(bash("git merge --no-ff --no-commit topic", w)), null);
+  assert.equal(run(bash("git commit -F msg-ok.txt", w), merging), null);
+  assert.equal(run(bash("git commit -qF msg-ok.txt", w), merging), null);
+  assert.equal(run(bash("git merge --continue", w)), null, "no merge in progress");
+  assert.equal(run(bash("git merge --no-ff -m 'x' FETCH_HEAD", w)), null);
+  assert.equal(run(bash("git merge --no-ff -m 'x' def5678", w), merging), null, "a sha equal to the base tip is a catch-up");
+  assert.match(run(bash("git merge --no-ff -m 'x' 0123abc", w), merging) ?? "", /^DEC-08/);
+  assert.equal(run(bash("git merge --no-ff -m 'catch up with main' 0123abc", w)), null);
+  assert.equal(run(bash("git merge --no-ff -m \"Merge remote-tracking branch 'origin/main' into t\" 0123abc", w)), null);
+  assert.equal(run(bash("git merge abc1234", w)), null, "no --no-ff: a catch-up");
+});
+
+test("finding 7: case, functions, stash list|show and notes show are not false denies", () => {
+  for (const c of [
+    "case $x in a|b) git status ;; *) git log -1 ;; esac", "f() { git status; }; f", "function g { git log -1; }",
+    "git stash list", "git stash show -p stash@{0}", "git notes show HEAD", "case x in (y) echo y;; esac",
+  ]) allowedOp(c);
+  for (const c of ["case $x in a) git commit -m x ;; esac", "f() { git commit -m x; }", "git stash drop", "git notes add -m x"]) deniedOp(c);
+});
+
+test("finding 8: common writers, script writers and symlinked targets", async () => {
+  for (const c of [
+    "patch -p1 < /tmp/scratch/x.diff", "rsync -a /tmp/scratch/ docs/", "dd if=/dev/zero of=README.md", "curl -o README.md https://example.com",
+    "curl -sSLo x.sh https://example.com", "curl -O https://example.com/x", "tar xzf /tmp/scratch/a.tgz", "tar -xf /tmp/scratch/a.tar",
+    "unlink README.md", "shred -u README.md", "chmod +x hooks/x.sh", "chown u README.md", "find . -name '*.log' -delete",
+    "find docs -exec rm {} +", "find . -name x -exec sed -i s/a/b/ {} ;", "python3 -c 'open(\"x\",\"w\")'", "python -c 1",
+    "node -e 'require(\"fs\").writeFileSync(\"x\",\"\")'", "perl -pi -e 's/a/b/' README.md", "ruby -e 'File.write(\"x\",\"\")'",
+    "awk '{ print > \"out.txt\" }' README.md", "sed -n 'w out.txt' README.md",
+  ]) deniedOp(c);
+  for (const c of [
+    "curl -sS https://example.com", "curl -o /tmp/scratch/x https://example.com", "tar tzf /tmp/scratch/a.tgz", "tar xzf a.tgz -C /tmp/scratch",
+    "find . -name '*.md'", "find . -exec grep -l x {} +", "awk '$3 > 100 { print $1 }' data.txt", "sed -n '/word/p' README.md",
+    "node scripts/ledger.mjs --session s ci_run", "chmod +x /tmp/scratch/x.sh", "rsync -a docs/ /tmp/scratch/docs/",
+  ]) allowedOp(c);
+  const { symlinkSync, realpathSync } = await import("node:fs");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-ln-")));
+  try {
+    mkdirSync(join(root, "repo")); mkdirSync(join(root, "out"));
+    symlinkSync(join(root, "repo"), join(root, "out/link"));
+    const c = ctx({ roots: [join(root, "repo")], operatorFiles: [join(root, "repo/.agents/operator.md")] });
+    const o = { ...op, cwd: join(root, "out") };
+    assert.match(guard({ ...o, tool_name: "Bash", tool_input: { command: "echo x > link/a" } }, env, c) ?? "", /^OPR-01/);
+    assert.match(guard({ ...o, tool_name: "Write", tool_input: { file_path: join(root, "out/link/a") } }, env, c) ?? "", /^OPR-01/);
+    assert.equal(guard({ ...o, tool_name: "Write", tool_input: { file_path: join(root, "out/a") } }, env, c), null);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("realCtx reads review_trailer and base_pusher from the profile", async () => {
+  const { realCtx } = await import("../hooks/guard.mjs");
+  const root = mkdtempSync(join(tmpdir(), "guard-ctx-"));
+  try {
+    spawnSync("git", ["init", "-q", "-b", "main", root]);
+    mkdirSync(join(root, ".agents"));
+    const prof = (lines) => { writeFileSync(join(root, ".agents/project.md"), "```yaml orbit-profile\n" + lines + "\n```\n"); return realCtx(root, {}).profile(root); };
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner"), { base: "main", pusher: "owner", trailer: "Reviewed-By" });
+    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: null, trailer: "Reviewed-By" });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the hook entry fails closed for the operator when guard() throws, and stays silent for others", async () => {
+  const { hookMain } = await import("../hooks/guard.mjs");
+  const boom = () => { throw new Error("boom"); };
+  const o = hookMain(JSON.stringify({ agent_type: "orbit:operator", tool_name: "Bash", tool_input: { command: "ls" } }), {}, boom);
+  assert.equal(o.code, 0);
+  assert.match(JSON.parse(o.stdout).hookSpecificOutput.permissionDecisionReason, /^OPR-01: .*boom/);
+  const w = hookMain(JSON.stringify({ agent_id: "a", tool_name: "Bash", tool_input: { command: "ls" } }), { ORBIT_ROLE: "operator" }, boom);
+  assert.deepEqual(w, { code: 0, stdout: "", stderr: "" });
+  assert.equal(hookMain("{", { ORBIT_ROLE: "operator" }).code, 2);
+  assert.equal(hookMain("{", {}).code, 0);
 });
