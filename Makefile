@@ -35,8 +35,8 @@ report: toolbox
 report-test: toolbox
 	@$(IN) node ci/scripts/report.test.mjs
 
-## ci: vet, quality, security in that order, all run even after a failure; prints the report; fails if any failed
+## ci: clears ci/out, then vet, quality, security in that order, all run even after a failure; prints the report; fails if any failed
 ci: toolbox
-	@rc=0; for t in vet quality security; do $(MAKE) --no-print-directory $$t || rc=1; done; \
+	@rm -rf ci/out && mkdir ci/out; rc=0; for t in vet quality security; do $(MAKE) --no-print-directory $$t || rc=1; done; \
 	  $(MAKE) --no-print-directory report || rc=1; \
 	  if [ $$rc -eq 0 ]; then echo "ci: PASS"; else echo "ci: FAIL"; fi; exit $$rc

@@ -1,0 +1,91 @@
+{
+  "quality": [
+    {
+      "file": "scripts/manifest.test.mjs",
+      "rules": [
+        "no-unused-vars",
+        "no-regex-spaces"
+      ],
+      "reason": "unused import cpSync (line 4) and regexes with runs of spaces (lines 70, 105); reported to the owner, not fixed in the CI-only change"
+    }
+  ],
+  "security": [
+    {
+      "file": "hooks/guard.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/audit-ledger.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/okf-lib.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/pointers.test.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/release-check.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/scenarios.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/tracks.test.mjs",
+      "rules": [
+        "security/detect-unsafe-regex"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/audit.test.mjs",
+      "rules": [
+        "security/detect-non-literal-regexp"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/intent-plan.mjs",
+      "rules": [
+        "security/detect-non-literal-regexp"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/profile.test.mjs",
+      "rules": [
+        "security/detect-non-literal-regexp"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    },
+    {
+      "file": "scripts/release-check.test.mjs",
+      "rules": [
+        "security/detect-non-literal-regexp"
+      ],
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3"
+    }
+  ]
+}

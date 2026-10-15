@@ -14,7 +14,5 @@ export default [
   // no-empty: an empty `catch {}` is how the hooks and scripts deliberately ignore a failure that must never block
   // (hooks/guard.mjs, hooks/okf-hook.mjs, scripts/intent-plan.mjs); empty catch stays allowed, other empty blocks still fail.
   { rules: { "no-empty": ["error", { allowEmptyCatch: true }] } },
-  // Two real findings in scripts/manifest.test.mjs (unused import `cpSync`, regexes with literal runs of spaces at lines 70
-  // and 105) are reported to the owner, not fixed here (CI change only). Off for that file alone; remove when fixed.
-  { files: ["scripts/manifest.test.mjs"], rules: { "no-unused-vars": "off", "no-regex-spaces": "off" } },
+  // Findings still in the plugin are listed per file in ci/eslint-baseline.json; an entry that stops matching fails the check.
 ];

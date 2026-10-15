@@ -23,11 +23,11 @@ jobs:
       - name: Job summary
         if: always()
         run: make -s report >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload the check records
+      - name: Upload the check records and logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
         with:
           name: ci-report
-          path: ci/out/*.jsonl
+          path: ci/out/
           retention-days: 7
           if-no-files-found: ignore
