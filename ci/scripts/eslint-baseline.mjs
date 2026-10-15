@@ -12,19 +12,23 @@ const baseline = JSON.parse(readFileSync(new URL("../eslint-baseline.json", impo
 const run = spawnSync("/opt/ci/node_modules/.bin/eslint", ["-c", `/opt/ci/${config}`, "-f", "json", "--no-warn-ignored", "."], { encoding: "utf8", maxBuffer: 1 << 28 });
 let results;
 try { results = JSON.parse(run.stdout); } catch { console.log(`eslint:1 no JSON from eslint (exit ${run.status}): ${run.stderr.slice(0, 300)}`); process.exit(1); }
-const matched = new Set();
+const hits = new Map();
 let bad = 0;
 for (const r of results) {
   const file = relative(process.cwd(), r.filePath);
   for (const m of r.messages) {
     const rule = m.ruleId ?? "parse";
-    const entry = baseline.find((b) => b.file === file && b.rules.includes(rule));
-    if (entry) { matched.add(`${file} ${rule}`); continue; }
+    if (baseline.some((b) => b.file === file && rule in b.counts)) { hits.set(`${file} ${rule}`, (hits.get(`${file} ${rule}`) ?? 0) + 1); continue; }
     bad++;
     console.log(`${file}:${m.line}:${m.column} ${rule}: ${m.message}`);
   }
 }
-for (const b of baseline) for (const rule of b.rules) {
-  if (!matched.has(`${b.file} ${rule}`)) { bad++; console.log(`ci/eslint-baseline.json:1 stale entry ${b.file} ${rule}: no longer matches, remove it`); }
+for (const b of baseline) for (const [rule, expected] of Object.entries(b.counts)) {
+  const n = hits.get(`${b.file} ${rule}`) ?? 0;
+  if (n === expected) continue;
+  bad++;
+  console.log(n < expected
+    ? `ci/eslint-baseline.json:1 stale entry ${b.file} ${rule}: ${n} hit(s), baseline says ${expected}; lower or remove it`
+    : `${b.file}:1 ${rule}: ${n} hit(s), baseline allows ${expected}; a new finding in a baselined file`);
 }
 process.exit(bad ? 1 : 0);

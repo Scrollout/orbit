@@ -3,12 +3,6 @@
 . ci/scripts/lib.sh
 start vet
 
-# The tracked files of one class; fails when git fails or the class is empty, so a check can never pass on nothing.
-tracked() {
-  list=$(git ls-files -- "$@") || { echo "git ls-files failed for: $*"; return 1; }
-  [ -n "$list" ] || { echo "no tracked files for: $*"; return 1; }
-  printf '%s\n' "$list"
-}
 shell_check() {
   files=$(tracked '*.sh') || return 1
   # SC2015 is excluded for this one file, which trips it on main (reported, Scrollout/orbit#3); remove when fixed.
@@ -34,5 +28,6 @@ check node-syntax node "$(node -v)" node_check
 check json-valid node "$(node -v)" json_check
 check actionlint actionlint "$ACTIONLINT_VERSION" yaml_lint
 check hadolint hadolint "$HADOLINT_VERSION" hadolint --no-color ci/Dockerfile
+check lib-test sh "posix" sh ci/scripts/lib.test.sh
 check report-test node "$(node -v)" node ci/scripts/report.test.mjs
 finish

@@ -5,6 +5,7 @@
 #                                       (capped, ci/scripts/record.mjs), records one JSON line, prints a pass/fail line
 #                                       and, on failure, the tail of the log; a failure does not stop the target
 #   skip <name> <tool> <version> <why>  records a skipped check
+#   tracked <glob...>                   the tracked files matching; fails (reason on stderr) when git fails or none match
 #   finish                              prints the target's totals; exit 1 if any check failed
 OUT=ci/out
 fails=0
@@ -22,3 +23,9 @@ skip() {
   echo "$target/$1: skipped ($4)"
 }
 finish() { if [ "$fails" -eq 0 ]; then echo "$target: PASS"; else echo "$target: FAIL ($fails failed)"; return 1; fi; }
+# The tracked files of one class; fails when git fails or the class is empty, so a check can never pass on nothing.
+tracked() {
+  list=$(git ls-files -- "$@") || { echo "git ls-files failed for: $*" >&2; return 1; }
+  [ -n "$list" ] || { echo "no tracked files for: $*" >&2; return 1; }
+  printf '%s\n' "$list"
+}
