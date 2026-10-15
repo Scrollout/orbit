@@ -1,4 +1,5 @@
 import test from "node:test";
+import { denied } from "./denylist.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, cpSync, readFileSync } from "node:fs";
@@ -141,7 +142,7 @@ test("a pattern of many stars is not a ReDoS", async () => {
 
 test("the fixture is anonymised: no project, host, user or lab names", () => {
   const text = readFileSync(fixture, "utf8");
-  for (const bad of [/portfolio/i, /scrollout/i, /\/home\//, /marius/i, /platform-lab/, /k3s/i, /\blab\b/i, /gologan/i]) assert.doesNotMatch(text, bad);
+  assert.equal(denied(text), null);
 });
 
 test("an empty, / or ./ security_paths entry is a profile gap, never a match-all", async () => {
