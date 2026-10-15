@@ -4,8 +4,9 @@
 // call: security accept | conditions | block; PM, techlead and architect adopt | reject <proposal>; engineers, designers and reviewers
 // for | against <proposal>; an analyst or explorer may give `-`. A `conditions` verdict needs a non-empty Conditions cell. No cell
 // may be empty or a placeholder (`...`, TODO, <...>), except Conditions (empty is fine unless the verdict is `conditions`) and Tokens
-// (`-` is fine). Below the table: the three triage lines `Security paths:`, `One-way door` and `Touches ...` (real or the profile's
-// production-like environment), each answered yes or no (the last may be n/a when the profile defines none).
+// (`-` is fine). After the table, each at the start of a line (a list marker and bold are fine) with its exact label and a colon: the three triage
+// lines `Security paths:`, `One-way door:` and `Touches real:` (or `Touches the profile's production-like environment:`), answered yes or no
+// (the last may be n/a when the profile defines none).
 // Output: one `decision gap: <what>` line per gap; exit 0 ok, 2 gaps, 64 bad usage. It checks the shape, not whether the call was right.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -28,6 +29,7 @@ const WORDS = (role) => /^(pm|techlead|tech lead|architect)$/.test(role) ? ["ado
 
 export function lint(text) {
   const gaps = [], lines = text.split(/\r?\n/);
+  let tableEnd = 0;
   const h = lines.findIndex((l) => l.trim().startsWith("|") && /\bcall\b/i.test(l) && /\bverdict\b/i.test(l));
   if (h < 0) gaps.push("no decision table (a header row with Call and Verdict)");
   else {
@@ -36,6 +38,7 @@ export function lint(text) {
     for (const c of COLUMNS) if (idx[c] < 0) gaps.push(`column ${c} missing`);
     const rows = [];
     for (let i = h + 1; i < lines.length && lines[i].trim().startsWith("|"); i++) if (!/^\|?[\s:|-]+\|?$/.test(lines[i].trim())) rows.push([i + 1, cells(lines[i])]);
+    tableEnd = rows.length ? rows.at(-1)[0] : h + 1;
     if (!rows.length) gaps.push("the table has no rows");
     if (rows.length && !rows.some(([, r]) => roleOf(r[idx.Call] ?? "") === "pm")) gaps.push("no PM row");
     if (!Object.values(idx).includes(-1)) for (const [n, r] of rows) {
@@ -54,10 +57,12 @@ export function lint(text) {
       if (w.toLowerCase() === "conditions" && /^(|-|none|n\/a)$/i.test((r[idx.Conditions] ?? "").trim())) g("Verdict conditions needs a Conditions cell");
     }
   }
-  const answer = (re) => { const l = lines.find((x) => re.test(x.replace(/[*_`]/g, "").replace(/^\s*[-*+]\s*/, ""))); return l && l.replace(/[*_`]/g, "").replace(/^\s*[-*+]\s*/, "").replace(re, "").replace(/^[^:?]*[:?]/, "").trim(); };
-  for (const [name, re, ok] of [["Security paths", /^Security paths?\b/i, /^(yes|no)\b/i], ["One-way door", /^One-way door\b/i, /^(yes|no)\b/i], ["Touches real", /^Touches\b/i, /^(yes|no|n\/a|skipped?)\b/i]]) {
-    const a = answer(re);
-    if (a === undefined) gaps.push(`triage line ${name} missing`);
+  const after = lines.slice(tableEnd);
+  const norm = (l) => l.replace(/[*_`]/g, "").replace(/^\s*[-+]?\s*/, "");
+  const answer = (label) => { for (const l of after) { const m = new RegExp(`^(?:${label})\\s*:\\s*(.*)$`).exec(norm(l)); if (m) return m[1].trim(); } return undefined; };
+  for (const [name, label, ok] of [["Security paths", "Security paths", /^(yes|no)\b/], ["One-way door", "One-way door", /^(yes|no)\b/], ["Touches real", "Touches real|Touches the profile's production-like environment", /^(yes|no|n\/a)\b/]]) {
+    const a = answer(label);
+    if (a === undefined) gaps.push(`triage line ${name} missing (after the table, at the start of a line, as "${name}:")`);
     else if (!ok.test(a)) gaps.push(`triage line ${name}: answer must start with ${name === "Touches real" ? "yes, no or n/a" : "yes or no"}, got ${JSON.stringify(a.slice(0, 30))}`);
   }
   return gaps;

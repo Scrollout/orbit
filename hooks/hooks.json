@@ -1,5 +1,5 @@
 {
-  "description": "Before Bash and file edits, deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer (hooks/guard.mjs); after Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); after a Task/Agent call of an orbit agent or a `git push`, append an agent_start or push event to the session ledger (hooks/capture.mjs, fail-open, silent without a profile); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
+  "description": "Before Bash and file edits, deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer (hooks/guard.mjs); after Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); after a successful `git push`, append a push event to the session ledger (hooks/capture.mjs, fail-open, silent without a profile); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
   "hooks": {
     "PreToolUse": [
       {
@@ -25,7 +25,7 @@
         ]
       },
       {
-        "matcher": "Task|Agent|Bash",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",

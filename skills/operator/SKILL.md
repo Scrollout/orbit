@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.5.0
+version: 1.5.1
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -23,7 +23,7 @@ Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays 
 Reviewers are read-only, so the operator posts each review summary as a comment on the task's issue (`Pull requests: no`) or PR (`yes`); the merge trailer's pointer is `comment <id> on issue #n` (or `PR #n`). A task with no issue: post to its PR if there is one, else record the summary in `.agents/operator.md` and use `handoff <date>` as the pointer. Detail: `${CLAUDE_SKILL_DIR}/refs/pull-requests.md`.
 
 ## Ledger
-Append delivery events as they happen with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> ...` (the profile's `ledger_path`, default `.agents/ledger.jsonl`, untracked): `ci_run` for every watched run, `review_start`, `merge_built` (from the merge worker's report), `coder_report` (after `scripts/proof-check.mjs --coder` on each coder report), `proof_check` (one per `PROOF CHECK` line of a review), `push` (with `by`), `issue_close`, `tag_push` and `release` (from the release worker's report); `/decide` appends `triage` and `agent_start`. Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md`. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/audit-ledger.mjs"` after each merge build and before a result batch that reports a merge.
+Append delivery events as they happen with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> ...` (the profile's `ledger_path`, default `.agents/ledger.jsonl`, untracked): `ci_run` for every watched run, `review_start`, `merge_built` (from the merge worker's report), `coder_report` (after `scripts/proof-check.mjs --coder` on each coder report), `proof_check` (one per `PROOF CHECK` line of a review), `issue_close`, `tag_push` and `release` (from the release worker's report); `/decide` appends `triage` and `agent_start`. `push` of the agent is appended by the plugin's capture hook (`hooks/capture.mjs`); append it by hand with `by` only for a push the hook cannot see (the owner's). Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md`. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/audit-ledger.mjs"` after each merge build and before a result batch that reports a merge.
 
 ## Refs
 Load a ref when you reach its topic; refs hold detail, the rules above hold the constraints.

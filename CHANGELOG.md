@@ -1,9 +1,9 @@
 # Changelog
 
 ## 0.16.0
-- Ledger auto-capture (rules 1.8.0): the PostToolUse hook `hooks/capture.mjs` appends `agent_start` for a Task or Agent call of an orbit agent and `push` for a `git push` (ref, sha, chained, `by: agent`), so the ledger no longer depends on the operator remembering. Fail-open and silent without a profile; no prompt, description, command line or remote is recorded.
-- Condition ledger: `condition` events (`topic`, `id`, `step`, `test`, `status` open or proved), validated by the audit, and `scripts/condition-check.mjs`, which fails a topic with a condition still open or proved by a test that no `coder_report` lists and no `proof_check` shows failing.
-- Decision-record lint: `scripts/decision-lint.mjs` checks the step 8 table (columns, verdict words by role, conditions, placeholders) and the three triage lines; exit 2 on gaps. `/decide` 1.4.1 (refs only): the ledger ref documents the new kind and the capture, the record ref the lint. Scenario `ledger-condition-bad-status`, pin updated.
+- Ledger auto-capture (rules 1.8.1): the PostToolUse hook `hooks/capture.mjs` appends `push` for a successful `git push` (ref, sha, chained, `by: agent`) to the main checkout's ledger, following `git -C` and `cd`, reading the command like a shell (quotes and heredocs record nothing), skipping tag pushes and failed responses. Fail-open and silent without a profile; no command line or remote is recorded. `agent_start` is not captured (wrong checkout, recorded after the call): it stays hand-appended.
+- Condition ledger: `condition` events (`topic`, `id`, `step`, `test`, `status` open or proved), validated by the audit, and `scripts/condition-check.mjs`, which fails a topic with a condition still open or proved by a test that no later `coder_report` lists and no later `proof_check` shows failing, and `--topic` with no condition.
+- Decision-record lint: `scripts/decision-lint.mjs` checks the step 8 table (columns, verdict words by role, conditions, placeholders) and the three triage lines; exit 2 on gaps. `/decide` 1.4.2 and operator 1.5.1: `push` is no longer appended by hand (the owner's excepted); the ledger ref documents the new kind and the capture, the record ref the lint. Scenario `ledger-condition-bad-status`, pin updated.
 - README: the "Next steps" section is gone (its four items are built or dropped).
 
 ## 0.15.3

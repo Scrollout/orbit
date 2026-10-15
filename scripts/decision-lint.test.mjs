@@ -47,10 +47,19 @@ test("a conditions verdict needs conditions; placeholders and empty cells are ga
 });
 
 test("the three triage lines: present, answered yes or no", () => {
-  assert.deepEqual(lint(rec(GOOD, "")), ["triage line Security paths missing", "triage line One-way door missing", "triage line Touches real missing"]);
-  assert.deepEqual(lint(rec(GOOD, "\n**Security paths:** yes, auth/\n**One-way door?** no\nTouches real: n/a, no production environment\n")), []);
+  assert.equal(lint(rec(GOOD, "")).length, 3);
+  assert.deepEqual(lint(rec(GOOD, "\n**Security paths:** yes, auth/\n**One-way door:** no\nTouches real: n/a, no production environment\n")), []);
   assert.match(lint(rec(GOOD, TRIAGE.replace("Security paths: no", "Security paths: maybe")))[0], /Security paths: answer must start with yes or no/);
   assert.deepEqual(lint(rec(GOOD, TRIAGE.replace("environment: no", "environment: n/a"))), [], "n/a is fine for the last line");
+});
+
+test("triage lines come after the table, at the start of a line, with the exact label; skipped is not an answer", () => {
+  const miss = ["Security paths", "One-way door", "Touches real"].map((n) => `triage line ${n} missing (after the table, at the start of a line, as "${n}:")`);
+  assert.deepEqual(lint(TRIAGE.trimStart() + "\n" + HEAD + GOOD + "\n"), miss, "above the table");
+  assert.deepEqual(lint(rec(GOOD, "\nsee Security paths: no\nOne-way door? no\nTouches the profile: no\n")), miss, "mid-line or another label");
+  assert.match(lint(rec(GOOD, TRIAGE.replace("environment: no", "environment: skipped")))[0], /Touches real: answer must start with yes, no or n\/a/);
+  assert.deepEqual(lint(rec(GOOD, "\nSecurity paths: yes, auth/\n* One-way door: no\nTouches `real`: n/a\n")), []);
+  assert.deepEqual(lint(rec(GOOD, "\nSecurity paths: yes\nOne-way door: no\nTouches real: no\n")), []);
 });
 
 test("cli: exit 2 with gap lines, 0 when clean, 64 on bad usage", () => {
