@@ -31,10 +31,11 @@ const eq = (got, want, s) => { if (!hostilePhase) assert.deepEqual(got, want(), 
 const ASSIGN = /^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/;
 diff("isAssign", ["a", "_", "1", "[", "]", "+", "=", "x", "\n", " ", "-", "$", "\r"], (s) => eq(isAssign(s), () => ASSIGN.test(s), s));
 
-const NODE = /^(-e|--eval(=.*)?|-p|--print(=.*)?)$/;
+// The `s` flag: the former pattern let `.` stop at a line break, which skipped the check for an argument holding one (#4).
+const NODE = /^(-e|--eval(=.*)?|-p|--print(=.*)?)$/s;
 diff("SCRIPTERS.node", ["-", "e", "p", "v", "a", "l", "=", "x", "\n", "print", "eval", "--", "\r", "\u2028", "\u2029", "E"], (s) => eq(SCRIPTERS.node.test(s), () => NODE.test(s), s));
 
-const ENV_S = /^(-[a-zA-Z]*S.*|--split-string(=.*)?)$/;
+const ENV_S = /^(-[a-zA-Z]*S.*|--split-string(=.*)?)$/s; // `s` flag: see above
 diff("isEnvSplit", ["-", "S", "s", "i", "u", "=", "x", "\n", "--split-string", "split", "\r", "\u2028", " ", "0"], (s) => eq(isEnvSplit(s), () => ENV_S.test(s), s));
 
 const MKTEMP = /^([A-Za-z_]\w*)=("?)\$\(\s*mktemp((\s+(-d|-q|--directory|--quiet|-[dq]*t\s+[\w.-]+))*)\s*\)\2$/;

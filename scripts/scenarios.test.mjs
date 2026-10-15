@@ -74,5 +74,9 @@ test("a scenario run leaves no temp directory behind", () => {
 test("the denylist catches a denied word and a /home/ path, and passes clean text", () => {
   assert.notEqual(denied(`a ${"k3"}${"s"} node`), null);
   assert.notEqual(denied("cd /home/x"), null);
+  // Substring detection, case-insensitive; the word "lab" is matched whole only, so "label" stays clean.
+  for (const w of ["mari" + "usg", "k3" + "sapps", "port" + "folios", "MARI" + "US", "Scroll" + "out/x"]) assert.notEqual(denied(`x ${w} y`), null, w);
+  assert.notEqual(denied("the la" + "b host"), null);
+  assert.equal(denied("labels and a label table"), null);
   assert.equal(denied("a clean sentence about a triage"), null);
 });

@@ -457,3 +457,11 @@ test("round 3: a worker's git -C \"$X\" commit during a merge is checked against
   assert.equal(run(bash("git -C \"$X\" commit -F /r/main/msg-ok.txt", w), merging), null);
   assert.equal(run(bash("git -C \"$X\" commit -m 'Merge topic'", w)), null, "no merge in progress in the session's repo");
 });
+
+// Scrollout/orbit#4: a line break inside the argument must not skip the scripter and env-split checks.
+test("a newline inside the argument of node --eval= or env -S is still a scripter and an env split", () => {
+  deniedOp("node $'--eval=1\\n'");
+  deniedOp("node $'--print=1\\n'");
+  deniedOp("env $'-Ssh -c \"touch f\"\\n'");
+  deniedOp("env $'--split-string=touch f\\n'");
+});
