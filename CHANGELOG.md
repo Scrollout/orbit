@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.16.1
+- Lint fixes in the 0.16.0 code (no behaviour change) (rules 1.8.3, scenario pin and manifest bumped): the `git push` ref check in `hooks/capture.mjs` is two linear regexes, the triage-line labels in `scripts/decision-lint.mjs` are literal regexes, an unused import is gone from `scripts/capture.test.mjs`.
+
 ## 0.16.0
 - Ledger auto-capture (rules 1.8.2): the PostToolUse hook `hooks/capture.mjs` appends `push` for a successful `git push` (ref, sha, chained, `by: agent`) to the main checkout's ledger, following `git -C` and `cd`, reading the command like a shell (quotes and heredocs record nothing), skipping tag pushes and failed responses. Fail-open and silent without a profile; no command line or remote is recorded. `agent_start` is not captured (wrong checkout, recorded after the call): it stays hand-appended.
 - Condition ledger: `condition` events (`topic`, `id`, `step`, `test`, `status` open or proved), validated by the audit, and `scripts/condition-check.mjs`, which fails a topic with a condition still open or proved by a test that no later `coder_report` lists and no later `proof_check` shows failing, and `--topic` with no condition.
