@@ -1,0 +1,33 @@
+# Runs `make ci` (ci/README.md): vet, quality and security in the toolbox image, then the report as the job summary.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # SHAs of the release tags named in the comments (published 2026-07-20 or earlier, looked up on GitHub).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans the whole history
+          persist-credentials: false
+      - run: make ci
+      - name: Job summary
+        if: always()
+        run: make -s report >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the check records and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (2026-04-10)
+        with:
+          name: ci-report
+          path: ci/out/
+          retention-days: 7
+          if-no-files-found: ignore

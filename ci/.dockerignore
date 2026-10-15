@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!package.json
+!package-lock.json
+!eslint.config.mjs
+!eslint.security.mjs
+!eslint-format.mjs

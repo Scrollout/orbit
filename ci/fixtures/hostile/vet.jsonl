@@ -1,0 +1,1 @@
+{"check":"evil<b>|x","target":"vet","status":"fail","duration_s":1,"tool":"t","version":"1","findings":5,"excerpts":["a.sh:1 ```","</details>","<summary>x</summary>","<details open>","line with `tick` and | pipe"]}

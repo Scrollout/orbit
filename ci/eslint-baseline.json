@@ -1,0 +1,105 @@
+{
+  "quality": [
+    {
+      "file": "scripts/manifest.test.mjs",
+      "reason": "unused import cpSync (line 4) and regexes with runs of spaces (lines 70, 105); reported to the owner, not fixed in the CI-only change",
+      "counts": {
+        "no-unused-vars": 1,
+        "no-regex-spaces": 2
+      }
+    },
+    {
+      "file": "scripts/proof-check.mjs",
+      "counts": {
+        "no-useless-escape": 1
+      },
+      "reason": "unnecessary escape at line 85, new in 0.15.0; reported, not fixed in the CI-only change"
+    }
+  ],
+  "security": [
+    {
+      "file": "hooks/guard.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 4
+      }
+    },
+    {
+      "file": "scripts/audit-ledger.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 1
+      }
+    },
+    {
+      "file": "scripts/okf-lib.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 3
+      }
+    },
+    {
+      "file": "scripts/pointers.test.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 1
+      }
+    },
+    {
+      "file": "scripts/release-check.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 4
+      }
+    },
+    {
+      "file": "scripts/scenarios.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 1
+      }
+    },
+    {
+      "file": "scripts/tracks.test.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-unsafe-regex": 1
+      }
+    },
+    {
+      "file": "scripts/audit.test.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-non-literal-regexp": 2
+      }
+    },
+    {
+      "file": "scripts/intent-plan.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-non-literal-regexp": 1
+      }
+    },
+    {
+      "file": "scripts/profile.test.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-non-literal-regexp": 1
+      }
+    },
+    {
+      "file": "scripts/release-check.test.mjs",
+      "reason": "possible ReDoS / non-literal RegExp, triage tracked in Scrollout/orbit#3",
+      "counts": {
+        "security/detect-non-literal-regexp": 1
+      }
+    },
+    {
+      "file": "scripts/proof-check.mjs",
+      "counts": {
+        "security/detect-unsafe-regex": 1
+      },
+      "reason": "possible ReDoS at line 26, new in 0.15.0; triage with Scrollout/orbit#3"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "orbit-ci-tools",
+  "private": true,
+  "description": "Lint tools of the CI toolbox image only; not part of the plugin, which has no dependencies.",
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "eslint-plugin-security": "4.0.1"
+  },
+  "overrides": {
+    "acorn": "8.18.0"
+  }
+}
