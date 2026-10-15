@@ -25,6 +25,8 @@ export const FIELDS = {
   release_tool: { required: false, enum: ["none", "release-please", "changesets", "semantic-release", "goreleaser", "other"] },
   changelog: { required: false },
   version_files: { required: false, list: true },
+  // DEC-21: `yes` asks the coder to commit the failing test before the fix; unset means no.
+  test_first_commit: { required: false, enum: ["no", "yes"] },
 };
 export const RELEASE_FIELDS = ["release_when", "release_via", "release_tool", "changelog", "version_files"];
 

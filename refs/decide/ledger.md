@@ -15,5 +15,9 @@ One JSON object per line; `ts`, `session` and `rule_version` are stamped by `scr
 | `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
 | `tag_push` | `tag` (`vX.Y.Z`), `ref` (`refs/tags/vX.Y.Z`, the full ref it was pushed by), `sha` (the merge commit), `by` (`agent` or `owner`; `ci` when a `release_tool` tags), `annotated`, `chained`, `signed` |
 | `release` | `tag`, `url`, `via` (`session` default, or `ci`), `verify_tag`, `latest`, `prerelease` |
+| `coder_report` | `branch`, `evidence` (`ok` or `gap`, the exit of `proof-check.mjs --coder`), `sha` |
+| `proof_check` | `branch`, `sha` (the reviewed head), `test`, `result` (`fails`, `passes`, `not-checked`) |
+
+`coder_report`: after every coder run, before its review (DEC-21). `proof_check`: one per `PROOF CHECK` line of a reviewer or re-reviewer (DEC-22). Both are audited on events stamped with rules 1.7.0 or later.
 
 Replay: `node "${CLAUDE_PLUGIN_ROOT}/scripts/audit-ledger.mjs"` (the profile's `ledger_path`; it prints violations by rule id, `warn:` lines are not fatal).

@@ -25,7 +25,8 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 
 ## Build and test entry points
 - Full run: <command>
-- Targeted single-package run: <command, with the variables it takes>
+- Targeted single-package run: <command, with the variables it takes>. It is the targeted-test command: the coder shows each proof test failing, then passing with it; reviewers run one proof test with it (DEC-21, DEC-22).
+- Failing test committed before the fix (`test_first_commit`): <no (default) / yes>.
 - Formatters/linters/docs check per touched area: <commands>
 - Generated files and copies reviewers skip (review their sources): <paths>
 
@@ -85,7 +86,7 @@ Machine fields `release_when`, `release_via`, `release_tool`, `changelog`, `vers
 - Extra one-way doors beyond data, migrations, API contract, security boundary, money/destructive operations: <...>
 
 ## Machine profile
-Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs anchored at the repo root: `*` within a directory, `**` across directories, `**/Makefile` for a file at any depth, a trailing `/` or a plain directory name covers everything below it; no leading slash, no braces; matched against `git diff --name-only <base>...<branch>`, renames count both paths); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name; `TODO` is allowed but then `decide-triage.mjs` needs `prod=` on every run), optional `standing_waivers` (classes of change the owner waived review for, e.g. `docs-only`; `merge_built.waived` must cite one), optional `ledger_path` (default `.agents/ledger.jsonl`; keep it untracked, e.g. in `.git/info/exclude`).
+Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs anchored at the repo root: `*` within a directory, `**` across directories, `**/Makefile` for a file at any depth, a trailing `/` or a plain directory name covers everything below it; no leading slash, no braces; matched against `git diff --name-only <base>...<branch>`, renames count both paths); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name; `TODO` is allowed but then `decide-triage.mjs` needs `prod=` on every run), optional `standing_waivers` (classes of change the owner waived review for, e.g. `docs-only`; `merge_built.waived` must cite one), optional `ledger_path` (default `.agents/ledger.jsonl`; keep it untracked, e.g. in `.git/info/exclude`), optional `test_first_commit` (`no` default, or `yes`: the coder commits the failing test alone before the fix, DEC-21).
 ```yaml orbit-profile
 base_branch: TODO
 security_paths: [TODO]
@@ -102,6 +103,7 @@ release_via: TODO
 release_tool: none
 changelog: CHANGELOG.md
 version_files: []
+test_first_commit: no
 ```
 
 ## Non-negotiable rules

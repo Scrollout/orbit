@@ -1,0 +1,3 @@
+{
+  "description": "a proof test passed with the production change reverted and no later proof check of it fails, yet the branch was merged"
+}

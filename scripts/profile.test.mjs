@@ -175,3 +175,12 @@ test("release fields are optional; a bad or TODO value is a gap for profile.mjs 
     assert.equal(t.status, 0, `${line}: ${t.stdout}`);
   }
 });
+
+test("test_first_commit is optional: unset, no or yes pass; another value is a gap for profile.mjs but not for triage", () => {
+  assert.equal(run(rootWith(block(full))).status, 0);
+  for (const v of ["no", "yes"]) assert.equal(run(rootWith(block(`${full}\ntest_first_commit: ${v}`))).status, 0, v);
+  const root = rootWith(block(`${full}\ntest_first_commit: maybe`));
+  assert.equal(run(root).stdout.trim(), "profile gap: test_first_commit");
+  const t = spawnSync("node", [join(here, "decide-triage.mjs"), "--root", root, "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
+  assert.equal(t.status, 0, t.stdout);
+});

@@ -11,6 +11,9 @@
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
+//   coder_report{branch,evidence,sha?}         evidence: ok or gap, the exit of scripts/proof-check.mjs --coder on the coder's report (DEC-21)
+//   proof_check{branch,sha,test,result}        result: fails, passes or not-checked, from the reviewer's PROOF CHECK lines (DEC-22)
+// DEC-21 and DEC-22 apply to events stamped with rules 1.7.0 or later (older ledgers predate them).
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -31,12 +34,14 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence"], proof_check: ["branch", "sha", "test", "result"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
+// DEC-21, DEC-22: only for events stamped with rules 1.7.0 or later
+const tddRules = (e) => { const m = /^(\d+)\.(\d+)\./.exec(String(e.rule_version?.rules ?? "")); return !!m && (Number(m[1]) > 1 || (Number(m[1]) === 1 && Number(m[2]) >= 7)); };
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
 const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
@@ -76,7 +81,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   if (e.kind === "agent_start" && "worker" in e && (typeof e.worker !== "string" || e.worker === "")) { v("LEDGER", n, "agent_start worker must be a non-empty string"); continue; }
   if (missing.length) continue;
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
-  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false });
+  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false, evidence: null, proofs: dict(), proofShas: new Set() });
 
   switch (e.kind) {
     case "triage": {
@@ -99,6 +104,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         if (e.worker !== undefined) workerModel[e.worker] ??= e.model;
         if (e.reason === "ci-failed-twice" && e.model !== "opus") v("DEC-04", n, `coder re-run after CI failed twice on ${e.topic} needs opus, got ${e.model}`);
         lastCoder[e.topic] = e.model;
+        bs(e.topic).evidence = null;   // DEC-21: each coder run needs its own report evidence
         if (e.phase === "fix") { bs(e.topic).fixSince = true; bs(e.topic).reReviews = 0; }
         if (tr && [tr.sec, tr.door, tr.prod].includes("yes") && e.model !== "opus" && !(e.phase === "fix" && e.fix_scope === "tests-docs"))
           v("DEC-04", n, `coder on ${e.model} for ${e.topic} with a triage line yes (needs opus)`);
@@ -131,6 +137,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (red || e.ci_state === "red") v("DEC-16", n, `review of ${e.branch}@${short(e.sha)} started on a red CI run`);
       if (!triage[e.branch]) warns.push(`warn: line ${n}: review_start branch ${e.branch} has no triage topic (topic must equal the branch name)`);
       const b = bs(e.branch), role = e.role ?? "reviewer";
+      if (tddRules(e) && b.evidence !== "ok") v("DEC-21", n, `review of ${e.branch}@${short(e.sha)} started with no coder_report evidence ok since the last coder run (scripts/proof-check.mjs --coder)`);
       b.reviewed_any = true;
       if (role === "re-reviewer") {
         if (!b.fixSince) v("DEC-14", n, `re-reviewer on ${e.branch} with no fix round since the last review`);
@@ -151,6 +158,11 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         if (e.waived === undefined || e.waived === false) v("DEC-20", n, `merge of ${e.branch} with no review_start on it and no waiver`);
         else if (e.waived === "owner") { if (!e.waiver_reason) v("DEC-20", n, `merge of ${e.branch}: owner waiver needs a waiver_reason`); }
         else if (!standing.includes(e.waived)) v("DEC-20", n, `merge of ${e.branch}: waived must cite a standing waiver of the profile (${standing.join(", ") || "none defined"}) or be "owner", got ${JSON.stringify(e.waived)}`);
+      }
+      if (tddRules(e) && bs(e.branch).reviewed_any) {
+        const b = bs(e.branch);
+        if (!b.proofShas.has(b.lastSha)) v("DEC-22", n, `merge of ${e.branch}: no proof_check recorded for the reviewed head ${short(b.lastSha)}`);
+        for (const [t, r] of Object.entries(b.proofs)) if (r === "passes") v("DEC-22", n, `merge of ${e.branch}: proof does not prove, ${t} passes without the change and no later proof_check fails`);
       }
       if ("release_skip" in e && (typeof e.release_skip !== "string" || !e.release_skip)) v("OPR-09", n, `merge ${short(e.merge_sha)}: release_skip must give the reason as a string`);
       merges[e.merge_sha] = e;
@@ -207,6 +219,19 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (releasedTags.has(e.tag)) r("created twice (never delete or re-create a published release)");
       releasedTags.add(e.tag);
       if (tagSha[e.tag]) releasedShas.add(tagSha[e.tag]);
+      break;
+    }
+    case "coder_report": {
+      if (!["ok", "gap"].includes(e.evidence)) { v("LEDGER", n, `coder_report evidence must be ok or gap, got ${JSON.stringify(e.evidence)}`); break; }
+      bs(e.branch).evidence = e.evidence;
+      break;
+    }
+    case "proof_check": {
+      if (!["fails", "passes", "not-checked"].includes(e.result)) { v("LEDGER", n, `proof_check result must be fails, passes or not-checked, got ${JSON.stringify(e.result)}`); break; }
+      const b = bs(e.branch);
+      b.proofs[e.test] = e.result;
+      b.proofShas.add(e.sha);
+      if (e.result === "not-checked") warns.push(`warn: line ${n}: proof check of ${e.test} on ${e.branch} not checked (no targeted-test command in the profile?)`);
       break;
     }
   }

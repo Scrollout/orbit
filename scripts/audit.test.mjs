@@ -396,3 +396,38 @@ test("OPR-09: release_when unset or TODO warns once there is a base push", () =>
   assert.match(runP("release_when: TODO", clean()).stdout, /^warn: release_when is "TODO"/m);
   assert.doesNotMatch(runP(CS, clean().slice(0, 7)).stdout, /warn: release_when/);
 });
+
+// DEC-21, DEC-22: TDD evidence, audited on events stamped with rules 1.7.0 or later
+const RV7 = { decide: "1.4.0", operator: "1.5.0", rules: "1.7.0" };
+const tdd = (fn = () => {}) => {
+  const e = clean().map((x) => ({ ...x, rule_version: RV7 }));
+  e.splice(5, 0, { ...ev("coder_report", { branch: "t", sha: SHA, evidence: "ok" }), rule_version: RV7 });
+  e.splice(7, 0, { ...ev("proof_check", { branch: "t", sha: SHA, test: "TestA", result: "fails" }), rule_version: RV7 });
+  fn(e);
+  return e;
+};
+
+test("DEC-21/22: evidence ok before the review and a failing proof check pass; older rule versions are not checked", () => {
+  const r = run(tdd());
+  assert.equal(r.status, 0, r.stdout);
+  const old = run(clean().map((x) => ({ ...x, rule_version: { decide: "1.3.3", operator: "1.4.1", rules: "1.6.1" } })));
+  assert.equal(old.status, 0, old.stdout);
+});
+
+test("DEC-21: a review with no coder_report, or evidence gap, or evidence from before the last coder run", () => {
+  assert.match(run(tdd((e) => e.splice(5, 1))).stdout, /^DEC-21 line \d+: review of t@/m);
+  assert.match(run(tdd((e) => { e[5].evidence = "gap"; })).stdout, /^DEC-21 /m);
+  assert.match(run(tdd((e) => e.splice(5, 0, e.splice(3, 1)[0]))).stdout, /^DEC-21 /m, "coder started again after the report");
+  assert.match(run(tdd((e) => { e[5].evidence = "yes"; })).stdout, /^LEDGER line 6: coder_report evidence must be ok or gap/m);
+});
+
+test("DEC-22: a passing proof check blocks the merge until a later check fails; no proof check on the reviewed head; not-checked warns", () => {
+  assert.match(run(tdd((e) => { e[7].result = "passes"; })).stdout, /^DEC-22 line \d+: merge of t: proof does not prove, TestA passes/m);
+  const later = run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, { ...e[7], result: "fails" }); }));
+  assert.equal(later.status, 0, later.stdout);
+  assert.match(run(tdd((e) => e.splice(7, 1))).stdout, /^DEC-22 line \d+: merge of t: no proof_check recorded for the reviewed head/m);
+  const nc = run(tdd((e) => { e[7].result = "not-checked"; }));
+  assert.equal(nc.status, 0, nc.stdout);
+  assert.match(nc.stdout, /^warn: line 8: proof check of TestA on t not checked/m);
+  assert.match(run(tdd((e) => { e[7].result = "green"; })).stdout, /^LEDGER line 8: proof_check result must be/m);
+});

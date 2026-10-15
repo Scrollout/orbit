@@ -1,0 +1,9 @@
+{
+  "description": "coder report shows the proof test passing only, never failing without the change: a proof gap",
+  "report": {
+    "role": "coder",
+    "tests": [
+      "TestCartTotal"
+    ]
+  }
+}

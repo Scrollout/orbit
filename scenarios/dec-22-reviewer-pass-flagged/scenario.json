@@ -1,0 +1,9 @@
+{
+  "description": "reviewer's proof check finds the proof test passes without the change and reports it as a CONFIRMED finding: passes",
+  "report": {
+    "role": "reviewer",
+    "tests": [
+      "TestCartTotal"
+    ]
+  }
+}

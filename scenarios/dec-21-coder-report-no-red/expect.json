@@ -1,0 +1,7 @@
+{
+  "report_exit": 2,
+  "report_gaps": [
+    "TestCartTotal: no RED excerpt (the test failing without the change)",
+    "TestCartEmpty: CANNOT FAIL FIRST needs a reason"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "description": "reviewer's proof check finds the proof test passes with the production change reverted but raises no CONFIRMED finding: a proof gap",
+  "report": {
+    "role": "reviewer",
+    "tests": [
+      "TestCartTotal"
+    ]
+  }
+}

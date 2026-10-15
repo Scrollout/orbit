@@ -1,5 +1,5 @@
 {
-  "version": "1.6.1",
+  "version": "1.7.0",
   "rules": [
     {
       "id": "DEC-01",
@@ -121,6 +121,18 @@
       "file": "commands/decide.md",
       "tag": "script",
       "text": "build a merge only for a branch with a review on record (`review_start`), unless the review was waived: `merge_built` then cites a `standing_waivers` class of the profile, or `owner` with a `waiver_reason`."
+    },
+    {
+      "id": "DEC-21",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "the coder's report shows each proof and fix-round test red, then green (`RED <test>:` lines of it failing without the change, `GREEN <test>:` lines of it passing with it) or says `CANNOT FAIL FIRST <test>: <reason>`; `scripts/proof-check.mjs --coder` passes on it before any review."
+    },
+    {
+      "id": "DEC-22",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "reviewers run each proof and fix-round test alone, with the profile's targeted-test command, on only the production part of the diff reverted in a scratch worktree, and write `PROOF CHECK <test>: fails|passes|not checked` (no such command: not checked); a pass is a CONFIRMED finding (proof does not prove) and blocks the merge until a later check fails."
     },
     {
       "id": "OPR-01",
