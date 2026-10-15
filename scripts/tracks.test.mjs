@@ -11,7 +11,7 @@ test("rules/tracks.json equals the Track table in refs/decide/team-tracks.md", (
   const text = readFileSync(join(repo, "refs/decide/team-tracks.md"), "utf8");
   const rows = text.split("\n").filter((l) => /^\| (Just do it|Light review|Full review|Incident) /.test(l));
   assert.equal(rows.length, 4);
-  const range = (c) => { if (c.trim() === "-") return [0, 0]; const m = c.match(/^(\d+)(?:-(\d+))?/); return [Number(m[1]), Number(m[2] ?? m[1])]; };
+  const range = (c) => { if (c.trim() === "-") return [0, 0]; const lo = /^\d+/.exec(c)[0], hi = /^-(\d+)/.exec(c.slice(lo.length))?.[1]; return [Number(lo), Number(hi ?? lo)]; };
   for (const row of rows) {
     const c = row.split("|").slice(1, -1).map((x) => x.trim());
     const name = c[0].toLowerCase();

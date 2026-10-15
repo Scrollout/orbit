@@ -11,7 +11,7 @@ const file = event.tool_input?.file_path;
 if (!file) process.exit(0);
 const root = resolve(event.cwd ?? process.cwd());
 let bundle = "docs/okf";
-try { bundle = JSON.parse(readFileSync(join(root, ".agents/okf.json"), "utf8")).bundle ?? bundle; } catch {}
+try { bundle = JSON.parse(readFileSync(join(root, ".agents/okf.json"), "utf8")).bundle ?? bundle; } catch { /* no or unreadable .agents/okf.json: keep the default bundle; the hook must never block */ }
 const bundleDir = resolve(root, bundle);
 const rel = relative(bundleDir, resolve(root, file));
 if (!existsSync(bundleDir) || rel.startsWith("..") || !rel.endsWith(".md")) process.exit(0);

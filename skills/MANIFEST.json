@@ -53,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.7.2",
-      "hash": "9f0dd4e51d2ede9ace8a59412cab0d8357338d4f1ffa3b883e6330c4964b8bbf",
+      "version": "1.7.3",
+      "hash": "c692f2ce34fd257f956c54dfaf5adde356b9fa22b0edbb0eeee2a81c9b7fe12e",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -73,6 +73,7 @@
         "scripts/proof-revert.mjs",
         "scripts/release-check.mjs",
         "scripts/run-tests.mjs",
+        "scripts/rx.mjs",
         "scripts/scenarios.mjs",
         "scripts/tdd-suggest.mjs",
         "scripts/validate-okf.mjs",

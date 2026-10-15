@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,7 +67,7 @@ test("a skill missing from the manifest, or without a version, fails", () => {
 
 test("print lists a hash per entry", () => {
   const r = run(tree(), "--print");
-  assert.match(r.stdout, /^[0-9a-f]{64}  1\.0\.0  commands\/cmd\.md$/m);
+  assert.match(r.stdout, /^[0-9a-f]{64} {2}1\.0\.0 {2}commands\/cmd\.md$/m);
 });
 
 function treeWithShared() {
@@ -102,7 +102,7 @@ test("a CRLF frontmatter still yields its version", () => {
   const root = tree();
   writeFileSync(join(root, "commands/cmd.md"), "---\r\nname: x\r\nversion: 1.0.0\r\n---\r\ncore\r\n");
   const r = run(root, "--print");
-  assert.match(r.stdout, /  1\.0\.0  commands\/cmd\.md$/m);
+  assert.match(r.stdout, / {2}1\.0\.0 {2}commands\/cmd\.md$/m);
 });
 
 test("--check on a nonexistent or empty root fails; --root without a value is a usage error", () => {

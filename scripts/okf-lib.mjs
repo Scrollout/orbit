@@ -4,6 +4,8 @@
 // quoting, footnotes against sources, a TL;DR line and the size cap. Links and indexes need the bundle on disk and
 // stay in validate-okf.mjs.
 
+import { DATETIME, keyLine, plainValue } from "./rx.mjs";
+
 // Top-level keys of a YAML frontmatter block; values are only needed as strings here.
 export function frontmatter(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---\n/);
@@ -18,7 +20,7 @@ export function frontmatter(text) {
 
 // Every timestamp key (generated.at, verified.at, stale_after, sources[].last_modified) is an ISO 8601 datetime
 // with an explicit UTC offset; usage_window's from and to are checked in checkTrust.
-export const DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+export { DATETIME };
 function checkTimestamps(r, block) {
   for (const m of block.matchAll(/(?:^|[\s{,])(at|stale_after|last_modified):\s*["']?([^,}"'\s]+)/gm)) {
     if (!DATETIME.test(m[2])) r.fail(`${m[1]} '${m[2]}' is not an ISO 8601 datetime with a UTC offset`);
@@ -28,8 +30,8 @@ function checkTimestamps(r, block) {
 // A plain (unquoted) YAML value may not hold ': ' or ' #': YAML reads them as a nested key or a comment. Quote such values.
 function checkPlainScalars(r, block) {
   for (const line of block.split("\n")) {
-    const kv = line.match(/^\s*(?:-\s+)?[A-Za-z_][\w-]*:\s+(.+)$/);
-    if (kv && !/^["'[{|>&*!]/.test(kv[1]) && /: | #/.test(kv[1])) r.fail(`quote the value of '${line.trim()}' (': ' or ' #' in a plain YAML value)`);
+    const value = plainValue(line);
+    if (value !== null && !/^["'[{|>&*!]/.test(value) && /: | #/.test(value)) r.fail(`quote the value of '${line.trim()}' (': ' or ' #' in a plain YAML value)`);
   }
 }
 
@@ -102,7 +104,6 @@ export function parseYaml(block) {
     if (text.trim()) L.push({ ind: text.length - text.trimStart().length, text: text.trimStart(), r });
   }
   const isItem = (l) => /^-(\s|$)/.test(l.text);
-  const keyLine = (t) => t.match(/^("[^"]*"|'[^']*'|[^\s"'#][^:]*?)\s*:(?:\s+(.*))?$/);
   let i = 0;
   // A block scalar after `key: |` or `key: >` takes every following raw line indented deeper than `ind`.
   const blockScalar = (ind, style) => {

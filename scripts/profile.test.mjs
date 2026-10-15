@@ -170,7 +170,7 @@ test("release fields are optional; a bad or TODO value is a gap for profile.mjs 
     const root = rootWith(block(`${full}\n${line}`));
     const r = run(root);
     assert.equal(r.status, 1, line);
-    assert.match(r.stdout, new RegExp(`^profile gap: ${field}$`, "m"), line);
+    assert.ok(r.stdout.split("\n").includes(`profile gap: ${field}`), line);
     const t = spawnSync("node", [join(here, "decide-triage.mjs"), "--root", root, "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
     assert.equal(t.status, 0, `${line}: ${t.stdout}`);
   }

@@ -18,12 +18,24 @@ const walk = (d) => readdirSync(d).flatMap((f) => { const p = join(d, f); return
 const docs = () => [...cores.map(([f, s]) => [f, s]), ...["refs", "skills/operator/refs"].flatMap((d) => walk(join(repo, d)).map((p) => [p.slice(repo.length + 1), null]))];
 const sub = (text, skillDir) => text.replaceAll("${CLAUDE_PLUGIN_ROOT}", repo).replaceAll("${CLAUDE_SKILL_DIR}", skillDir ? join(repo, skillDir) : "/nonexistent-skill-dir");
 
+// A `refs/<name>.md` or `refs/<dir>/<name>.md` mention that is "bare": the char before it (or before an
+// optional `skills/<name>/` prefix) must not be `/`, a word char or `}`, unless it starts a line.
+function hasBareRefs(raw) {
+  const ok = (before) => before === "" || before.endsWith("\n") || !/[/\w}]$/.test(before);
+  for (const m of raw.matchAll(/refs\/(?:[\w-]+\.md|[\w-]+\/[\w-]+\.md)/g)) {
+    const before = raw.slice(0, m.index);
+    const prefix = /skills\/\w+\/$/.exec(before);
+    if (ok(before) || (prefix && ok(before.slice(0, prefix.index)))) return true;
+  }
+  return false;
+}
+
 test("every ${CLAUDE_PLUGIN_ROOT} / ${CLAUDE_SKILL_DIR} pointer resolves, no bare refs/ pointers, no <orbit>", () => {
   let n = 0;
   for (const [f, skillDir] of docs()) {
     const raw = readFileSync(join(repo, f), "utf8");
     assert.doesNotMatch(raw, /<orbit>/, `${f} has <orbit>`);
-    assert.doesNotMatch(raw, /(^|[^/\w}])(skills\/\w+\/)?refs\/[\w-]+(\/[\w-]+)?\.md/m, `${f} has a bare refs pointer`);
+    assert.equal(hasBareRefs(raw), false, `${f} has a bare refs pointer`);
     for (const m of raw.matchAll(/\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}\/([\w./-]+?)(?=[\s`"')]|$)/gm)) {
       const path = sub(m[0], skillDir);
       assert.ok(existsSync(path), `${f}: ${m[0]} -> ${path}`);

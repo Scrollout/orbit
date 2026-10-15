@@ -17,6 +17,7 @@ import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { gaps, globMatch, loadProfile } from "./profile.mjs";
 import { checkDoc } from "./okf-lib.mjs";
+import { sectionBodies } from "./rx.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -36,7 +37,7 @@ const prodEnv = profile.production_env;
 const needProd = prodEnv !== undefined && !/^(none|todo)\b/i.test(String(prodEnv).trim());
 if (/^todo\b/i.test(String(prodEnv ?? "").trim())) console.log("warn: profile production_env is TODO: prod= lines are optional until it is set");
 let okfConfig = {};
-try { okfConfig = JSON.parse(readFileSync(join(root, ".agents/okf.json"), "utf8")); } catch {}
+try { okfConfig = JSON.parse(readFileSync(join(root, ".agents/okf.json"), "utf8")); } catch { /* no or unreadable .agents/okf.json: no OKF config */ }
 const maxChars = Number(flag("max-chars") ?? okfConfig.maxDocChars ?? 4000);
 
 const gapsOut = [];
@@ -45,12 +46,12 @@ const placeholder = (s) => !s.trim() || /<[^>]*>/.test(s);
 
 // A markdown table under `## <heading>`: rows of cells keyed by the lower-cased header.
 function table(text, heading) {
-  const all = [...text.matchAll(new RegExp(`^## ${heading}\\b[^\\n]*\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "gm"))];
+  const all = sectionBodies(text, heading);
   if (!all.length) return null;
   if (all.length > 1) gap(`a doc has ${all.length} '## ${heading}' sections: one per doc (split by track into separate docs)`);
-  const m = all[0];
+  const body = all[0];
   // Cells split on `|` but not on an escaped `\|` (GFM), which stays a literal pipe in the cell.
-  const rows = m[1].split("\n").filter((l) => /^\s*\|/.test(l))
+  const rows = body.split("\n").filter((l) => /^\s*\|/.test(l))
     .map((l) => l.trim().replace(/^\||(?<!\\)\|$/g, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|")));
   if (rows.length < 2) return [];
   const head = rows[0].map((h) => h.toLowerCase());

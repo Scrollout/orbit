@@ -21,14 +21,14 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { loadProfile } from "./profile.mjs";
 import { codeFiles } from "./paths.mjs";
+import { proofLine } from "./rx.mjs";
 
 const LABELS = ["RED", "GREEN", "CANNOT FAIL FIRST", "TEST FIRST", "PROOF CHECK"];
-const LINE = /^\s*(?:[-*]\s+)?(RED|GREEN|CANNOT FAIL FIRST|TEST FIRST|PROOF CHECK) (.+?) --(?: (.*))?$/;
 
 export function parse(text) {
   const out = new Map();
   for (const raw of text.split(/\r?\n/)) {
-    const m = raw.match(LINE);
+    const m = proofLine(raw);
     if (!m) continue;
     const name = m[2].trim();
     if (!out.has(name)) out.set(name, Object.fromEntries(LABELS.map((l) => [l, []])));
@@ -82,7 +82,7 @@ export function checkCoder(text, { tests = [], testFirst = false } = {}) {
 export function namesExactly(line, name) {
   for (let i = line.indexOf(name); i >= 0; i = line.indexOf(name, i + 1)) {
     const before = i === 0 ? "" : line[i - 1], after = line.slice(i + name.length);
-    const okBefore = before === "" || !/[\w/\[:.-]/.test(before);
+    const okBefore = before === "" || !/[\w/[:.-]/.test(before);
     const okAfter = after === "" || /^[\s`'"(),;]/.test(after) || /^[.:](\s|$)/.test(after);
     if (okBefore && okAfter) return true;
   }

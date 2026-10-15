@@ -130,7 +130,7 @@ test("--repo: a guarded repository has no gap", () => {
 test("--repo: every missing guard rail is a gap with a fix", () => {
   const r = repoCheck(repoRoot(false, null), { "repo view": good["repo view"], [`api ${S}`]: good[`api ${S}`], [`api ${S}/immutable-releases`]: { status: 200, json: { enabled: false } }, [`api ${S}/rulesets?includes_parents=true`]: { status: 200, json: [] } });
   assert.equal(r.status, 1);
-  for (const g of ["base main has no required status checks", "base main allows force pushes", "base main can be deleted", "no active tag ruleset", "immutable releases are off", "no CI workflow", "tags are not signed"]) assert.match(r.stdout, new RegExp(`^gap: ${g}.*\\n  fix: `, "m"), g);
+  for (const g of ["base main has no required status checks", "base main allows force pushes", "base main can be deleted", "no active tag ruleset", "immutable releases are off", "no CI workflow", "tags are not signed"]) assert.ok(r.stdout.split("\n").some((l, i, a) => l.startsWith(`gap: ${g}`) && a[i + 1]?.startsWith("  fix: ")), g);
   assert.match(r.stdout, /fix: gh api -X PUT repos\/o\/r\/immutable-releases/);
 });
 
