@@ -363,7 +363,7 @@ test("realCtx reads review_trailer and base_pusher from the profile", async () =
     assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null });
     assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner"), { base: "main", pusher: "owner", trailer: "Reviewed-By" });
     assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: null, trailer: "Reviewed-By" });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By" });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

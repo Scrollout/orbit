@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.16.2
+- `base_pusher: operator` is accepted as a documented legacy alias of `agent` (rules 1.8.4, scenario pin and manifest bumped): the profile parser normalizes it to `agent` before any reader (triage, audit, guard, intent-plan, capture, release-check) sees it and warns `base_pusher: operator is a legacy alias of agent; write agent`; any other value stays a gap. Profiles that wrote `operator` no longer fail with `profile gap: base_pusher`.
+
 ## 0.16.1
 - Lint fixes in the 0.16.0 code (no behaviour change) (rules 1.8.3, scenario pin and manifest bumped): the `git push` ref check in `hooks/capture.mjs` is two linear regexes, the triage-line labels in `scripts/decision-lint.mjs` are literal regexes, an unused import is gone from `scripts/capture.test.mjs`.
 - CI runs on every branch push, so a branch is vetted before merge.

@@ -89,6 +89,8 @@ export function parseProfileText(text, warnings = []) {
     }
     else data[key] = unquote(v);
   }
+  // `operator` is a legacy alias of `agent` (the operator session is an agent): every reader sees `agent`
+  if (data.base_pusher === "operator") { data.base_pusher = "agent"; warnings.push("base_pusher: operator is a legacy alias of agent; write agent"); }
   return data;
 }
 
