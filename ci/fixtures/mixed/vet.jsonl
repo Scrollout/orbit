@@ -1,0 +1,2 @@
+{"check":"shellcheck","target":"vet","status":"pass","duration_s":1,"tool":"shellcheck","version":"0.11.0","findings":0,"excerpts":[]}
+{"check":"actionlint","target":"vet","status":"fail","duration_s":2,"tool":"actionlint","version":"1.7.12","findings":3,"excerpts":["a.yml:3:5: bad | pipe","a.yml:4:1: worse"]}
