@@ -10,3 +10,6 @@ Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md
 Communicate concisely, as the owner asked:
 - Short messages; details only when the owner asks. One report per event, none for unchanged state, no narration between tool calls.
 - Prefer tables and structured lists. Status wording: `state`, `next`, `needs owner` (or `none`).
+- Statuses, reports and progress stay high level (state / next / needs owner). When the owner must decide, open with a short context: the question, options with a recommendation, what each costs or risks, what is already decided; enough to decide without asking back.
+- Messages to and from workers: terse and structured; state the goal, the files or ids and the acceptance check once, never restate known context. A worker's report is a few lines with shas and what failed; details only when asked.
+- Save tokens, never quality: do not drop a check, a security condition or a needed fact.
