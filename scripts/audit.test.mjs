@@ -503,3 +503,12 @@ test("DEC-22: every test exempt on a topic whose triage files include production
   assert.match(r.stdout, /^warn: line 6: every test of t's coder_report is exempt but the step touches production code \(src\/a\.go\)/m);
   assert.doesNotMatch(run(tdd((x) => { x[0].files = ["docs/a.md"]; x[5].tests = []; x[5].exempt = ["docs"]; x.splice(7, 1); })).stdout, /every test/);
 });
+
+test("tdd: auto in the profile: a triage stamped 1.7.0 or later must record tdd true or false", () => {
+  const p = mkProfile("tdd: auto\ntargeted_test: make t");
+  const runA = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
+  assert.equal(runA(tdd()).status, 0);
+  const off = clean().map(at(RV7)); off[0].tdd = false;
+  assert.equal(runA(off).status, 0);
+  assert.match(runA(clean().map(at(RV7))).stdout, /^LEDGER line 1: triage of t has no tdd true or false, but the profile says tdd: auto/m);
+});

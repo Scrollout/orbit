@@ -97,6 +97,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if ("tdd" in e && typeof e.tdd !== "boolean") v("LEDGER", n, `triage tdd must be true or false, got ${JSON.stringify(e.tdd)}`);
       if (e.tdd === true) tddOn.add(e.topic);
       if (profile.tdd === "yes" && tddRules(e) && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd: true, but the profile says tdd: yes`);
+      if (profile.tdd === "auto" && tddRules(e) && typeof e.tdd !== "boolean" && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd true or false, but the profile says tdd: auto (record decide-triage's tdd line)`);
       if (!Array.isArray(e.files)) warns.push(`warn: line ${n}: triage without files: DEC-02 not checked for topic ${e.topic}`);
       const forced = Array.isArray(e.files) && e.files.some((f) => matchesAny(f, profile.security_paths));
       if (forced && e.sec !== "yes") v("DEC-02", n, `topic ${e.topic} touches a security path but triage says security ${e.sec}`);

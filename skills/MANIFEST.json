@@ -2,7 +2,7 @@
   "entries": {
     "commands/decide.md": {
       "version": "1.4.0",
-      "hash": "caf5ce44be6f99bf8be63ac7012f91d8ef5b197c0e36c8c56830e894733b3954",
+      "hash": "e752069f621cee990ec76b8bea30d3475389a0a59d0ff392fbc6a9c1fbe324cd",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -35,7 +35,7 @@
     },
     "skills/operator/SKILL.md": {
       "version": "1.5.0",
-      "hash": "a092dbc111c95990544208c6d1cecdbcbd26a21d5187b1b8811aaeffa95a5f3d",
+      "hash": "7f3c47e0fd4c02f1382a57c64b3e6d0a2cfd018885210d92a2fdaf47b00d33ee",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -47,14 +47,14 @@
     },
     "skills/peer/SKILL.md": {
       "version": "1.1.0",
-      "hash": "220fe3a27be49b3e132a2f2fde24100d25a63e49915aa18c88526f0d7f353660",
+      "hash": "60dba6916d6f7d6d3e43e482033a5305b8cf7740273fb6752f679022ee44698b",
       "files": [
         "skills/peer/SKILL.md"
       ]
     },
     "rules/rules.json": {
       "version": "1.7.0",
-      "hash": "e564fc1883012170fc4afa5500e02f4a102fc25a0777ad1be5b6046d8fa860a7",
+      "hash": "8dcde398db2cc932694aa2c9290048f41833e73c765e58321391a4847eb355a5",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -74,6 +74,7 @@
         "scripts/release-check.mjs",
         "scripts/run-tests.mjs",
         "scripts/scenarios.mjs",
+        "scripts/tdd-suggest.mjs",
         "scripts/validate-okf.mjs",
         "hooks/guard.mjs",
         "hooks/guard.sh",
@@ -246,6 +247,12 @@
         "scenarios/security-contest-rebuttal-ok/expect.json",
         "scenarios/security-contest-rebuttal-ok/ledger.jsonl",
         "scenarios/security-contest-rebuttal-ok/scenario.json",
+        "scenarios/tdd-auto-resolved-no-ok/expect.json",
+        "scenarios/tdd-auto-resolved-no-ok/ledger.jsonl",
+        "scenarios/tdd-auto-resolved-no-ok/scenario.json",
+        "scenarios/tdd-auto-triage-without-tdd/expect.json",
+        "scenarios/tdd-auto-triage-without-tdd/ledger.jsonl",
+        "scenarios/tdd-auto-triage-without-tdd/scenario.json",
         "scenarios/tdd-docs-only-no-proof-check/expect.json",
         "scenarios/tdd-docs-only-no-proof-check/ledger.jsonl",
         "scenarios/tdd-docs-only-no-proof-check/scenario.json",

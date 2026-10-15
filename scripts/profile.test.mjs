@@ -206,3 +206,14 @@ test("tdd is optional: unset, no or yes pass; another value is a gap; test_first
   assert.equal(noCmd.status, 1);
   assert.match(noCmd.stdout, /^profile gap: targeted_test$/m);
 });
+
+test("tdd: auto resolves per step in triage (tdd-suggest), and needs no targeted_test to be valid", () => {
+  assert.equal(run(rootWith(block(`${full}\ntdd: auto`))).status, 0);
+  const t = (body, ...a) => spawnSync("node", [join(here, "decide-triage.mjs"), "--root", rootWith(block(body)), "--lines", "sec=no,door=no,prod=no", "--kind", "small", ...a], { encoding: "utf8" });
+  const auto = `${full}\ntdd: auto\ntargeted_test: make t`;
+  const code = t(auto, "--files", "src/a.go,src/a_test.go", "--proof", "TestA");
+  assert.equal(code.status, 0, code.stdout);
+  assert.match(code.stdout, /^tdd: yes \(auto: touches production code and names a proof test\)$/m);
+  assert.match(t(auto, "--files", "docs/a.md").stdout, /^tdd: no \(auto: docs or config only\)$/m);
+  assert.match(t(`${full}\ntdd: auto`, "--files", "src/a.go", "--proof", "TestA").stdout, /^tdd: no \(auto: no targeted-test command in the profile\)$/m);
+});

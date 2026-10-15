@@ -1,6 +1,7 @@
 // Triage and track for /decide, computed instead of remembered. Zero dependencies.
 //   node <plugin>/scripts/decide-triage.mjs --root . (--base <ref> --branch <ref> | --files a,b)
-//     [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident] [--profile path]
+//     [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident] [--profile path] [--proof <test>]...
+// With the profile's tdd: auto, the tdd line is tdd-suggest.mjs's answer for this step (--proof names its proof tests).
 // A branch whose `git diff --name-only <base>...<branch>` (three dots) touches a profile security glob forces sec=yes.
 // Prints the track, the per-role call caps (rules/tracks.json), the coder model and tdd (DEC-21, DEC-22: record it on the triage event); a line left unset is a
 // `triage gap` (exit 2), never a guess: a forced security yes does not fill the door or prod lines, the one-way-door
@@ -11,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gaps, loadProfile, matchesAny, RELEASE_FIELDS } from "./profile.mjs";
+import { repoHasTests, suggestTdd } from "./tdd-suggest.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -69,4 +71,8 @@ console.log(`track: ${track}`);
 console.log(`caps: ${T.roles.map((r) => `${r} ${caps[r][0] === caps[r][1] ? caps[r][0] : caps[r].join("-")}`).join(", ")}`);
 console.log(`max calls: ${caps.max}`);
 console.log(`coder model: ${anyYes || kind === "incident" ? "opus" : "sonnet"}`);
-console.log(`tdd: ${profile.tdd === "yes" ? "yes" : "no"}`);
+if (profile.tdd === "auto") {
+  const proof = args.flatMap((a, i) => (a === "--proof" && i + 1 < args.length ? [args[i + 1]] : []));
+  const s = suggestTdd({ targetedTest: profile.targeted_test, files, sec: lines.sec, door: lines.door, proof, repoHasTests: repoHasTests(root) });
+  console.log(`tdd: ${s.tdd ? "yes" : "no"} (auto: ${s.reason})`);
+} else console.log(`tdd: ${profile.tdd === "yes" ? "yes" : "no"}`);
