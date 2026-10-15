@@ -1,5 +1,5 @@
 {
-  "version": "1.6.1",
+  "version": "1.7.0",
   "rules": [
     {
       "id": "DEC-01",
@@ -121,6 +121,18 @@
       "file": "commands/decide.md",
       "tag": "script",
       "text": "build a merge only for a branch with a review on record (`review_start`), unless the review was waived: `merge_built` then cites a `standing_waivers` class of the profile, or `owner` with a `waiver_reason`."
+    },
+    {
+      "id": "DEC-21",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "when tdd is on (the profile's `tdd: yes`, or `tdd: auto` resolved yes for the step at triage), the coder's report shows each proof and fix-round test red, then green (`RED <test> -- ` and `GREEN <test> -- ` lines), or `CANNOT FAIL FIRST <test> -- <reason>` (exempt from the revert check); `scripts/proof-check.mjs --coder` passes on it before any review."
+    },
+    {
+      "id": "DEC-22",
+      "file": "commands/decide.md",
+      "tag": "script",
+      "text": "when tdd is on, reviewers revert only the production part of the diff in a scratch worktree, run each non-exempt test of the coder's report alone with the profile's targeted-test command, and write `PROOF CHECK <test> -- fails|passes|not checked: <reason>|exempt`; a pass is a CONFIRMED finding (proof does not prove) and blocks the merge until a later `fails` of that test."
     },
     {
       "id": "OPR-01",

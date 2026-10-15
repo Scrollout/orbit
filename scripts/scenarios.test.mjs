@@ -40,11 +40,11 @@ test("the required happy and policy scenarios exist and are clean where they sho
   assert.equal(actual("incident-track").track, "incident");
 });
 
-test("scenario folders hold only scenario.json, expect.json and an optional ledger.jsonl; none is empty", () => {
+test("scenario folders hold only scenario.json, expect.json, an optional ledger.jsonl, report.md and coder.md; none is empty", () => {
   for (const n of names()) {
     const files = readdirSync(join(dir, n)).sort();
     assert.ok(files.includes("scenario.json") && files.includes("expect.json"), n);
-    for (const f of files) assert.ok(["scenario.json", "expect.json", "ledger.jsonl"].includes(f), `${n}/${f}`);
+    for (const f of files) assert.ok(["scenario.json", "expect.json", "ledger.jsonl", "report.md", "coder.md"].includes(f), `${n}/${f}`);
   }
 });
 

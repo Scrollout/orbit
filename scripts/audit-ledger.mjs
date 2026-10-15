@@ -2,7 +2,7 @@
 //   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md]
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
-//   triage{topic,sec,door,prod,track,files?}   topic is the branch name
+//   triage{topic,sec,door,prod,track,files?,tdd?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
 //   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?,resumed?,worker?,reason?}   phase: design | build | fix | delivery
 //   ci_run{branch?,sha,workflow?,state|conclusion}   branch (= topic) makes that topic's reviewers delivery reviewers by default; without it the run counts for no topic. green = state green or conclusion success
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
@@ -11,12 +11,20 @@
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
+//   coder_report{branch,evidence,tests,exempt?,sha?}   evidence: ok or gap, the exit of scripts/proof-check.mjs --coder (DEC-21); tests: the proved
+//                                              (RED/GREEN) test names, exempt: the CANNOT FAIL FIRST ones (proof-check --json)
+//   proof_check{branch,sha,test,result}        result: fails, passes, not-checked or exempt, one per PROOF CHECK line (DEC-22)
+// DEC-21 and DEC-22 apply only to a topic whose triage recorded tdd: true (unset or false: neither, as before 0.15.0).
+// DEC-21 applies to a review when the last coder run (or, without one, the review) is stamped with rules 1.7.0 or later; DEC-22's
+// coverage when the coder_report before the review is. A rules version going backwards in the ledger is a LEDGER violation.
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gaps, loadProfile, matchesAny } from "./profile.mjs";
+import { codeFiles } from "./paths.mjs";
+import { suggestTdd } from "./tdd-suggest.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -31,12 +39,20 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
+// DEC-21, DEC-22: only for events stamped with rules 1.7.0 or later
+const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };
+const verCmp = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const tddRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 7, 0]) >= 0; };
+const maxRules = dict();   // per tdd-on topic
+let maxRulesAll = null;    // ledger-wide, with the profile's tdd yes or auto
+const tddOn = new Set();   // topics whose triage recorded tdd: true
+const rulesSeen = dict();
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
 const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
@@ -76,10 +92,21 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   if (e.kind === "agent_start" && "worker" in e && (typeof e.worker !== "string" || e.worker === "")) { v("LEDGER", n, "agent_start worker must be a non-empty string"); continue; }
   if (missing.length) continue;
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
-  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false });
+  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false, evidence: null, coderEvent: null, report: null, required: null, checked: new Set(), blocked: new Set() });
 
   switch (e.kind) {
     case "triage": {
+      if ("tdd" in e && typeof e.tdd !== "boolean") v("LEDGER", n, `triage tdd must be true or false, got ${JSON.stringify(e.tdd)}`);
+      if (e.tdd === true) tddOn.add(e.topic);
+      if (profile.tdd === "yes" && tddRules(e) && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd: true, but the profile says tdd: yes`);
+      if (profile.tdd === "auto" && e.tdd === false && Array.isArray(e.files)) {
+        // reproducible from the ledger: tests present only if the triage files include one (the repo is not read)
+        const s = suggestTdd({ targetedTest: profile.targeted_test, files: e.files, sec: e.sec, door: e.door, proof: [], repoHasTests: false });
+        const code = codeFiles(e.files);
+        if (s.tdd && (e.sec === "yes" || e.door === "yes")) v("LEDGER", n, `triage of ${e.topic} records tdd false, but tdd-suggest says yes (${s.reason})`);
+        else if (code.length) warns.push(`warn: line ${n}: triage of ${e.topic} touches production code (${code.slice(0, 5).join(", ")}) with tdd false under tdd: auto`);
+      }
+      if (profile.tdd === "auto" && tddRules(e) && typeof e.tdd !== "boolean" && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd true or false, but the profile says tdd: auto (record decide-triage's tdd line)`);
       if (!Array.isArray(e.files)) warns.push(`warn: line ${n}: triage without files: DEC-02 not checked for topic ${e.topic}`);
       const forced = Array.isArray(e.files) && e.files.some((f) => matchesAny(f, profile.security_paths));
       if (forced && e.sec !== "yes") v("DEC-02", n, `topic ${e.topic} touches a security path but triage says security ${e.sec}`);
@@ -99,6 +126,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         if (e.worker !== undefined) workerModel[e.worker] ??= e.model;
         if (e.reason === "ci-failed-twice" && e.model !== "opus") v("DEC-04", n, `coder re-run after CI failed twice on ${e.topic} needs opus, got ${e.model}`);
         lastCoder[e.topic] = e.model;
+        bs(e.topic).evidence = null; bs(e.topic).report = null; bs(e.topic).coderEvent = e;   // DEC-21: each coder run needs its own report
         if (e.phase === "fix") { bs(e.topic).fixSince = true; bs(e.topic).reReviews = 0; }
         if (tr && [tr.sec, tr.door, tr.prod].includes("yes") && e.model !== "opus" && !(e.phase === "fix" && e.fix_scope === "tests-docs"))
           v("DEC-04", n, `coder on ${e.model} for ${e.topic} with a triage line yes (needs opus)`);
@@ -131,6 +159,9 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (red || e.ci_state === "red") v("DEC-16", n, `review of ${e.branch}@${short(e.sha)} started on a red CI run`);
       if (!triage[e.branch]) warns.push(`warn: line ${n}: review_start branch ${e.branch} has no triage topic (topic must equal the branch name)`);
       const b = bs(e.branch), role = e.role ?? "reviewer";
+      if (tddOn.has(e.branch) && tddRules(b.coderEvent ?? e) && b.evidence !== "ok") v("DEC-21", n, `review of ${e.branch}@${short(e.sha)} started with no coder_report evidence ok since the last coder run (scripts/proof-check.mjs --coder)`);
+      // DEC-22: this review must proof-check the proved tests of the coder_report before it, on this sha
+      b.required = tddOn.has(e.branch) && b.report && tddRules(b.report) ? { sha: e.sha, tests: b.report.tests } : null;
       b.reviewed_any = true;
       if (role === "re-reviewer") {
         if (!b.fixSince) v("DEC-14", n, `re-reviewer on ${e.branch} with no fix round since the last review`);
@@ -151,6 +182,11 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         if (e.waived === undefined || e.waived === false) v("DEC-20", n, `merge of ${e.branch} with no review_start on it and no waiver`);
         else if (e.waived === "owner") { if (!e.waiver_reason) v("DEC-20", n, `merge of ${e.branch}: owner waiver needs a waiver_reason`); }
         else if (!standing.includes(e.waived)) v("DEC-20", n, `merge of ${e.branch}: waived must cite a standing waiver of the profile (${standing.join(", ") || "none defined"}) or be "owner", got ${JSON.stringify(e.waived)}`);
+      }
+      {
+        const b = bs(e.branch);
+        if (b.required) for (const t of b.required.tests) if (!b.checked.has(`${b.required.sha} ${t}`)) v("DEC-22", n, `merge of ${e.branch}: no proof_check of ${t} on the reviewed head ${short(b.required.sha)}`);
+        if (tddOn.has(e.branch)) for (const t of b.blocked) v("DEC-22", n, `merge of ${e.branch}: proof does not prove, ${t} passed without the change and no later proof_check of it fails`);
       }
       if ("release_skip" in e && (typeof e.release_skip !== "string" || !e.release_skip)) v("OPR-09", n, `merge ${short(e.merge_sha)}: release_skip must give the reason as a string`);
       merges[e.merge_sha] = e;
@@ -209,10 +245,43 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (tagSha[e.tag]) releasedShas.add(tagSha[e.tag]);
       break;
     }
+    case "coder_report": {
+      if (!["ok", "gap"].includes(e.evidence)) { v("LEDGER", n, `coder_report evidence must be ok or gap, got ${JSON.stringify(e.evidence)}`); break; }
+      const names = (x) => Array.isArray(x) && x.every((t) => typeof t === "string" && t !== "");
+      if (!names(e.tests) || ("exempt" in e && !names(e.exempt))) { v("LEDGER", n, "coder_report tests and exempt must be lists of test names"); break; }
+      bs(e.branch).evidence = e.evidence;
+      bs(e.branch).report = e;
+      const code = codeFiles(triage[e.branch]?.files);
+      if (tddOn.has(e.branch) && !e.tests.length && (e.exempt ?? []).length && code.length) warns.push(`warn: line ${n}: every test of ${e.branch}'s coder_report is exempt but the step touches production code (${code.slice(0, 5).join(", ")})`);
+      break;
+    }
+    case "proof_check": {
+      if (!["fails", "passes", "not-checked", "exempt"].includes(e.result)) { v("LEDGER", n, `proof_check result must be fails, passes, not-checked or exempt, got ${JSON.stringify(e.result)}`); break; }
+      const b = bs(e.branch);
+      // a required test is covered by fails, passes or not-checked; exempt covers only a CANNOT FAIL FIRST test (not required)
+      if (e.result !== "exempt") b.checked.add(`${e.sha} ${e.test}`);
+      if (e.result === "passes") b.blocked.add(e.test);
+      if (e.result === "fails") b.blocked.delete(e.test);   // only a later fails clears a pass
+      if (e.result === "not-checked") warns.push(`warn: line ${n}: proof check of ${e.test} on ${e.branch} not checked (see the reviewer's reason)`);
+      break;
+    }
+  }
+  // rules versions: with the profile's tdd yes or auto, never backwards anywhere in the ledger; otherwise only on tdd-on
+  // topics (a ledger without tdd audits as before). Mixed versions on a tdd-on topic warn.
+  const topic = e.topic ?? e.branch, rv = semParts(e.rule_version?.rules);
+  if (rv && ["yes", "auto"].includes(profile.tdd)) {
+    if (maxRulesAll && verCmp(rv, maxRulesAll) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRulesAll.join(".")}`);
+    else maxRulesAll = rv;
+    if (topic !== undefined && tddOn.has(topic)) (rulesSeen[topic] ??= new Set()).add(rv.join("."));
+  } else if (topic !== undefined && rv && tddOn.has(topic)) {
+    (rulesSeen[topic] ??= new Set()).add(rv.join("."));
+    if (maxRules[topic] && verCmp(rv, maxRules[topic]) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRules[topic].join(".")} on topic ${topic}`);
+    else maxRules[topic] = rv;
   }
 }
 if (pendingRelease && !releasedShas.has(pendingRelease.sha)) warns.push(`warn: line ${pendingRelease.n}: merge ${short(pendingRelease.sha)} pushed to ${base} has no release yet (OPR-09: release it before the next merge is pushed)`);
 if (basePushes.size && !relWhen) warns.push(`warn: release_when ${profile.release_when === undefined ? "unset" : `is ${JSON.stringify(profile.release_when)}`} in the profile: OPR-09 checks release events but not when they are due`);
+for (const [t, s] of Object.entries(rulesSeen)) if (s.size > 1) warns.push(`warn: mixed rules versions on topic ${t} (${[...s].join(", ")}): DEC-21 and DEC-22 apply only to work stamped 1.7.0 or later`);
 for (const w of warns) console.log(w);
 if (!events && !violations.length) v("LEDGER", 1, "empty ledger");
 if (violations.length) {
