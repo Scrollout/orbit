@@ -59,8 +59,8 @@ export function lint(text) {
   }
   const after = lines.slice(tableEnd);
   const norm = (l) => l.replace(/[*_`]/g, "").replace(/^\s*[-+]?\s*/, "");
-  const answer = (label) => { for (const l of after) { const m = new RegExp(`^(?:${label})\\s*:\\s*(.*)$`).exec(norm(l)); if (m) return m[1].trim(); } return undefined; };
-  for (const [name, label, ok] of [["Security paths", "Security paths", /^(yes|no)\b/], ["One-way door", "One-way door", /^(yes|no)\b/], ["Touches real", "Touches real|Touches the profile's production-like environment", /^(yes|no|n\/a)\b/]]) {
+  const answer = (label) => { for (const l of after) { const m = label.exec(norm(l)); if (m) return m[1].trim(); } return undefined; };
+  for (const [name, label, ok] of [["Security paths", /^(?:Security paths)\s*:\s*(.*)$/, /^(yes|no)\b/], ["One-way door", /^(?:One-way door)\s*:\s*(.*)$/, /^(yes|no)\b/], ["Touches real", /^(?:Touches real|Touches the profile's production-like environment)\s*:\s*(.*)$/, /^(yes|no|n\/a)\b/]]) {
     const a = answer(label);
     if (a === undefined) gaps.push(`triage line ${name} missing (after the table, at the start of a line, as "${name}:")`);
     else if (!ok.test(a)) gaps.push(`triage line ${name}: answer must start with ${name === "Touches real" ? "yes, no or n/a" : "yes or no"}, got ${JSON.stringify(a.slice(0, 30))}`);

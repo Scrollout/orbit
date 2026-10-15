@@ -11,7 +11,9 @@ import { loadProfile } from "../scripts/profile.mjs";
 import { parseShell } from "./guard.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const REF = /^\+?[\w./@^~-]+(:[\w./-]+)?$/;
+const REF_SRC = /^\+?[\w./@^~-]+$/;
+const REF_DST = /^[\w./-]+$/;
+const isRef = (t) => { const i = t.indexOf(":"); return i < 0 ? REF_SRC.test(t) : REF_SRC.test(t.slice(0, i)) && REF_DST.test(t.slice(i + 1)); };
 const VALUE_OPTS = new Set(["-o", "--push-option", "--receive-pack", "--exec"]);
 const NO_BRANCH_PUSH = new Set(["-n", "--dry-run", "-d", "--delete", "--tags", "--mirror", "--all", "--prune", "--repo"]);
 
@@ -47,7 +49,7 @@ export function pushes(command, cwd) {
       else pos.push(a);
     }
     if (skip) continue;
-    const specs = pos.slice(1).filter((t) => REF.test(t) && !t.startsWith(":") && !t.includes("refs/tags/"));
+    const specs = pos.slice(1).filter((t) => isRef(t) && !t.startsWith(":") && !t.includes("refs/tags/"));
     if (pos.length > 1 && !specs.length) continue;
     out.push({ dir: d, specs: pos.length > 1 ? specs.slice(0, 4) : [""], chained });
   }
