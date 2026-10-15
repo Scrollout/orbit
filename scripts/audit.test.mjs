@@ -512,3 +512,29 @@ test("tdd: auto in the profile: a triage stamped 1.7.0 or later must record tdd 
   assert.equal(runA(off).status, 0);
   assert.match(runA(clean().map(at(RV7))).stdout, /^LEDGER line 1: triage of t has no tdd true or false, but the profile says tdd: auto/m);
 });
+
+test("tdd yes or auto: a backwards rules version is a LEDGER violation anywhere in the ledger", () => {
+  for (const mode of ["yes", "auto"]) {
+    const p = mkProfile(`tdd: ${mode}\ntargeted_test: make t`);
+    const e = tdd();
+    e.push(at(RV6)(ev("triage", { topic: "t2", sec: "no", door: "no", prod: "no", track: "just do it", files: ["docs/a.md"] })));
+    const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl");
+    writeFileSync(f, e.map((x) => JSON.stringify(x)).join("\n") + "\n");
+    const r = spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" });
+    assert.equal(r.status, 1, mode);
+    assert.match(r.stdout, /^LEDGER line 13: rules version goes backwards: 1\.6\.1 after 1\.7\.0$/m, mode);
+  }
+});
+
+test("tdd auto: a recorded tdd false that tdd-suggest would call yes (security path or door) is a LEDGER violation; code with tdd false warns", () => {
+  const p = mkProfile("tdd: auto\ntargeted_test: make t");
+  const runA = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
+  const tri = (o) => { const e = clean().map(at(RV7)); Object.assign(e[0], { tdd: false, ...o }); return e; };
+  assert.match(runA(tri({ files: ["Makefile", "src/a.go", "src/a_test.go"] })).stdout, /^LEDGER line 1: triage of t records tdd false, but tdd-suggest says yes \(security path or one-way door\)/m);
+  const door = runA(tri({ sec: "no", door: "yes", files: ["src/a.go", "src/a_test.go"] }));
+  assert.match(door.stdout, /^LEDGER line 1: triage of t records tdd false/m);
+  const warn = runA(tri({ sec: "no", files: ["src/a.go"] }));
+  assert.equal(warn.status, 0, warn.stdout);
+  assert.match(warn.stdout, /^warn: line 1: triage of t touches production code \(src\/a\.go\) with tdd false under tdd: auto/m);
+  assert.doesNotMatch(runA(tri({ sec: "no", files: ["docs/a.md"] })).stdout, /tdd false/);
+});

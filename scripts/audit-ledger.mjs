@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gaps, loadProfile, matchesAny } from "./profile.mjs";
 import { codeFiles } from "./paths.mjs";
+import { suggestTdd } from "./tdd-suggest.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -49,6 +50,7 @@ const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? ""))
 const verCmp = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 const tddRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 7, 0]) >= 0; };
 const maxRules = dict();   // per tdd-on topic
+let maxRulesAll = null;    // ledger-wide, with the profile's tdd yes or auto
 const tddOn = new Set();   // topics whose triage recorded tdd: true
 const rulesSeen = dict();
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
@@ -97,6 +99,13 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if ("tdd" in e && typeof e.tdd !== "boolean") v("LEDGER", n, `triage tdd must be true or false, got ${JSON.stringify(e.tdd)}`);
       if (e.tdd === true) tddOn.add(e.topic);
       if (profile.tdd === "yes" && tddRules(e) && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd: true, but the profile says tdd: yes`);
+      if (profile.tdd === "auto" && e.tdd === false && Array.isArray(e.files)) {
+        // reproducible from the ledger: tests present only if the triage files include one (the repo is not read)
+        const s = suggestTdd({ targetedTest: profile.targeted_test, files: e.files, sec: e.sec, door: e.door, proof: [], repoHasTests: false });
+        const code = codeFiles(e.files);
+        if (s.tdd && (e.sec === "yes" || e.door === "yes")) v("LEDGER", n, `triage of ${e.topic} records tdd false, but tdd-suggest says yes (${s.reason})`);
+        else if (code.length) warns.push(`warn: line ${n}: triage of ${e.topic} touches production code (${code.slice(0, 5).join(", ")}) with tdd false under tdd: auto`);
+      }
       if (profile.tdd === "auto" && tddRules(e) && typeof e.tdd !== "boolean" && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd true or false, but the profile says tdd: auto (record decide-triage's tdd line)`);
       if (!Array.isArray(e.files)) warns.push(`warn: line ${n}: triage without files: DEC-02 not checked for topic ${e.topic}`);
       const forced = Array.isArray(e.files) && e.files.some((f) => matchesAny(f, profile.security_paths));
@@ -257,9 +266,14 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       break;
     }
   }
-  // rules versions, only on tdd-on topics (tdd off audits as before): never backwards, mixed versions warn
+  // rules versions: with the profile's tdd yes or auto, never backwards anywhere in the ledger; otherwise only on tdd-on
+  // topics (a ledger without tdd audits as before). Mixed versions on a tdd-on topic warn.
   const topic = e.topic ?? e.branch, rv = semParts(e.rule_version?.rules);
-  if (topic !== undefined && rv && tddOn.has(topic)) {
+  if (rv && ["yes", "auto"].includes(profile.tdd)) {
+    if (maxRulesAll && verCmp(rv, maxRulesAll) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRulesAll.join(".")}`);
+    else maxRulesAll = rv;
+    if (topic !== undefined && tddOn.has(topic)) (rulesSeen[topic] ??= new Set()).add(rv.join("."));
+  } else if (topic !== undefined && rv && tddOn.has(topic)) {
     (rulesSeen[topic] ??= new Set()).add(rv.join("."));
     if (maxRules[topic] && verCmp(rv, maxRules[topic]) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRules[topic].join(".")} on topic ${topic}`);
     else maxRules[topic] = rv;

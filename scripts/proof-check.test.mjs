@@ -122,3 +122,8 @@ test("coder: every test exempt while the step touches production code is a warni
   assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /^proof warn: every test is CANNOT FAIL FIRST/m);
 });
+
+test("coder: a reason that mentions a command but not a missing profile command is accepted", () => {
+  assert.deepEqual(checkCoder("CANNOT FAIL FIRST TestA -- no behaviour change; the command parser output is identical\n"), []);
+  assert.deepEqual(checkCoder("CANNOT FAIL FIRST TestA -- renames the command flag only, no behaviour change\n"), []);
+});

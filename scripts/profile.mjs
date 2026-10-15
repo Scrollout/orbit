@@ -28,7 +28,7 @@ export const FIELDS = {
   // DEC-21, DEC-22 apply only with tdd: yes (unset means no). test_first_commit: yes asks the coder to commit the failing
   // test before the fix; it means something only with tdd: yes (loadProfile warns otherwise).
   tdd: { required: false, enum: ["no", "yes", "auto"] },   // auto: resolved per step at triage by tdd-suggest.mjs
-  // the targeted-test command (e.g. `make test-one PKG={pkg}`); required with tdd: yes
+  // the targeted-test command (e.g. `make test-one PKG={pkg}`); required with tdd: yes or auto
   targeted_test: { required: false },
   test_first_commit: { required: false, enum: ["no", "yes"] },
 };
@@ -114,7 +114,7 @@ export function gaps(data) {
     const matchAll = name === "security_paths" && Array.isArray(v) && v.some((x) => globSegments(String(x)).length === 0);
     if (empty || matchAll || (spec.enum && !spec.enum.includes(v))) out.push(name);
   }
-  if (data?.tdd === "yes" && data.targeted_test === undefined) out.push("targeted_test");
+  if (["yes", "auto"].includes(data?.tdd) && data.targeted_test === undefined) out.push("targeted_test");
   return out;
 }
 

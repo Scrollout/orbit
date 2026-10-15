@@ -49,7 +49,8 @@ export function coderTests(text) {
   return { required, exempt };
 }
 
-const MISSING_CMD = /\b(no|missing|without|lacks?)\b.*\b(command|targeted)\b/i;
+// a missing test command, in one clause: "no targeted-test command", "missing test command", "the profile has no ... command"
+const MISSING_CMD = /\b(no|missing|without|lacks?)\b[^.;,]*\b(targeted[- ]?test|test|targeted)[- ]command\b|\bprofile\b[^.;,]*\b(no|missing|without|lacks?)\b[^.;,]*\bcommand\b/i;
 
 // A warning, not a gap: every test exempt while the step's files include production code (paths.mjs).
 export function coderWarnings(text, { files = [] } = {}) {

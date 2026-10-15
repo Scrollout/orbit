@@ -2,7 +2,7 @@
   "entries": {
     "commands/decide.md": {
       "version": "1.4.0",
-      "hash": "e752069f621cee990ec76b8bea30d3475389a0a59d0ff392fbc6a9c1fbe324cd",
+      "hash": "1bd7d07109cb2c027fad539d085c66767e756b0bc34fb1a5bd176b4d699c86fe",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -54,7 +54,7 @@
     },
     "rules/rules.json": {
       "version": "1.7.0",
-      "hash": "8dcde398db2cc932694aa2c9290048f41833e73c765e58321391a4847eb355a5",
+      "hash": "a278b2d7fac279fd25463c922c5c96c4c7936d1f65a4a5f5af9ced0fb2df8d82",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
