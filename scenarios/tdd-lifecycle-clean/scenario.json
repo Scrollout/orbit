@@ -1,3 +1,3 @@
 {
-  "description": "full lifecycle under rules 1.7.0: coder evidence ok before each review, a failing proof check on each reviewed head, merge: no violation"
+  "description": "full lifecycle under rules 1.7.0: coder evidence ok before each review, every proved test proof-checked and failing on the reviewed head, merge: no violation"
 }

@@ -25,7 +25,7 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 
 ## Build and test entry points
 - Full run: <command>
-- Targeted single-package run: <command, with the variables it takes>. It is the targeted-test command: the coder shows each proof test failing, then passing with it; reviewers run one proof test with it (DEC-21, DEC-22).
+- Targeted single-package run: <command, with the variables it takes>. It is the targeted-test command: the coder shows each proof test failing, then passing with it; reviewers run one proof test with it (DEC-21, DEC-22). None: the coder writes `CANNOT FAIL FIRST <test> -- no targeted-test command in the profile` and reviewers write `not checked`.
 - Failing test committed before the fix (`test_first_commit`): <no (default) / yes>.
 - Formatters/linters/docs check per touched area: <commands>
 - Generated files and copies reviewers skip (review their sources): <paths>

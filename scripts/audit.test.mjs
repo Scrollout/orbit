@@ -397,12 +397,17 @@ test("OPR-09: release_when unset or TODO warns once there is a base push", () =>
   assert.doesNotMatch(runP(CS, clean().slice(0, 7)).stdout, /warn: release_when/);
 });
 
-// DEC-21, DEC-22: TDD evidence, audited on events stamped with rules 1.7.0 or later
+// DEC-21, DEC-22: TDD evidence, audited on work stamped with rules 1.7.0 or later
 const RV7 = { decide: "1.4.0", operator: "1.5.0", rules: "1.7.0" };
+const RV6 = { decide: "1.3.3", operator: "1.4.1", rules: "1.6.1" };
+const at = (rv) => (x) => ({ ...x, rule_version: rv });
+// clean(): 0 triage, 1-2 design, 3 coder, 4 ci_run, 5 coder_report, 6 review_start, 7 proof_check, 8 merge_built, ...
+const report = (o = {}) => at(RV7)(ev("coder_report", { branch: "t", sha: SHA, evidence: "ok", tests: ["TestA"], ...o }));
+const proof = (o = {}) => at(RV7)(ev("proof_check", { branch: "t", sha: SHA, test: "TestA", result: "fails", ...o }));
 const tdd = (fn = () => {}) => {
-  const e = clean().map((x) => ({ ...x, rule_version: RV7 }));
-  e.splice(5, 0, { ...ev("coder_report", { branch: "t", sha: SHA, evidence: "ok" }), rule_version: RV7 });
-  e.splice(7, 0, { ...ev("proof_check", { branch: "t", sha: SHA, test: "TestA", result: "fails" }), rule_version: RV7 });
+  const e = clean().map(at(RV7));
+  e.splice(5, 0, report());
+  e.splice(7, 0, proof());
   fn(e);
   return e;
 };
@@ -410,7 +415,8 @@ const tdd = (fn = () => {}) => {
 test("DEC-21/22: evidence ok before the review and a failing proof check pass; older rule versions are not checked", () => {
   const r = run(tdd());
   assert.equal(r.status, 0, r.stdout);
-  const old = run(clean().map((x) => ({ ...x, rule_version: { decide: "1.3.3", operator: "1.4.1", rules: "1.6.1" } })));
+  assert.doesNotMatch(r.stdout, /warn: (mixed|line)/);
+  const old = run(clean().map(at(RV6)));
   assert.equal(old.status, 0, old.stdout);
 });
 
@@ -419,15 +425,38 @@ test("DEC-21: a review with no coder_report, or evidence gap, or evidence from b
   assert.match(run(tdd((e) => { e[5].evidence = "gap"; })).stdout, /^DEC-21 /m);
   assert.match(run(tdd((e) => e.splice(5, 0, e.splice(3, 1)[0]))).stdout, /^DEC-21 /m, "coder started again after the report");
   assert.match(run(tdd((e) => { e[5].evidence = "yes"; })).stdout, /^LEDGER line 6: coder_report evidence must be ok or gap/m);
+  assert.match(run(tdd((e) => { delete e[5].tests; })).stdout, /^LEDGER line 6: coder_report needs tests/m);
+  assert.match(run(tdd((e) => { e[5].tests = "TestA"; })).stdout, /^LEDGER line 6: coder_report tests and exempt must be lists/m);
 });
 
-test("DEC-22: a passing proof check blocks the merge until a later check fails; no proof check on the reviewed head; not-checked warns", () => {
-  assert.match(run(tdd((e) => { e[7].result = "passes"; })).stdout, /^DEC-22 line \d+: merge of t: proof does not prove, TestA passes/m);
-  const later = run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, { ...e[7], result: "fails" }); }));
-  assert.equal(later.status, 0, later.stdout);
-  assert.match(run(tdd((e) => e.splice(7, 1))).stdout, /^DEC-22 line \d+: merge of t: no proof_check recorded for the reviewed head/m);
+test("DEC-21: a mid-session upgrade does not flag a coder run stamped before 1.7.0; mixed versions warn; going back is a LEDGER violation", () => {
+  const upgraded = clean().map((x, i) => at(i < 4 ? RV6 : RV7)(x));   // coder ran under 1.6.1, the review under 1.7.0, no coder_report
+  const r = run(upgraded);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /^warn: mixed rules versions in one ledger \(1\.6\.1, 1\.7\.0\)/m);
+  const back = clean().map((x, i) => at(i === 6 ? RV6 : RV7)(x));
+  assert.match(run(back).stdout, /^LEDGER line 7: rules version goes backwards: 1\.6\.1 after 1\.7\.0/m);
+});
+
+test("DEC-22: every proved test of the coder_report needs a proof_check on the reviewed head; exempt tests need none", () => {
+  assert.match(run(tdd((e) => e.splice(7, 1))).stdout, /^DEC-22 line \d+: merge of t: no proof_check of TestA on the reviewed head/m);
+  const two = run(tdd((e) => { e[5].tests = ["TestA", "TestB"]; }));
+  assert.match(two.stdout, /^DEC-22 .*no proof_check of TestB/m);
+  assert.doesNotMatch(two.stdout, /no proof_check of TestA/);
+  assert.match(run(tdd((e) => { e[7].sha = SHA2; })).stdout, /^DEC-22 .*no proof_check of TestA/m, "a check of another sha does not count");
+  assert.match(run(tdd((e) => { e[7].result = "exempt"; })).stdout, /^DEC-22 .*no proof_check of TestA/m, "exempt does not cover a proved test");
+  const docs = run(tdd((e) => { e[5].tests = []; e[5].exempt = ["docs"]; e.splice(7, 1); }));
+  assert.equal(docs.status, 0, docs.stdout);
   const nc = run(tdd((e) => { e[7].result = "not-checked"; }));
   assert.equal(nc.status, 0, nc.stdout);
   assert.match(nc.stdout, /^warn: line 8: proof check of TestA on t not checked/m);
   assert.match(run(tdd((e) => { e[7].result = "green"; })).stdout, /^LEDGER line 8: proof_check result must be/m);
+});
+
+test("DEC-22: a pass blocks the merge; only a later fails of that test clears it, not not-checked or exempt", () => {
+  assert.match(run(tdd((e) => { e[7].result = "passes"; })).stdout, /^DEC-22 line \d+: merge of t: proof does not prove, TestA passed/m);
+  const later = run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof()); }));
+  assert.equal(later.status, 0, later.stdout);
+  for (const r of ["not-checked", "exempt"]) assert.match(run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof({ result: r })); })).stdout, /proof does not prove, TestA/m, r);
+  assert.match(run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof({ test: "TestB" })); })).stdout, /proof does not prove, TestA/m, "a fails of another test");
 });
