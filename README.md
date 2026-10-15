@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.15.2 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.15.3 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
