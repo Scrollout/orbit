@@ -79,4 +79,4 @@ check "tracked operator.md is silent" "$(run "$tracked")" ""
 mkdir -p "$tmp/plain/.agents" && cp "$repo/.agents/operator.md" "$tmp/plain/.agents/"
 check "non-git directory is silent" "$(export GIT_CEILING_DIRECTORIES="$tmp"; run "$tmp/plain")" ""
 
-[ "$fails" -eq 0 ] && echo "all passed" || { echo "$fails failed"; exit 1; }
+if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi

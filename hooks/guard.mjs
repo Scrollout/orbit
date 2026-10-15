@@ -214,7 +214,10 @@ function word(p, depth) {
 
 // ---------- command resolution ----------
 const KEYWORDS = new Set(["!", "{", "}", "then", "do", "else", "elif", "if", "while", "until", "fi", "done", "esac"]);
-const ASSIGN = /^[A-Za-z_]\w*(\[[^\]]*\])?\+?=/;
+// A variable assignment word: NAME=, NAME+=, NAME[sub]=, NAME[sub]+= (two plain patterns: no nested quantifier, linear time).
+export const isAssign = (t) => /^[A-Za-z_]\w*\+?=/.test(t) || /^[A-Za-z_]\w*\[[^\]]*\]\+?=/.test(t);
+// `env -S` / `--split-string[=...]`: the argument that makes env run a string it splits itself (opaque to the guard).
+export const isEnvSplit = (a) => (/^-[a-zA-Z]*S/.test(a) || a === "--split-string" || a.startsWith("--split-string="));
 // Wrapper programs and their options that take a value; the wrapped command follows.
 const WRAPPERS = {
   env: ["-u", "--unset", "-C", "--chdir"], command: [], builtin: [], nice: ["-n", "--adjustment"], nohup: [], exec: ["-a"],
@@ -225,12 +228,12 @@ const WRAPPERS = {
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 // Programs that run a command or script the guard cannot see; for the operator they fail closed.
 const OPAQUE = new Set(["watch", "script", "flock", "source", "."]);
-const SCRIPTERS = { python: /^-[a-zA-Z]*c$/, python3: /^-[a-zA-Z]*c$/, node: /^(-e|--eval(=.*)?|-p|--print(=.*)?)$/, perl: /^-[a-zA-Z]*[eEi]/, ruby: /^-[a-zA-Z]*[ei]/ };
+export const SCRIPTERS = { python: /^-[a-zA-Z]*c$/, python3: /^-[a-zA-Z]*c$/, node: { test: (a) => ["-e", "-p", "--eval", "--print"].includes(a) || a.startsWith("--eval=") || a.startsWith("--print=") }, perl: /^-[a-zA-Z]*[eEi]/, ruby: /^-[a-zA-Z]*[ei]/ };
 
 export function resolveCmd(words) {
   let i = 0, xargs = false;
   for (;;) {
-    while (i < words.length && (KEYWORDS.has(words[i].lit) || ASSIGN.test(words[i].raw))) i++;
+    while (i < words.length && (KEYWORDS.has(words[i].lit) || isAssign(words[i].raw))) i++;
     const w = words[i];
     if (!w) return null;
     if (w.lit === null) return { dynamic: true };
@@ -242,8 +245,8 @@ export function resolveCmd(words) {
         const a = words[i].lit;
         if (a === null) return { dynamic: true };
         if (a === "--") { i++; break; }
-        if (name === "env" && ASSIGN.test(a)) { i++; continue; }
-        if (name === "env" && /^(-[a-zA-Z]*S.*|--split-string(=.*)?)$/.test(a)) return { name, args: [], opaque: true };
+        if (name === "env" && isAssign(a)) { i++; continue; }
+        if (name === "env" && isEnvSplit(a)) return { name, args: [], opaque: true };
         if (!a.startsWith("-") || a === "-") break;
         i += WRAPPERS[name].includes(a) ? 2 : 1;
       }
@@ -683,12 +686,27 @@ function dec08(sub, rest, dir, cmd, cmds, ctx, st) {
 // ---------- the walk over the commands ----------
 const DECLARE = new Set(["export", "declare", "typeset", "local", "readonly"]);
 // `$(mktemp)`, `$(mktemp -d)`, `$(mktemp [-d] -t NAME.XXXX)`: a new path in the temp dir. Not -p, --tmpdir or a template path.
-const MKTEMP = /^([A-Za-z_]\w*)=("?)\$\(\s*mktemp((\s+(-d|-q|--directory|--quiet|-[dq]*t\s+[\w.-]+))*)\s*\)\2$/;
+export function isMktempAssign(raw) {
+  const m = /^[A-Za-z_]\w*=("?)\$\(/.exec(raw);
+  if (!m || !raw.endsWith(`)${m[1]}`)) return false;
+  const inner = raw.slice(m[0].length, raw.length - 1 - m[1].length).trimStart();
+  if (!inner.startsWith("mktemp")) return false;
+  const rest = inner.slice("mktemp".length);
+  if (rest.trim() === "") return true;
+  if (!/^\s/.test(rest)) return false;
+  const tokens = rest.trim().split(/\s+/);
+  for (let k = 0; k < tokens.length; k++) {
+    if (["-d", "-q", "--directory", "--quiet"].includes(tokens[k])) continue;
+    if (/^-[dq]*t$/.test(tokens[k]) && /^[\w.-]+$/.test(tokens[k + 1] ?? "")) { k++; continue; }
+    return false;
+  }
+  return true;
+}
 
 // Records the variables a command assigns: prefix assignments, export/declare, read, for, mapfile.
 function assigns(cmd, r, st) {
   const set = (raw) => {
-    const m = MKTEMP.exec(raw);
+    const m = isMktempAssign(raw);
     const name = /^[A-Za-z_]\w*/.exec(raw)?.[0];
     if (!name) return;
     st.assigned.add(name);
@@ -698,7 +716,7 @@ function assigns(cmd, r, st) {
   let i = 0;
   while (i < w.length && KEYWORDS.has(w[i].lit)) i++;
   if (w[i]?.lit === "for" || w[i]?.lit === "select") { if (w[i + 1]) set(w[i + 1].raw); return; }
-  for (; i < w.length && ASSIGN.test(w[i].raw); i++) set(w[i].raw);
+  for (; i < w.length && isAssign(w[i].raw); i++) set(w[i].raw);
   if (!r || r.dynamic) return;
   if (DECLARE.has(r.name)) for (const a of r.args) { if (!a.raw.startsWith("-")) set(a.raw); }
   if (r.name === "read") {
@@ -830,7 +848,7 @@ export function hookMain(raw, env, fn = guard) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let raw = "";
-  try { raw = readFileSync(0, "utf8"); } catch {}
+  try { raw = readFileSync(0, "utf8"); } catch { /* stdin unreadable: treated as empty input, which hookMain handles */ }
   const o = hookMain(raw, process.env);
   process.stdout.write(o.stdout);
   process.stderr.write(o.stderr);

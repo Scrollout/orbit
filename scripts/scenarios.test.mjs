@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { denied } from "./denylist.mjs";
 import { actual, differs, dir, expected, names } from "./scenarios.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,7 +52,7 @@ test("scenario folders hold only scenario.json, expect.json, an optional ledger.
 test("scenarios are anonymised: no project, host, user or lab names", () => {
   for (const n of names()) for (const f of readdirSync(join(dir, n))) {
     const text = readFileSync(join(dir, n, f), "utf8");
-    for (const bad of [/portfolio/i, /scrollout/i, /\/home\//, /marius/i, /platform-lab/, /k3s/i, /\blab\b/i, /gologan/i]) assert.doesNotMatch(text, bad, `${n}/${f}`);
+    assert.equal(denied(text), null, `${n}/${f}`);
   }
 });
 
@@ -68,4 +69,14 @@ test("a scenario run leaves no temp directory behind", () => {
   const before = readdirSync(tmpdir()).filter((f) => f.startsWith("scn-")).length;
   actual("lifecycle-clean"); actual("triage-docs-only-small");
   assert.equal(readdirSync(tmpdir()).filter((f) => f.startsWith("scn-")).length, before);
+});
+
+test("the denylist catches a denied word and a /home/ path, and passes clean text", () => {
+  assert.notEqual(denied(`a ${"k3"}${"s"} node`), null);
+  assert.notEqual(denied("cd /home/x"), null);
+  // Substring detection, case-insensitive; the word "lab" is matched whole only, so "label" stays clean.
+  for (const w of ["mari" + "usg", "k3" + "sapps", "port" + "folios", "MARI" + "US", "Scroll" + "out/x"]) assert.notEqual(denied(`x ${w} y`), null, w);
+  assert.notEqual(denied("the la" + "b host"), null);
+  assert.equal(denied("labels and a label table"), null);
+  assert.equal(denied("a clean sentence about a triage"), null);
 });

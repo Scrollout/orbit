@@ -1,4 +1,5 @@
 import test from "node:test";
+import { denied } from "./denylist.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, cpSync, readFileSync } from "node:fs";
@@ -141,7 +142,7 @@ test("a pattern of many stars is not a ReDoS", async () => {
 
 test("the fixture is anonymised: no project, host, user or lab names", () => {
   const text = readFileSync(fixture, "utf8");
-  for (const bad of [/portfolio/i, /scrollout/i, /\/home\//, /marius/i, /platform-lab/, /k3s/i, /\blab\b/i, /gologan/i]) assert.doesNotMatch(text, bad);
+  assert.equal(denied(text), null);
 });
 
 test("an empty, / or ./ security_paths entry is a profile gap, never a match-all", async () => {
@@ -170,7 +171,7 @@ test("release fields are optional; a bad or TODO value is a gap for profile.mjs 
     const root = rootWith(block(`${full}\n${line}`));
     const r = run(root);
     assert.equal(r.status, 1, line);
-    assert.match(r.stdout, new RegExp(`^profile gap: ${field}$`, "m"), line);
+    assert.ok(r.stdout.split("\n").includes(`profile gap: ${field}`), line);
     const t = spawnSync("node", [join(here, "decide-triage.mjs"), "--root", root, "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
     assert.equal(t.status, 0, `${line}: ${t.stdout}`);
   }

@@ -18,6 +18,7 @@
 // DEC-21 applies to a review when the last coder run (or, without one, the review) is stamped with rules 1.7.0 or later; DEC-22's
 // coverage when the coder_report before the review is. A rules version going backwards in the ledger is a LEDGER violation.
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
+import { semverExec } from "./rx.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { dirname, join } from "node:path";
@@ -63,7 +64,6 @@ const isSet = (x) => typeof x === "string" && x !== "" && !/^TODO\b/i.test(x);
 const relWhen = ["change-set", "milestone", "never"].includes(profile.release_when) ? profile.release_when : null;
 const relVia = ["ci", "session"].includes(profile.release_via) ? profile.release_via : null;
 const relTool = isSet(profile.release_tool) && profile.release_tool !== "none" ? profile.release_tool : null;
-const SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 const semCmp = (a, b) => { for (let i = 1; i <= 3; i++) { const d = Number(a[i]) - Number(b[i]); if (d) return d; } return 0; };
 const linePushes = new Set();         // pushes to a release/X.Y maintenance line, alone and by base_pusher: its tags are allowed
 const tagSha = dict(), releasedTags = new Set(), releasedShas = new Set();
@@ -215,7 +215,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     case "tag_push": {
       const r = (m) => v("OPR-09", n, `tag ${e.tag}: ${m}`);
       if (relWhen === "never") r("pushed, but the profile's release_when is never");
-      if (!SEMVER.test(e.tag)) r("not SemVer (vMAJOR.MINOR.PATCH, optional -pre-release)");
+      if (!semverExec(e.tag)) r("not SemVer (vMAJOR.MINOR.PATCH, optional -pre-release)");
       const toolTag = relTool && e.by === "ci";   // a release tool tags the merge of its release PR, which the ledger did not see pushed
       if (!toolTag && e.ref !== `refs/tags/${e.tag}`) r(`pushed as ${JSON.stringify(e.ref ?? null)}, not by its full ref refs/tags/${e.tag}`);
       if (!toolTag && !basePushes.has(e.sha) && !linePushes.has(e.sha)) r(`on ${short(e.sha)}, which no earlier push of ${base} (or of a release/X.Y line) pushed`);
@@ -229,7 +229,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     }
     case "release": {
       const r = (m) => v("OPR-09", n, `release ${e.tag}: ${m}`);
-      const sv = SEMVER.exec(e.tag), pre = sv?.[4], via = e.via ?? "session";
+      const sv = semverExec(e.tag), pre = sv?.[4], via = e.via ?? "session";
       if (!tagSha[e.tag]) r("no tag_push of that tag before it");
       if (!["ci", "session"].includes(via)) r(`via must be ci or session, got ${JSON.stringify(via)}`);
       else if (relVia && via !== relVia) r(`made by ${via}, the profile's release_via is ${relVia}`);
@@ -237,7 +237,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (pre && e.prerelease !== true) r("a pre-release version not marked prerelease");
       if (pre && e.latest === true) r("a pre-release marked latest");
       if (sv && !pre && e.latest === true) {
-        const higher = Object.keys(tagSha).map((t) => [t, SEMVER.exec(t)]).filter(([, x]) => x && !x[4] && semCmp(x, sv) > 0).map(([t]) => t);
+        const higher = Object.keys(tagSha).map((t) => [t, semverExec(t)]).filter(([, x]) => x && !x[4] && semCmp(x, sv) > 0).map(([t]) => t);
         if (higher.length) r(`marked latest, but ${higher.join(", ")} is higher`);
       }
       if (releasedTags.has(e.tag)) r("created twice (never delete or re-create a published release)");

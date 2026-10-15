@@ -87,7 +87,7 @@ for (const [id, name, fn] of bad) {
   test(`${id} fails: ${name}`, () => {
     const r = run(mutate(fn));
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, new RegExp(`^${id} `, "m"));
+    assert.ok(r.stdout.split("\n").some((l) => l.startsWith(`${id} `)), r.stdout);
   });
 }
 
@@ -377,7 +377,7 @@ test("OPR-09: per-event tag and release checks", () => {
   for (const [name, extra, re] of bad) {
     const r = run([...clean(), ...extra]);
     assert.equal(r.status, 1, name);
-    assert.match(r.stdout, new RegExp(`^OPR-09 line \\d+: .*${re.source}`, "m"), name);
+    assert.ok(r.stdout.split("\n").some((l) => /^OPR-09 line \d+: /.test(l) && re.test(l.replace(/^OPR-09 line \d+: /, ""))), `${name}: ${r.stdout}`);
   }
   assert.match(runP("release_when: never", [...clean(), tag()]).stdout, /^OPR-09 .*release_when is never/m);
   assert.match(runP("release_via: ci", [...clean(), tag(), rel()]).stdout, /^OPR-09 .*release_via is ci/m);

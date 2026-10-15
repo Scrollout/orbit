@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { violationIds } from "./rx.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,7 +54,7 @@ function run(d, sc, root) {
     const r = node("audit-ledger.mjs", [join(root, "ledger.jsonl"), "--root", root]);
     out.exit = r.status;
     out.violations = {};
-    for (const m of r.stdout.matchAll(/^([A-Z]+(?:-\d+)?) line \d+:/gm)) out.violations[m[1]] = (out.violations[m[1]] ?? 0) + 1;
+    for (const id of violationIds(r.stdout)) out.violations[id] = (out.violations[id] ?? 0) + 1;
   }
   return out;
 }

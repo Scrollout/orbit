@@ -5,12 +5,7 @@ start vet
 
 shell_check() {
   files=$(tracked '*.sh') || return 1
-  # SC2015 is excluded for this one file, which trips it on main (reported, Scrollout/orbit#3); remove when fixed.
-  others=$(printf '%s\n' "$files" | grep -vx 'hooks/operator-context.test.sh')
-  rc=0
-  printf '%s\n' "$others" | xargs shellcheck -f gcc || rc=1
-  shellcheck -f gcc -e SC2015 hooks/operator-context.test.sh || rc=1
-  return $rc
+  printf '%s\n' "$files" | xargs shellcheck -f gcc
 }
 node_check() {
   files=$(tracked '*.mjs') || return 1

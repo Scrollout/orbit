@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { hasBareRefs } from "./rx.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cores = [
@@ -23,7 +24,7 @@ test("every ${CLAUDE_PLUGIN_ROOT} / ${CLAUDE_SKILL_DIR} pointer resolves, no bar
   for (const [f, skillDir] of docs()) {
     const raw = readFileSync(join(repo, f), "utf8");
     assert.doesNotMatch(raw, /<orbit>/, `${f} has <orbit>`);
-    assert.doesNotMatch(raw, /(^|[^/\w}])(skills\/\w+\/)?refs\/[\w-]+(\/[\w-]+)?\.md/m, `${f} has a bare refs pointer`);
+    assert.equal(hasBareRefs(raw), false, `${f} has a bare refs pointer`);
     for (const m of raw.matchAll(/\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_SKILL_DIR)\}\/([\w./-]+?)(?=[\s`"')]|$)/gm)) {
       const path = sub(m[0], skillDir);
       assert.ok(existsSync(path), `${f}: ${m[0]} -> ${path}`);

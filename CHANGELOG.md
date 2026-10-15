@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.15.3
+- Static-analysis findings fixed (rules 1.7.3 to 1.7.6; no behaviour change): the ReDoS-prone and non-literal regexes in `hooks/guard.mjs`, the audit, OKF, release-check, intent-plan and proof-check parsers are plain code or simple patterns (`scripts/rx.mjs`, pinned by `scripts/rx.test.mjs` and `scripts/rx-diff.test.mjs`, which run the former regexes as the reference over generated inputs); the CI baseline holds only the reference regexes of that differential test. Eleven new golden scenarios cover the checks that had unit tests only, the anonymisation tests use a hashed denylist (`scripts/denylist.mjs`), and a line break inside the argument of `node --eval=` or `env -S` no longer skips the guard's scripter and env-split checks (#4).
+
 ## 0.15.2
 - Operator communicates concisely (rules 1.7.2): short messages, details only on request, one report per event, no recap or narration; tables and `state` / `next` / `needs owner` for status; a decision request opens with a short context (question, options with a recommendation, cost or risk, what is decided); messages to and from workers are terse and structured, reports a few lines with shas and failures. No check, security condition or needed fact is dropped to save tokens.
 

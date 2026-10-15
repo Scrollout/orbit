@@ -13,6 +13,7 @@
 //     it writes that section plus the compare link. Flags override the profile's `version_files` and `changelog`.
 // Exit codes: 0 no gap, 1 gaps, 64 usage, 70 git or gh unavailable. `ORBIT_GH_STUB` (tests only): a .mjs file run
 // with node in place of `gh`.
+import { changelogHeads, conventional as conventionalOf, declaredVersion, semverExec } from "./rx.mjs";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -32,7 +33,6 @@ const gap = (m, fix) => gaps.push(fix ? `gap: ${m}\n  fix: ${fix}` : `gap: ${m}`
 
 const git = (...a) => spawnSync("git", ["-C", root, ...a], { encoding: "utf8" });
 
-const SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
 // A workflow runs on tag pushes: a `tags:` key nested under the `push:` trigger (block or flow form).
 function onTagPush(text) {
@@ -141,13 +141,13 @@ for (const f of vfiles) {
   const text = readFileSync(p, "utf8");
   let v;
   if (f.endsWith(".json")) { try { v = JSON.parse(text).version; } catch { /* not JSON */ } }
-  v ??= (text.match(/^\s*(?:"?version"?|Version)\s*[:=]\s*["']?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/im) ?? [])[1];
+  v ??= declaredVersion(text);
   if (!v) gap(`no version found in ${f}`); else declared.push([f, `v${String(v).replace(/^v/, "")}`]);
 }
 const versions = [...new Set(declared.map(([, v]) => v))];
 if (versions.length > 1) gap(`version files disagree: ${declared.map(([f, v]) => `${f} ${v}`).join(", ")}`);
 const decl = versions.length === 1 ? versions[0] : null;
-if (decl && !SEMVER.test(decl)) gap(`declared version ${decl} is not SemVer`);
+if (decl && !semverExec(decl)) gap(`declared version ${decl} is not SemVer`);
 
 const clog = flag("changelog") ?? (usable(P.changelog) ? P.changelog : null);
 let section = null, clogVersion = null;
@@ -155,7 +155,7 @@ if (clog) {
   const p = resolve(root, clog);
   if (!existsSync(p)) gap(`changelog ${clog} does not exist`);
   else {
-    const heads = [...readFileSync(p, "utf8").matchAll(/^## \[?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\]?[^\n]*\n([\s\S]*?)(?=^## |(?![\s\S]))/gm)];
+    const heads = changelogHeads(readFileSync(p, "utf8"));
     if (!heads.length) gap(`changelog ${clog} has no ## X.Y.Z section`);
     else { clogVersion = `v${heads[0][1]}`; section = heads[0][2].trim(); }
   }
@@ -164,8 +164,8 @@ if (clog) {
 // Post-tag: when HEAD already carries the declared version's tag (the release step after tagging), that tag is the
 // release being described, not the last one.
 const atHead = decl && git("tag", "--points-at", "HEAD", "--list", decl).stdout.trim() === decl;
-const tags = git("tag", "--merged", "HEAD", "--list", "v*").stdout.split("\n").map((t) => t.trim()).filter((t) => SEMVER.test(t) && !SEMVER.exec(t)[4] && !(atHead && t === decl));
-tags.sort((a, b) => cmp(SEMVER.exec(b), SEMVER.exec(a)));
+const tags = git("tag", "--merged", "HEAD", "--list", "v*").stdout.split("\n").map((t) => t.trim()).filter((t) => !!semverExec(t) && !semverExec(t)[4] && !(atHead && t === decl));
+tags.sort((a, b) => cmp(semverExec(b), semverExec(a)));
 const last = tags[0] ?? null;
 const RANK = { none: 0, patch: 1, minor: 2, major: 3 };
 let computed = "none", conventional = 0, total = 0;
@@ -174,15 +174,15 @@ if (log.status !== 0 && last) die(70, "git log failed");
 for (const c of (log.stdout ?? "").split("\x1e").map((x) => x.trim()).filter(Boolean)) {
   total++;
   const [subject, body = ""] = c.split("\x1f");
-  const m = subject.match(/^(feat|fix|docs|chore|refactor|perf|test|build|ci|style|revert)(?:\([^)]*\))?(!)?:\s/i);
+  const m = conventionalOf(subject);
   let level = null;
-  if (m) { conventional++; level = m[2] ? "major" : m[1].toLowerCase() === "feat" ? "minor" : "patch"; }
+  if (m) { conventional++; level = m.bang ? "major" : m.type.toLowerCase() === "feat" ? "minor" : "patch"; }
   if (/^BREAKING[ -]CHANGE:/m.test(body)) { level = "major"; if (!m) conventional++; }
   if (level && RANK[level] > RANK[computed]) computed = level;
 }
 const forced = flag("bump");
 if (forced && !["major", "minor", "patch"].includes(forced)) die(64, `bad --bump ${forced}`);
-const lastV = last ? SEMVER.exec(last) : ["", "0", "0", "0"];
+const lastV = last ? semverExec(last) : ["", "0", "0", "0"];
 const unstable = Number(lastV[1]) === 0;
 const bumpOf = (v) => (Number(v[1]) > Number(lastV[1]) ? "major" : Number(v[2]) > Number(lastV[2]) ? "minor" : Number(v[3]) > Number(lastV[3]) ? "patch" : "none");
 const apply = (lvl) => {
@@ -198,7 +198,7 @@ if (last) console.log(`last: ${last}`); else console.log("last: none");
 console.log(`commits: ${total}, conventional: ${conventional}, computed bump: ${computed}${unstable && computed === "major" ? " (minor while 0.y.z)" : ""}`);
 if (!total) gap(`no commits since ${last ?? "the start"}: nothing to release`);
 if (vfiles.length && decl) {
-  const nv = SEMVER.exec(decl);
+  const nv = semverExec(decl);
   if (nv && last && cmp(nv, lastV) <= 0) gap(`version files declare ${decl}, not above ${last} (bump them in the change)`);
   else if (nv && need && !nv[4] && RANK[bumpOf(nv)] < RANK[need]) gap(`${decl} is a ${bumpOf(nv)} bump but the changes since ${last ?? "the start"} need ${need}`);
 }
@@ -207,7 +207,7 @@ if (!conventional && !forced) warns.push(`no Conventional Commit types since ${l
 if (clog && clogVersion && next && clogVersion !== next) gap(`changelog top section is ${clogVersion}, the release is ${next}`);
 if (atHead) console.log(`tagged: ${decl} is at HEAD (notes for the release of that tag)`);
 else if (next && git("rev-parse", "-q", "--verify", `refs/tags/${next}`).status === 0) gap(`tag ${next} already exists (never move a published tag; bump again)`);
-if (next) console.log(`next: ${next}${SEMVER.exec(next)?.[4] ? " (pre-release: --prerelease, never --latest)" : ""}`);
+if (next) console.log(`next: ${next}${semverExec(next)?.[4] ? " (pre-release: --prerelease, never --latest)" : ""}`);
 else gap("cannot tell the next version: no version files, no Conventional Commits and no --bump");
 
 const notes = flag("notes");
