@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.15.2
+- Operator communicates concisely (rules 1.7.2): short messages, details only on request, one report per event, no recap or narration; tables and `state` / `next` / `needs owner` for status; a decision request opens with a short context (question, options with a recommendation, cost or risk, what is decided); messages to and from workers are terse and structured, reports a few lines with shas and failures. No check, security condition or needed fact is dropped to save tokens.
+
 ## 0.15.1
 - CI only, no plugin behaviour change: a root `Makefile`, `.github/workflows/ci.yml` and `ci/` run `make vet`, `make quality` and `make security` in a pinned toolbox image (shellcheck, `node --check`, JSON and workflow validity, hadolint, eslint and `npm test`, gitleaks on the tree and the history, eslint-plugin-security), and publish a Markdown report as the job summary. Details, pinned versions and the findings baseline: `ci/README.md`. `ci/` and the Makefile are copied into installs with the rest of the clone and are inert there.
 
