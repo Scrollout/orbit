@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { hasBareRefs } from "./rx.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cores = [
@@ -17,18 +18,6 @@ const cores = [
 const walk = (d) => readdirSync(d).flatMap((f) => { const p = join(d, f); return statSync(p).isDirectory() ? walk(p) : [p]; });
 const docs = () => [...cores.map(([f, s]) => [f, s]), ...["refs", "skills/operator/refs"].flatMap((d) => walk(join(repo, d)).map((p) => [p.slice(repo.length + 1), null]))];
 const sub = (text, skillDir) => text.replaceAll("${CLAUDE_PLUGIN_ROOT}", repo).replaceAll("${CLAUDE_SKILL_DIR}", skillDir ? join(repo, skillDir) : "/nonexistent-skill-dir");
-
-// A `refs/<name>.md` or `refs/<dir>/<name>.md` mention that is "bare": the char before it (or before an
-// optional `skills/<name>/` prefix) must not be `/`, a word char or `}`, unless it starts a line.
-function hasBareRefs(raw) {
-  const ok = (before) => before === "" || before.endsWith("\n") || !/[/\w}]$/.test(before);
-  for (const m of raw.matchAll(/refs\/(?:[\w-]+\.md|[\w-]+\/[\w-]+\.md)/g)) {
-    const before = raw.slice(0, m.index);
-    const prefix = /skills\/\w+\/$/.exec(before);
-    if (ok(before) || (prefix && ok(before.slice(0, prefix.index)))) return true;
-  }
-  return false;
-}
 
 test("every ${CLAUDE_PLUGIN_ROOT} / ${CLAUDE_SKILL_DIR} pointer resolves, no bare refs/ pointers, no <orbit>", () => {
   let n = 0;

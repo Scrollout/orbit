@@ -1,4 +1,13 @@
 {
   "quality": [],
-  "security": []
+  "security": [
+    {
+      "file": "scripts/rx-diff.test.mjs",
+      "counts": {
+        "security/detect-unsafe-regex": 14,
+        "security/detect-non-literal-regexp": 1
+      },
+      "reason": "the test's reference patterns are the former, flagged regexes copied on purpose as the oracle of the differential test; they run only on bounded generated inputs"
+    }
+  ]
 }

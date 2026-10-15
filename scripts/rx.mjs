@@ -98,21 +98,26 @@ export function changelogHeads(text) {
 // The body of the `## <heading>` sections (a heading ends at a word boundary), one string per section.
 export function sectionBodies(text, heading) {
   const out = [];
-  for (const m of text.matchAll(/^## [^\n]*\n/gm)) {
-    const line = m[0].slice(3);
-    if (!line.startsWith(heading) || /\w/.test(line[heading.length] ?? "") === /\w$/.test(heading)) continue;
-    const start = m.index + m[0].length;
+  let consumed = 0;
+  for (const m of text.matchAll(/^## /gm)) {
+    const at = m.index + 3, end = at + heading.length;
+    if (m.index < consumed || !text.startsWith(heading, at)) continue;
+    if (/\w/.test(text[end] ?? "") === /\w$/.test(heading)) continue;
+    const nl = text.indexOf("\n", end);
+    if (nl < 0) continue;
     const next = /^## /gm;
-    next.lastIndex = start;
+    next.lastIndex = nl + 1;
     const n = next.exec(text);
-    out.push(text.slice(start, n ? n.index : text.length));
+    consumed = n ? n.index : text.length;
+    out.push(text.slice(nl + 1, consumed));
   }
   return out;
 }
 
 // Version declared in a version file: `version: 1.2.3`, `"version": "v1.2.3-rc.1"`, `Version = 1.2.3`; or undefined.
 export function declaredVersion(text) {
-  const m = /^\s*"?version"?\s*[:=]\s*["']?v?(\d+\.\d+\.\d+)/im.exec(text);
+  // Leading blanks on the line only: an earlier blank line start reaches the same token, so nothing is lost and a run of blank lines is not rescanned.
+  const m = /^[^\S\n\r\u2028\u2029]*"?version"?\s*[:=]\s*["']?v?(\d+\.\d+\.\d+)/im.exec(text);
   if (!m) return undefined;
   const pre = /^-[0-9A-Za-z.-]+/.exec(text.slice(m.index + m[0].length));
   return m[1] + (pre ? pre[0] : "");
@@ -137,11 +142,26 @@ export function conventional(subject) {
 // The `ID` of every `ID line N:` line of an audit output (ID: CAPITALS, optionally -digits).
 export function violationIds(stdout) {
   const ids = [];
-  for (const line of stdout.split("\n")) {
+  for (const line of stdout.split(/[\n\r\u2028\u2029]/)) {
     const word = /^[A-Z]+/.exec(line)?.[0];
     if (!word) continue;
     const num = /^-\d+/.exec(line.slice(word.length))?.[0] ?? "";
     if (/^ line \d+:/.test(line.slice(word.length + num.length))) ids.push(word + num);
   }
   return ids;
+}
+
+// A `refs/<name>.md` or `refs/<dir>/<name>.md` mention that is "bare": the char before it (or before an
+// optional `skills/<name>/` prefix) must not be `/`, a word char or `}`, unless it starts a line.
+export function hasBareRefs(raw) {
+  const ok = (before) => before === "" || /[\n\r\u2028\u2029]$/.test(before) || !/[/\w}]$/.test(before);
+  const mention = /refs\/(?:[\w-]+\.md|[\w-]+\/[\w-]+\.md)/y;
+  for (let i = raw.indexOf("refs/"); i >= 0; i = raw.indexOf("refs/", i + 1)) {
+    mention.lastIndex = i;
+    if (!mention.test(raw)) continue;
+    const before = raw.slice(0, i);
+    const prefix = /skills\/\w+\/$/.exec(before);
+    if (ok(before) || (prefix && ok(before.slice(0, prefix.index)))) return true;
+  }
+  return false;
 }

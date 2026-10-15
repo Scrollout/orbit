@@ -217,6 +217,8 @@ const KEYWORDS = new Set(["!", "{", "}", "then", "do", "else", "elif", "if", "wh
 // A variable assignment word: NAME=, NAME+=, NAME[sub]=, NAME[sub]+= (two plain patterns: no nested quantifier, linear time).
 export const isAssign = (t) => /^[A-Za-z_]\w*\+?=/.test(t) || /^[A-Za-z_]\w*\[[^\]]*\]\+?=/.test(t);
 // `.` does not match a line terminator: a value holding one does not match the `=...` forms below.
+// `env -S` / `--split-string[=...]`: the argument that makes env run a string it splits itself (opaque to the guard).
+export const isEnvSplit = (a) => (/^-[a-zA-Z]*S/.test(a) ? noLineEnd(a) : a === "--split-string" || (a.startsWith("--split-string=") && noLineEnd(a)));
 const noLineEnd = (t) => !/[\n\r\u2028\u2029]/.test(t);
 // Wrapper programs and their options that take a value; the wrapped command follows.
 const WRAPPERS = {
@@ -228,7 +230,7 @@ const WRAPPERS = {
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 // Programs that run a command or script the guard cannot see; for the operator they fail closed.
 const OPAQUE = new Set(["watch", "script", "flock", "source", "."]);
-const SCRIPTERS = { python: /^-[a-zA-Z]*c$/, python3: /^-[a-zA-Z]*c$/, node: { test: (a) => ["-e", "-p", "--eval", "--print"].includes(a) || ((a.startsWith("--eval=") || a.startsWith("--print=")) && noLineEnd(a)) }, perl: /^-[a-zA-Z]*[eEi]/, ruby: /^-[a-zA-Z]*[ei]/ };
+export const SCRIPTERS = { python: /^-[a-zA-Z]*c$/, python3: /^-[a-zA-Z]*c$/, node: { test: (a) => ["-e", "-p", "--eval", "--print"].includes(a) || ((a.startsWith("--eval=") || a.startsWith("--print=")) && noLineEnd(a)) }, perl: /^-[a-zA-Z]*[eEi]/, ruby: /^-[a-zA-Z]*[ei]/ };
 
 export function resolveCmd(words) {
   let i = 0, xargs = false;
@@ -246,7 +248,7 @@ export function resolveCmd(words) {
         if (a === null) return { dynamic: true };
         if (a === "--") { i++; break; }
         if (name === "env" && isAssign(a)) { i++; continue; }
-        if (name === "env" && (/^-[a-zA-Z]*S/.test(a) ? noLineEnd(a) : a === "--split-string" || (a.startsWith("--split-string=") && noLineEnd(a)))) return { name, args: [], opaque: true };
+        if (name === "env" && isEnvSplit(a)) return { name, args: [], opaque: true };
         if (!a.startsWith("-") || a === "-") break;
         i += WRAPPERS[name].includes(a) ? 2 : 1;
       }
