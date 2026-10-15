@@ -547,3 +547,14 @@ test("condition events: needs topic, id, step, test and status; status is open o
   assert.match(bad.stdout, /LEDGER line 11: condition status must be open or proved/);
   assert.match(run([...clean(), c({ test: undefined })]).stdout, /condition needs test/);
 });
+
+test("profile base_pusher: operator is agent: a base push by agent is no violation, by owner is", () => {
+  const f = join(mkdtempSync(join(tmpdir(), "prof-")), "p.md");
+  writeFileSync(f, readFileSync(profile, "utf8").replace("base_pusher: owner", "base_pusher: operator"));
+  const go = (events) => { const l = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(l, events.map((e) => JSON.stringify(e)).join("\n") + "\n"); return spawnSync("node", [audit, l, "--profile", f], { encoding: "utf8" }); };
+  const e = clean(); e[8].by = "agent";
+  const r = go(e);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.doesNotMatch(r.stdout, /profile gap/);
+  assert.ok(go(clean()).stdout.split("\n").some((l) => l.startsWith("DEC-06 ")));
+});

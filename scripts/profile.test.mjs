@@ -220,3 +220,34 @@ test("tdd: auto resolves per step in triage (tdd-suggest), and needs targeted_te
   assert.equal(gap.status, 1);
   assert.match(gap.stdout, /^profile gap: targeted_test$/m);
 });
+
+const withPusher = (v) => rootWith(block(full.replace("base_pusher: agent", `base_pusher: ${v}`)));
+
+test("base_pusher: operator is a legacy alias of agent: no gap, normalized, one warning", async () => {
+  const root = withPusher("operator");
+  const r = run(root, "--json");
+  assert.equal(r.status, 0, r.stdout);
+  assert.equal(JSON.parse(r.stdout).base_pusher, "agent");
+  assert.equal(r.stderr.match(/base_pusher: operator is a legacy alias of agent; write agent/g)?.length, 1, r.stderr);
+  const { loadProfile, parseProfileText } = await import("./profile.mjs");
+  assert.equal(loadProfile(root).data.base_pusher, "agent");
+  assert.equal(parseProfileText(block("base_pusher: operator")).base_pusher, "agent");
+});
+
+test("base_pusher: agent and owner are unchanged and warn nothing", () => {
+  for (const v of ["agent", "owner"]) {
+    const r = run(withPusher(v), "--json");
+    assert.equal(r.status, 0, r.stdout);
+    assert.equal(JSON.parse(r.stdout).base_pusher, v);
+    assert.equal(r.stderr, "");
+  }
+});
+
+test("base_pusher: Operator, operatr and TODO stay gaps", () => {
+  for (const v of ["Operator", "operatr", "TODO"]) {
+    const r = run(withPusher(v));
+    assert.equal(r.status, 1, v);
+    assert.match(r.stdout, /profile gap: base_pusher/, v);
+    assert.doesNotMatch(r.stderr, /legacy alias/, v);
+  }
+});

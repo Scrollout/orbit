@@ -169,3 +169,12 @@ test("a git failure has its own exit code (70) and a one-line message", () => {
   assert.equal(bad.status, 70);
   assert.match(bad.stderr, /^decide-triage: git diff failed/);
 });
+
+test("a profile with base_pusher: operator (legacy alias of agent) triages like agent", () => {
+  const root = repo(["docs/a.md"]);
+  writeFileSync(join(root, ".agents/project.md"), profile.replace("base_pusher: agent", "base_pusher: operator"));
+  const r = run(root, "--lines", "sec=no,door=no,prod=no", "--kind", "small");
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout + r.stderr, /profile gap/);
+  assert.equal(get(r.stdout, "track"), "just do it");
+});
