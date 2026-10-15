@@ -1,0 +1,6 @@
+{
+  "description": "a docs-only step: the coder declared every test CANNOT FAIL FIRST, so the reviewer needs no PROOF CHECK line: passes",
+  "report": {
+    "role": "reviewer"
+  }
+}

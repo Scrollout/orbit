@@ -2,6 +2,8 @@
 
 Detail of the `/decide` command (`commands/decide.md`); the numbered rules and the flow live there. Load when naming calls, choosing models, or fixing the track and its caps.
 
+**Team.** Name every call `<role>:<focus>` in its description (it shows in the task list), the focus chosen for this question (`analyst:write-paths`, `engineer:root-fix`, `reviewer:concurrency`), with one line on why. Pick focuses fresh each time; there is no catalog. Pass `model` as the Team table below says.
+
 | Role | Agent | Model |
 |---|---|---|
 | analyst | `explorer`; `general-purpose` for the web | Haiku to find or quote lines; Sonnet to explain how code behaves, re-check hypotheses or search the web |
@@ -11,6 +13,7 @@ Detail of the `/decide` command (`commands/decide.md`); the numbered rules and t
 | tech lead | `architect` | Fable |
 
 2. **Track.** The cheapest that is safe; say which. Caps are agent calls at most; research and the answer after it, the one-way-door re-check of hypotheses (step 3), a missing-fact round, the rebuttal and delivery are outside them. A narrow question uses fewer.
+   Compute it: `node "${CLAUDE_PLUGIN_ROOT}/scripts/decide-triage.mjs" --root . --files <planned paths> --lines sec=..,door=..,prod=.. --kind small|design|incident` (`--kind`: `small` a small change with every line no, `design` a design, decision-record or roadmap question with every line no, `incident` starts from a security finding or incident). Once a branch exists use `--base <base> --branch <branch>` instead of `--files`, and run it again before the reviewer starts and whenever the changed files change (a branch that touches a security path stays yes).
 
 | Track | When | Analysts | Engineers | Reviewers | Security | Tech lead | Max |
 |---|---|---|---|---|---|---|---|

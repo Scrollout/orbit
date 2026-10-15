@@ -1,8 +1,9 @@
 // Triage and track for /decide, computed instead of remembered. Zero dependencies.
 //   node <plugin>/scripts/decide-triage.mjs --root . (--base <ref> --branch <ref> | --files a,b)
-//     [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident] [--profile path]
+//     [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident] [--profile path] [--proof <test>]...
+// With the profile's tdd: auto, the tdd line is tdd-suggest.mjs's answer for this step (--proof names its proof tests).
 // A branch whose `git diff --name-only <base>...<branch>` (three dots) touches a profile security glob forces sec=yes.
-// Prints the track, the per-role call caps (rules/tracks.json) and the coder model; a line left unset is a
+// Prints the track, the per-role call caps (rules/tracks.json), the coder model and tdd (DEC-21, DEC-22: record it on the triage event); a line left unset is a
 // `triage gap` (exit 2), never a guess: a forced security yes does not fill the door or prod lines, the one-way-door
 // question is separate. `prod` is skipped when the profile has no production_env. `--files` triages planned paths when
 // there is no branch yet (step 2 of /decide). Exit codes: 0 ok, 1 profile gap, 2 triage gap, 64 usage, 70 git failure.
@@ -11,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gaps, loadProfile, matchesAny, RELEASE_FIELDS } from "./profile.mjs";
+import { repoHasTests, suggestTdd } from "./tdd-suggest.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -20,8 +22,9 @@ if (!planned && (!base || !branch)) { console.error("usage: decide-triage.mjs --
 
 const { data: profile } = loadProfile(root, flag("profile"));
 // production_env TODO is not a profile gap here: it just means the prod= line must be given (or the field set to none).
-// Release fields do not affect triage.
-const pg = gaps(profile).filter((g) => g !== "production_env" && !RELEASE_FIELDS.includes(g));
+// Release fields and test_first_commit do not affect triage; tdd is printed for the triage event, and an invalid tdd (or tdd: yes
+// without targeted_test) is a profile gap, never a silent no.
+const pg = gaps(profile).filter((g) => g !== "production_env" && g !== "test_first_commit" && !RELEASE_FIELDS.includes(g));
 if (pg.length) { for (const g of pg) console.log(`profile gap: ${g}`); process.exit(1); }
 const kind = flag("kind");
 if (kind !== undefined && !["small", "design", "incident"].includes(kind)) { console.error(`bad --kind: ${kind} (small, design or incident)`); process.exit(64); }
@@ -68,3 +71,8 @@ console.log(`track: ${track}`);
 console.log(`caps: ${T.roles.map((r) => `${r} ${caps[r][0] === caps[r][1] ? caps[r][0] : caps[r].join("-")}`).join(", ")}`);
 console.log(`max calls: ${caps.max}`);
 console.log(`coder model: ${anyYes || kind === "incident" ? "opus" : "sonnet"}`);
+if (profile.tdd === "auto") {
+  const proof = args.flatMap((a, i) => (a === "--proof" && i + 1 < args.length ? [args[i + 1]] : []));
+  const s = suggestTdd({ targetedTest: profile.targeted_test, files, sec: lines.sec, door: lines.door, proof, repoHasTests: repoHasTests(root) });
+  console.log(`tdd: ${s.tdd ? "yes" : "no"} (auto: ${s.reason})`);
+} else console.log(`tdd: ${profile.tdd === "yes" ? "yes" : "no"}`);

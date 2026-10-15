@@ -1,0 +1,12 @@
+{
+  "description": "profile asks for the failing test committed before the fix; the report has red and green but no TEST FIRST commit: a proof gap",
+  "profile_extra": [
+    "test_first_commit: yes"
+  ],
+  "report": {
+    "role": "coder",
+    "tests": [
+      "TestCartTotal"
+    ]
+  }
+}

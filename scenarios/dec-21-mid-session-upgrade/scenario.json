@@ -1,0 +1,3 @@
+{
+  "description": "the coder ran under rules 1.6.1; after the upgrade the triage is re-run with tdd: true and the review stamped 1.7.0: the old coder run is not flagged (a warn line names the mixed versions)"
+}

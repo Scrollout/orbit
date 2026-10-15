@@ -1,0 +1,7 @@
+{
+  "description": "the profile says tdd: auto and triage resolved it to false for this step: no evidence needed, no violation",
+  "profile_extra": [
+    "tdd: auto",
+    "targeted_test: make test-one PKG={pkg}"
+  ]
+}

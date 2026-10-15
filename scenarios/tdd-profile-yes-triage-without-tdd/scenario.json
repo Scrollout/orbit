@@ -1,0 +1,7 @@
+{
+  "description": "the profile says tdd: yes, but the triage event (rules 1.7.0) records no tdd: true: a LEDGER violation",
+  "profile_extra": [
+    "tdd: yes",
+    "targeted_test: make test-one PKG={pkg}"
+  ]
+}
