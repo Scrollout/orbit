@@ -38,9 +38,8 @@ Keep the session ledger so the audit can replay it: append an event at each poin
 
 ## Flow
 Load the ref for a step when you reach it; the ref holds detail only, the rules above hold the constraints.
-**Team.** Name every call `<role>:<focus>` in its description (it shows in the task list), the focus chosen for this question (`analyst:write-paths`, `engineer:root-fix`, `reviewer:concurrency`), with one line on why. Pick focuses fresh each time; there is no catalog. Pass `model` as the Team table in `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` says.
 
-Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` when naming calls, choosing models, or fixing the track and its caps: the Team table (role, agent, model) and the Track table.
+Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` when naming calls, choosing models, or fixing the track and its caps: how to name calls (**Team**), the Team table (role, agent, model) and the Track table.
 
 1. **Triage.** Question the question: real problem or symptom, a missing option (including "not yet"), does it overturn a decision record (index in the profile). Write these three lines, your judgment of the substance:
    - Security paths: would it change the behaviour of a path the profile lists as security-sensitive? yes/no, which. A wording, comment, formatting or ordering change is no; a change to what a verifier accepts or caches is yes. A security matter with no listed path yet (a new secret, principal, grant, or what a verifier accepts or caches, in a new place) is "yes, no path yet". Re-check against `git diff --name-only <base>...<branch>` before review; a branch that touches one is a yes from then on.

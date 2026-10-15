@@ -2,7 +2,7 @@
   "entries": {
     "commands/decide.md": {
       "version": "1.4.0",
-      "hash": "2b61c4cd7b435ae901543c8fc70151cfb3f46fd7f6fa7743e14306c87e2e49d2",
+      "hash": "caf5ce44be6f99bf8be63ac7012f91d8ef5b197c0e36c8c56830e894733b3954",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -47,14 +47,14 @@
     },
     "skills/peer/SKILL.md": {
       "version": "1.1.0",
-      "hash": "f665cee961bac637618eb5b4c0d75103e9d35288b43445523d6782228ff78ce1",
+      "hash": "220fe3a27be49b3e132a2f2fde24100d25a63e49915aa18c88526f0d7f353660",
       "files": [
         "skills/peer/SKILL.md"
       ]
     },
     "rules/rules.json": {
       "version": "1.7.0",
-      "hash": "a437aa60547dab9a57f8b44e0dc28ad62eb8bf2909e54241ec66fd93632df9c9",
+      "hash": "e564fc1883012170fc4afa5500e02f4a102fc25a0777ad1be5b6046d8fa860a7",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -67,6 +67,7 @@
         "scripts/manifest.mjs",
         "scripts/okf-init.mjs",
         "scripts/okf-lib.mjs",
+        "scripts/paths.mjs",
         "scripts/profile.mjs",
         "scripts/proof-check.mjs",
         "scripts/proof-revert.mjs",
@@ -139,6 +140,9 @@
         "scenarios/dec-20-owner-waiver-with-reason/expect.json",
         "scenarios/dec-20-owner-waiver-with-reason/ledger.jsonl",
         "scenarios/dec-20-owner-waiver-with-reason/scenario.json",
+        "scenarios/dec-21-coder-reason-missing-command/expect.json",
+        "scenarios/dec-21-coder-reason-missing-command/report.md",
+        "scenarios/dec-21-coder-reason-missing-command/scenario.json",
         "scenarios/dec-21-coder-report-no-red/expect.json",
         "scenarios/dec-21-coder-report-no-red/report.md",
         "scenarios/dec-21-coder-report-no-red/scenario.json",
@@ -251,9 +255,15 @@
         "scenarios/tdd-off-no-evidence-ok/expect.json",
         "scenarios/tdd-off-no-evidence-ok/ledger.jsonl",
         "scenarios/tdd-off-no-evidence-ok/scenario.json",
+        "scenarios/tdd-off-version-backwards-ok/expect.json",
+        "scenarios/tdd-off-version-backwards-ok/ledger.jsonl",
+        "scenarios/tdd-off-version-backwards-ok/scenario.json",
         "scenarios/tdd-on-requires-evidence/expect.json",
         "scenarios/tdd-on-requires-evidence/ledger.jsonl",
         "scenarios/tdd-on-requires-evidence/scenario.json",
+        "scenarios/tdd-profile-yes-triage-without-tdd/expect.json",
+        "scenarios/tdd-profile-yes-triage-without-tdd/ledger.jsonl",
+        "scenarios/tdd-profile-yes-triage-without-tdd/scenario.json",
         "scenarios/triage-docs-only-design/expect.json",
         "scenarios/triage-docs-only-design/scenario.json",
         "scenarios/triage-docs-only-small/expect.json",

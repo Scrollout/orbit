@@ -2,6 +2,8 @@
 
 Detail of the `/decide` command (`commands/decide.md`); the numbered rules and the flow live there. Load when naming calls, choosing models, or fixing the track and its caps.
 
+**Team.** Name every call `<role>:<focus>` in its description (it shows in the task list), the focus chosen for this question (`analyst:write-paths`, `engineer:root-fix`, `reviewer:concurrency`), with one line on why. Pick focuses fresh each time; there is no catalog. Pass `model` as the Team table below says.
+
 | Role | Agent | Model |
 |---|---|---|
 | analyst | `explorer`; `general-purpose` for the web | Haiku to find or quote lines; Sonnet to explain how code behaves, re-check hypotheses or search the web |

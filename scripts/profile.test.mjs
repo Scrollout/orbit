@@ -186,16 +186,23 @@ test("test_first_commit is optional: unset, no or yes pass; another value is a g
 });
 
 test("tdd is optional: unset, no or yes pass; another value is a gap; test_first_commit yes without tdd yes warns", () => {
-  for (const v of ["no", "yes"]) assert.equal(run(rootWith(block(`${full}\ntdd: ${v}`))).status, 0, v);
+  for (const v of ["no", "yes"]) assert.equal(run(rootWith(block(`${full}\ntdd: ${v}\ntargeted_test: make test-one PKG={pkg}`))).status, 0, v);
+  assert.equal(run(rootWith(block(`${full}\ntdd: yes`))).stdout.trim(), "profile gap: targeted_test", "tdd: yes needs the targeted-test command");
+  for (const v of ["true", "Yes"]) assert.equal(run(rootWith(block(`${full}\ntdd: ${v}`))).stdout.trim(), "profile gap: tdd", v);
   assert.equal(run(rootWith(block(`${full}\ntdd: maybe`))).stdout.trim(), "profile gap: tdd");
   const w = run(rootWith(block(`${full}\ntest_first_commit: yes`)));
   assert.equal(w.status, 0);
   assert.match(w.stderr, /^profile warning: test_first_commit is yes but tdd is not yes/m);
-  assert.doesNotMatch(run(rootWith(block(`${full}\ntdd: yes\ntest_first_commit: yes`))).stderr, /test_first_commit/);
+  assert.doesNotMatch(run(rootWith(block(`${full}\ntdd: yes\ntargeted_test: make t\ntest_first_commit: yes`))).stderr, /test_first_commit/);
   const t = (body) => spawnSync("node", [join(here, "decide-triage.mjs"), "--root", rootWith(block(body)), "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
-  assert.match(t(`${full}\ntdd: yes`).stdout, /^tdd: yes$/m);
+  assert.match(t(`${full}\ntdd: yes\ntargeted_test: make t`).stdout, /^tdd: yes$/m);
   assert.match(t(full).stdout, /^tdd: no$/m);
-  const bad = t(`${full}\ntdd: maybe`);
-  assert.equal(bad.status, 0, bad.stdout);
-  assert.match(bad.stdout, /^tdd: no$/m);
+  for (const v of ["maybe", "true", "Yes"]) {
+    const bad = t(`${full}\ntdd: ${v}`);
+    assert.equal(bad.status, 1, bad.stdout);
+    assert.match(bad.stdout, /^profile gap: tdd$/m, v);
+  }
+  const noCmd = t(`${full}\ntdd: yes`);
+  assert.equal(noCmd.status, 1);
+  assert.match(noCmd.stdout, /^profile gap: targeted_test$/m);
 });

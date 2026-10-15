@@ -64,3 +64,12 @@ test("a kept renamed test stays as at head; bad usage is 64, a git failure 70", 
   assert.equal(helper(["--repo", root, "--base", "main", "--head", "nosuchref", "--worktree", "/wt"]).status, 70);
   rmSync(root, { recursive: true, force: true });
 });
+
+test("a changed path with a newline is refused with a clear message", () => {
+  const root = repo();
+  sh(root, "git checkout -q topic && printf x > \"$(printf 'src/odd\\nname.go')\" && git add -A && git commit -qm odd && git checkout -q main");
+  const r = helper(["--repo", root, "--base", "main", "--head", "topic", "--worktree", "/wt"]);
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stderr, /path with a newline: "src\/odd\\nname\.go"; revert it by hand/);
+  rmSync(root, { recursive: true, force: true });
+});

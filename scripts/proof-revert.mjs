@@ -6,7 +6,8 @@
 //   M, T, D  -> git -C <wt> checkout <merge-base> -- <path>      (modified, type-changed or deleted: restored)
 //   A, C     -> git -C <wt> rm -q -- <path>                       (added or copied by the diff: removed)
 //   R old new -> rm the new path and restore the old one; a rename whose new path is kept is left as at head.
-// Output: one `# merge-base <sha>` line, then one shell command per line (paths single-quoted). Exit 64 bad usage, 70 git failure.
+// Output: one `# merge-base <sha>` line, then one shell command per line (paths single-quoted). Exit 2 for a changed path with a
+// newline (refused: revert it by hand), 64 bad usage, 70 git failure.
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -20,6 +21,8 @@ export function revertCommands({ repo = ".", base, head, worktree, keep = [] }) 
   };
   const mb = git("merge-base", base, head).trim();
   const f = git("diff", "--name-status", "-M", "-z", mb, head).split("\0");
+  const odd = f.find((p) => p.includes("\n"));
+  if (odd !== undefined) throw Object.assign(new Error(`path with a newline: ${JSON.stringify(odd)}; revert it by hand`), { code: 2 });
   const kept = new Set(keep), out = [`# merge-base ${mb}`];
   const restore = (p) => out.push(`git -C ${q(worktree)} checkout ${mb} -- ${q(p)}`);
   const remove = (p) => out.push(`git -C ${q(worktree)} rm -q -- ${q(p)}`);

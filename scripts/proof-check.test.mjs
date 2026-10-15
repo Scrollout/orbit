@@ -17,10 +17,9 @@ test("coder: red and green lines pass; a missing RED or GREEN, or an empty reaso
   assert.deepEqual(checkCoder("GREEN TestA -- ok\n", { tests: ["TestA"] }), ["TestA: no RED line (the test failing without the change)"]);
   assert.deepEqual(checkCoder("RED TestA -- FAIL\n"), ["TestA: no GREEN line (the test passing with the change)"]);
   assert.deepEqual(checkCoder("RED TestA --\nGREEN TestA -- ok\n"), ["TestA: no RED line (the test failing without the change)"]);
-  assert.deepEqual(checkCoder("CANNOT FAIL FIRST docs -- docs-only step\n"), []);
-  assert.deepEqual(checkCoder("CANNOT FAIL FIRST TestA -- no targeted-test command in the profile\n"), []);
+  assert.deepEqual(checkCoder("CANNOT FAIL FIRST docs -- docs-only step, no code changed\n"), []);
   assert.deepEqual(checkCoder("CANNOT FAIL FIRST docs --\n"), ["docs: CANNOT FAIL FIRST needs a reason"]);
-  assert.deepEqual(checkCoder("CANNOT FAIL FIRST TestA -- refactor\nRED TestA -- FAIL\n"), ["TestA: both RED and CANNOT FAIL FIRST"]);
+  assert.deepEqual(checkCoder("CANNOT FAIL FIRST TestA -- pure refactor, behaviour unchanged\nRED TestA -- FAIL\n"), ["TestA: both RED and CANNOT FAIL FIRST"]);
 });
 
 test("coder: every --test name needs evidence; a report with none is a gap", () => {
@@ -41,7 +40,7 @@ test("coder: test_first_commit asks for a TEST FIRST sha per proved test", () =>
   assert.deepEqual(checkCoder(redGreen, { testFirst: true }), ["TestA: test_first_commit is yes but no TEST FIRST <sha> line"]);
   assert.deepEqual(checkCoder(redGreen + "TEST FIRST TestA -- 1a2b3c4\n", { testFirst: true }), []);
   assert.deepEqual(checkCoder(redGreen + "TEST FIRST TestA -- later\n", { testFirst: true }), ["TestA: test_first_commit is yes but no TEST FIRST <sha> line"]);
-  assert.deepEqual(checkCoder("CANNOT FAIL FIRST docs -- docs only\n", { testFirst: true }), []);
+  assert.deepEqual(checkCoder("CANNOT FAIL FIRST docs -- docs only, no code changed\n", { testFirst: true }), []);
 });
 
 test("reviewer: results are fails, passes, not checked with a reason, or exempt for a CANNOT FAIL FIRST test", () => {
@@ -80,14 +79,14 @@ test("cli: exit 0 ok, 2 on a gap, 64 on bad usage; repeated --test; stdin; --cod
   assert.equal(ok.status, 0, ok.stdout);
   assert.match(ok.stdout, /^proof ok: coder$/m);
   assert.equal(run(["--coder", "-", "--test", "TestA", "--test", "TestB"], redGreen).status, 2);
-  const j = JSON.parse(run(["--coder", "-", "--json"], redGreen + "CANNOT FAIL FIRST docs -- docs only\n").stdout);
+  const j = JSON.parse(run(["--coder", "-", "--json"], redGreen + "CANNOT FAIL FIRST docs -- docs only, no code changed\n").stdout);
   assert.deepEqual(j, { required: ["TestA"], exempt: ["docs"], gaps: [] });
-  const report = tmpFile(redGreen + "CANNOT FAIL FIRST docs -- docs only\n");
+  const report = tmpFile(redGreen + "CANNOT FAIL FIRST docs -- docs only, no code changed\n");
   assert.equal(run(["--reviewer", "-", "--coder-report", report], "PROOF CHECK TestA -- fails\n").status, 0);
   const miss = run(["--reviewer", "-", "--coder-report", report], "No findings.\n");
   assert.equal(miss.status, 2);
   assert.match(miss.stdout, /^proof gap: TestA: no PROOF CHECK line$/m);
-  assert.equal(run(["--reviewer", "-", "--coder-report", tmpFile("CANNOT FAIL FIRST docs -- docs only\n")], "No findings.\n").status, 0);
+  assert.equal(run(["--reviewer", "-", "--coder-report", tmpFile("CANNOT FAIL FIRST docs -- docs only, no code changed\n")], "No findings.\n").status, 0);
   assert.equal(run(["--reviewer", "-"], "PROOF CHECK TestA -- fails\n").status, 64, "the reviewer needs the required list");
   assert.equal(run(["--reviewer", "-", "--test", "TestA"], "PROOF CHECK TestA -- fails\n").status, 0);
   assert.equal(run([]).status, 64);
@@ -103,4 +102,23 @@ test("cli: the profile's test_first_commit is read", () => {
   writeFileSync(join(root, ".agents", "project.md"), prof);
   assert.equal(run(["--coder", "-", "--root", root], redGreen).status, 2);
   assert.equal(run(["--coder", "-", "--root", root], redGreen + "TEST FIRST TestA -- abcdef1\n").status, 0);
+});
+
+test("coder: CANNOT FAIL FIRST needs a reason about the test; a missing profile command is not one", () => {
+  const bad = (r) => checkCoder(`CANNOT FAIL FIRST TestA -- ${r}\n`);
+  for (const r of ["no targeted-test command in the profile", "missing test command", "the profile has no targeted command", "profile lacks a test command"])
+    assert.deepEqual(bad(r), ["TestA: CANNOT FAIL FIRST names a missing profile command; that is a profile gap (targeted_test), not a reason about the test"], r);
+  for (const r of ["n/a", "refactor", "docs"]) assert.deepEqual(bad(r), ["TestA: CANNOT FAIL FIRST needs a reason about the test (at least three words)"], r);
+  assert.deepEqual(bad("pure rename of a private helper, behaviour unchanged"), []);
+});
+
+test("coder: every test exempt while the step touches production code is a warning", async () => {
+  const { coderWarnings } = await import("./proof-check.mjs");
+  const allExempt = "CANNOT FAIL FIRST TestB -- pure rename of a private helper\n";
+  assert.deepEqual(coderWarnings(allExempt, { files: ["src/a.go", "src/a_test.go"] }), ["every test is CANNOT FAIL FIRST but the step touches production code: src/a.go"]);
+  assert.deepEqual(coderWarnings(allExempt, { files: ["docs/a.md", "README.md", ".github/workflows/ci.yml"] }), []);
+  assert.deepEqual(coderWarnings(redGreen + allExempt, { files: ["src/a.go"] }), []);
+  const r = run(["--coder", "-", "--file", "src/a.go"], allExempt);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /^proof warn: every test is CANNOT FAIL FIRST/m);
 });

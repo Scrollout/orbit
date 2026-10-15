@@ -432,11 +432,13 @@ test("DEC-21: a review with no coder_report, or evidence gap, or evidence from b
 
 test("DEC-21: a mid-session upgrade does not flag a coder run stamped before 1.7.0; mixed versions warn; going back is a LEDGER violation", () => {
   const upgraded = clean().map((x, i) => at(i < 4 ? RV6 : RV7)(x));   // coder ran under 1.6.1, the review under 1.7.0, no coder_report
+  upgraded[0].tdd = true;
   const r = run(upgraded);
   assert.equal(r.status, 0, r.stdout);
-  assert.match(r.stdout, /^warn: mixed rules versions in one ledger \(1\.6\.1, 1\.7\.0\)/m);
+  assert.match(r.stdout, /^warn: mixed rules versions on topic t \(1\.6\.1, 1\.7\.0\)/m);
   const back = clean().map((x, i) => at(i === 6 ? RV6 : RV7)(x));
-  assert.match(run(back).stdout, /^LEDGER line 7: rules version goes backwards: 1\.6\.1 after 1\.7\.0/m);
+  back[0].tdd = true;
+  assert.match(run(back).stdout, /^LEDGER line 7: rules version goes backwards: 1\.6\.1 after 1\.7\.0 on topic t/m);
 });
 
 test("DEC-22: every proved test of the coder_report needs a proof_check on the reviewed head; exempt tests need none", () => {
@@ -474,4 +476,30 @@ test("tdd off (triage without tdd, or tdd false): neither DEC-21 nor DEC-22 appl
   assert.match(run(tdd((x) => { x[0].tdd = "yes"; })).stdout, /^LEDGER line 1: triage tdd must be true or false/m);
   const sticky = run(tdd((x) => { x.splice(1, 0, at(RV7)(ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["Makefile"] }))); x.splice(6, 1); }));
   assert.match(sticky.stdout, /^DEC-21 /m, "a later triage without tdd does not turn it off");
+});
+
+test("tdd: yes in the profile: a triage stamped 1.7.0 without tdd true is a LEDGER violation; older triage events are not", () => {
+  const p = mkProfile("tdd: yes\ntargeted_test: make t");
+  const runY = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
+  assert.equal(runY(tdd()).status, 0);
+  assert.match(runY(tdd((x) => { delete x[0].tdd; })).stdout, /^LEDGER line 1: triage of t has no tdd: true, but the profile says tdd: yes/m);
+  assert.match(runY(tdd((x) => { x[0].tdd = false; })).stdout, /^LEDGER line 1: triage of t has no tdd: true/m);
+  assert.equal(runY(clean().map(at(RV6))).status, 0, "a triage stamped before 1.7.0 predates the field");
+});
+
+test("version checks only for tdd-on topics: tdd off audits as 0.14.0", () => {
+  const back = (on) => { const e = clean().map(at(RV7)); if (on) e[0].tdd = true; e[4] = at(RV6)(e[4]); return e; };
+  const off = run(back(false));
+  assert.equal(off.status, 0, off.stdout);
+  assert.doesNotMatch(off.stdout, /mixed rules versions/);
+  assert.match(run(back(true)).stdout, /^LEDGER line 5: rules version goes backwards: 1\.6\.1 after 1\.7\.0 on topic t/m);
+  const mixedOff = run(clean().map((x, i) => at(i < 4 ? RV6 : RV7)(x)));
+  assert.doesNotMatch(mixedOff.stdout, /mixed rules versions/);
+});
+
+test("DEC-22: every test exempt on a topic whose triage files include production code warns", () => {
+  const r = run(tdd((x) => { x[0].files = ["src/a.go", "docs/a.md"]; x[5].tests = []; x[5].exempt = ["TestA"]; x.splice(7, 1); }));
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /^warn: line 6: every test of t's coder_report is exempt but the step touches production code \(src\/a\.go\)/m);
+  assert.doesNotMatch(run(tdd((x) => { x[0].files = ["docs/a.md"]; x[5].tests = []; x[5].exempt = ["docs"]; x.splice(7, 1); })).stdout, /every test/);
 });

@@ -1,11 +1,12 @@
 // Checks the TDD evidence in a coder's report (DEC-21) or a reviewer's answer (DEC-22). Zero dependencies, no model.
-//   node <plugin>/scripts/proof-check.mjs --coder <file|-> [--test <name>]... [--root .] [--profile .agents/project.md] [--json]
+//   node <plugin>/scripts/proof-check.mjs --coder <file|-> [--test <name>]... [--file <changed path>]... [--root .] [--profile .agents/project.md] [--json]
 //   node <plugin>/scripts/proof-check.mjs --reviewer <file|-> (--coder-report <file> | --test <name>...)
 // Lines: a label, a space, the exact test name, ` -- `, then the text. The name ends at the first ` -- ` (pytest ids,
 // Go subtests and names with spaces or colons are fine; a name that contains ` -- ` is not supported). A leading `- ` or `* ` is allowed.
 //   RED <test> -- <a line of the test failing without the change>       (one or more)
 //   GREEN <test> -- <a line of the test passing with it>                (one or more)
-//   CANNOT FAIL FIRST <test> -- <reason>      exempt from the revert check (docs only, a pure refactor, no targeted-test command in the profile)
+//   CANNOT FAIL FIRST <test> -- <reason>      exempt from the revert check: a reason about the test, at least three words (docs only,
+//                                             a pure refactor); a missing profile command is a profile gap (targeted_test), never a reason
 //   TEST FIRST <test> -- <sha>                when the profile says test_first_commit: yes: the commit of the failing test, before the fix
 //   PROOF CHECK <test> -- fails | passes | not checked: <reason> | exempt [<one line on the coder's reason>]
 // Coder: each test needs RED and GREEN, or CANNOT FAIL FIRST with a reason; every --test name needs one of them. The lines are
@@ -19,6 +20,7 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { loadProfile } from "./profile.mjs";
+import { codeFiles } from "./paths.mjs";
 
 const LABELS = ["RED", "GREEN", "CANNOT FAIL FIRST", "TEST FIRST", "PROOF CHECK"];
 const LINE = /^\s*(?:[-*]\s+)?(RED|GREEN|CANNOT FAIL FIRST|TEST FIRST|PROOF CHECK) (.+?) --(?: (.*))?$/;
@@ -47,12 +49,23 @@ export function coderTests(text) {
   return { required, exempt };
 }
 
+const MISSING_CMD = /\b(no|missing|without|lacks?)\b.*\b(command|targeted)\b/i;
+
+// A warning, not a gap: every test exempt while the step's files include production code (paths.mjs).
+export function coderWarnings(text, { files = [] } = {}) {
+  const { required, exempt } = coderTests(text), code = codeFiles(files);
+  return !required.length && exempt.length && code.length ? [`every test is CANNOT FAIL FIRST but the step touches production code: ${code.slice(0, 5).join(", ")}`] : [];
+}
+
 export function checkCoder(text, { tests = [], testFirst = false } = {}) {
   const p = parse(text), gaps = [], { required, exempt } = coderTests(text);
   if (!required.length && !exempt.length && !tests.length) gaps.push("no RED/GREEN or CANNOT FAIL FIRST lines in the report");
   for (const t of tests) if (!required.includes(t) && !exempt.includes(t)) gaps.push(`${t}: no evidence`);
   for (const n of exempt) {
-    if (!filled(p.get(n)["CANNOT FAIL FIRST"])) gaps.push(`${n}: CANNOT FAIL FIRST needs a reason`);
+    const reason = p.get(n)["CANNOT FAIL FIRST"].filter(Boolean).join(" ");
+    if (!reason) gaps.push(`${n}: CANNOT FAIL FIRST needs a reason`);
+    else if (MISSING_CMD.test(reason)) gaps.push(`${n}: CANNOT FAIL FIRST names a missing profile command; that is a profile gap (targeted_test), not a reason about the test`);
+    else if (reason.split(/\s+/).length < 3) gaps.push(`${n}: CANNOT FAIL FIRST needs a reason about the test (at least three words)`);
     if (p.get(n).RED.length) gaps.push(`${n}: both RED and CANNOT FAIL FIRST`);
   }
   for (const n of required) {
@@ -107,6 +120,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (role === "coder") {
     const testFirst = loadProfile(flag("root") ?? ".", flag("profile")).data?.test_first_commit === "yes";
     gaps = checkCoder(text, { tests, testFirst });
+    for (const w of coderWarnings(text, { files: many("file") })) console.log(`proof warn: ${w}`);
     if (args.includes("--json")) { console.log(JSON.stringify({ ...coderTests(text), gaps })); process.exit(gaps.length ? 2 : 0); }
   } else {
     const cr = flag("coder-report");

@@ -23,6 +23,7 @@ import { resolve } from "node:path";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gaps, loadProfile, matchesAny } from "./profile.mjs";
+import { codeFiles } from "./paths.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
@@ -47,9 +48,9 @@ const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };
 const verCmp = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 const tddRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 7, 0]) >= 0; };
-let maxRules = null;
+const maxRules = dict();   // per tdd-on topic
 const tddOn = new Set();   // topics whose triage recorded tdd: true
-const rulesSeen = new Set();
+const rulesSeen = dict();
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
 const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
@@ -88,12 +89,6 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   for (const f of missing) v("LEDGER", n, `${e.kind} needs ${f}`);
   if (e.kind === "agent_start" && "worker" in e && (typeof e.worker !== "string" || e.worker === "")) { v("LEDGER", n, "agent_start worker must be a non-empty string"); continue; }
   if (missing.length) continue;
-  const rv = semParts(e.rule_version?.rules);
-  if (rv) {
-    rulesSeen.add(rv.join("."));
-    if (maxRules && verCmp(rv, maxRules) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRules.join(".")}`);
-    else maxRules = rv;
-  }
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
   const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false, evidence: null, coderEvent: null, report: null, required: null, checked: new Set(), blocked: new Set() });
 
@@ -101,6 +96,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     case "triage": {
       if ("tdd" in e && typeof e.tdd !== "boolean") v("LEDGER", n, `triage tdd must be true or false, got ${JSON.stringify(e.tdd)}`);
       if (e.tdd === true) tddOn.add(e.topic);
+      if (profile.tdd === "yes" && tddRules(e) && !tddOn.has(e.topic)) v("LEDGER", n, `triage of ${e.topic} has no tdd: true, but the profile says tdd: yes`);
       if (!Array.isArray(e.files)) warns.push(`warn: line ${n}: triage without files: DEC-02 not checked for topic ${e.topic}`);
       const forced = Array.isArray(e.files) && e.files.some((f) => matchesAny(f, profile.security_paths));
       if (forced && e.sec !== "yes") v("DEC-02", n, `topic ${e.topic} touches a security path but triage says security ${e.sec}`);
@@ -245,6 +241,8 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (!names(e.tests) || ("exempt" in e && !names(e.exempt))) { v("LEDGER", n, "coder_report tests and exempt must be lists of test names"); break; }
       bs(e.branch).evidence = e.evidence;
       bs(e.branch).report = e;
+      const code = codeFiles(triage[e.branch]?.files);
+      if (tddOn.has(e.branch) && !e.tests.length && (e.exempt ?? []).length && code.length) warns.push(`warn: line ${n}: every test of ${e.branch}'s coder_report is exempt but the step touches production code (${code.slice(0, 5).join(", ")})`);
       break;
     }
     case "proof_check": {
@@ -258,10 +256,17 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       break;
     }
   }
+  // rules versions, only on tdd-on topics (tdd off audits as before): never backwards, mixed versions warn
+  const topic = e.topic ?? e.branch, rv = semParts(e.rule_version?.rules);
+  if (topic !== undefined && rv && tddOn.has(topic)) {
+    (rulesSeen[topic] ??= new Set()).add(rv.join("."));
+    if (maxRules[topic] && verCmp(rv, maxRules[topic]) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRules[topic].join(".")} on topic ${topic}`);
+    else maxRules[topic] = rv;
+  }
 }
 if (pendingRelease && !releasedShas.has(pendingRelease.sha)) warns.push(`warn: line ${pendingRelease.n}: merge ${short(pendingRelease.sha)} pushed to ${base} has no release yet (OPR-09: release it before the next merge is pushed)`);
 if (basePushes.size && !relWhen) warns.push(`warn: release_when ${profile.release_when === undefined ? "unset" : `is ${JSON.stringify(profile.release_when)}`} in the profile: OPR-09 checks release events but not when they are due`);
-if (rulesSeen.size > 1) warns.push(`warn: mixed rules versions in one ledger (${[...rulesSeen].join(", ")}): DEC-21 and DEC-22 apply only to work stamped 1.7.0 or later`);
+for (const [t, s] of Object.entries(rulesSeen)) if (s.size > 1) warns.push(`warn: mixed rules versions on topic ${t} (${[...s].join(", ")}): DEC-21 and DEC-22 apply only to work stamped 1.7.0 or later`);
 for (const w of warns) console.log(w);
 if (!events && !violations.length) v("LEDGER", 1, "empty ledger");
 if (violations.length) {

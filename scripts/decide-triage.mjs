@@ -20,8 +20,9 @@ if (!planned && (!base || !branch)) { console.error("usage: decide-triage.mjs --
 
 const { data: profile } = loadProfile(root, flag("profile"));
 // production_env TODO is not a profile gap here: it just means the prod= line must be given (or the field set to none).
-// Release fields, tdd and test_first_commit do not affect triage; tdd is printed (anything but yes is no) for the triage event.
-const pg = gaps(profile).filter((g) => g !== "production_env" && g !== "tdd" && g !== "test_first_commit" && !RELEASE_FIELDS.includes(g));
+// Release fields and test_first_commit do not affect triage; tdd is printed for the triage event, and an invalid tdd (or tdd: yes
+// without targeted_test) is a profile gap, never a silent no.
+const pg = gaps(profile).filter((g) => g !== "production_env" && g !== "test_first_commit" && !RELEASE_FIELDS.includes(g));
 if (pg.length) { for (const g of pg) console.log(`profile gap: ${g}`); process.exit(1); }
 const kind = flag("kind");
 if (kind !== undefined && !["small", "design", "incident"].includes(kind)) { console.error(`bad --kind: ${kind} (small, design or incident)`); process.exit(64); }
