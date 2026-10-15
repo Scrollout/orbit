@@ -251,3 +251,12 @@ test("base_pusher: Operator, operatr and TODO stay gaps", () => {
     assert.doesNotMatch(r.stderr, /legacy alias/, v);
   }
 });
+
+test("an empty base_pusher (bare or quoted) stays a gap and is not normalized", () => {
+  for (const v of ["", '""']) {
+    const r = run(withPusher(v));
+    assert.equal(r.status, 1, JSON.stringify(v));
+    assert.match(r.stdout, /profile gap: base_pusher/, JSON.stringify(v));
+    assert.doesNotMatch(r.stderr, /legacy alias/, JSON.stringify(v));
+  }
+});
