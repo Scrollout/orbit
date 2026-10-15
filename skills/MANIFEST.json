@@ -2,7 +2,7 @@
   "entries": {
     "commands/decide.md": {
       "version": "1.4.0",
-      "hash": "108495a7a53de375b607e33a163e42513d8bf3ecfda5c2991bb35721c08edede",
+      "hash": "2b61c4cd7b435ae901543c8fc70151cfb3f46fd7f6fa7743e14306c87e2e49d2",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -35,7 +35,7 @@
     },
     "skills/operator/SKILL.md": {
       "version": "1.5.0",
-      "hash": "232ed8f9e2bcfda367f33e369881f5ec94fe38e2ec02af87e57ef780080ec8e2",
+      "hash": "a092dbc111c95990544208c6d1cecdbcbd26a21d5187b1b8811aaeffa95a5f3d",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -47,14 +47,14 @@
     },
     "skills/peer/SKILL.md": {
       "version": "1.1.0",
-      "hash": "7b52052a37d6f305e909f8263d6a0db11a3ee7057eaa7e4e9f38d60629f072ee",
+      "hash": "f665cee961bac637618eb5b4c0d75103e9d35288b43445523d6782228ff78ce1",
       "files": [
         "skills/peer/SKILL.md"
       ]
     },
     "rules/rules.json": {
       "version": "1.7.0",
-      "hash": "12d925067b1e431a35f9247a98a8d597055347edb36b95b247f2ef0adff4c460",
+      "hash": "a437aa60547dab9a57f8b44e0dc28ad62eb8bf2909e54241ec66fd93632df9c9",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -248,6 +248,12 @@
         "scenarios/tdd-lifecycle-clean/expect.json",
         "scenarios/tdd-lifecycle-clean/ledger.jsonl",
         "scenarios/tdd-lifecycle-clean/scenario.json",
+        "scenarios/tdd-off-no-evidence-ok/expect.json",
+        "scenarios/tdd-off-no-evidence-ok/ledger.jsonl",
+        "scenarios/tdd-off-no-evidence-ok/scenario.json",
+        "scenarios/tdd-on-requires-evidence/expect.json",
+        "scenarios/tdd-on-requires-evidence/ledger.jsonl",
+        "scenarios/tdd-on-requires-evidence/scenario.json",
         "scenarios/triage-docs-only-design/expect.json",
         "scenarios/triage-docs-only-design/scenario.json",
         "scenarios/triage-docs-only-small/expect.json",

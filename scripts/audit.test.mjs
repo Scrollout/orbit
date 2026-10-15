@@ -406,6 +406,7 @@ const report = (o = {}) => at(RV7)(ev("coder_report", { branch: "t", sha: SHA, e
 const proof = (o = {}) => at(RV7)(ev("proof_check", { branch: "t", sha: SHA, test: "TestA", result: "fails", ...o }));
 const tdd = (fn = () => {}) => {
   const e = clean().map(at(RV7));
+  e[0].tdd = true;
   e.splice(5, 0, report());
   e.splice(7, 0, proof());
   fn(e);
@@ -459,4 +460,18 @@ test("DEC-22: a pass blocks the merge; only a later fails of that test clears it
   assert.equal(later.status, 0, later.stdout);
   for (const r of ["not-checked", "exempt"]) assert.match(run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof({ result: r })); })).stdout, /proof does not prove, TestA/m, r);
   assert.match(run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof({ test: "TestB" })); })).stdout, /proof does not prove, TestA/m, "a fails of another test");
+});
+
+test("tdd off (triage without tdd, or tdd false): neither DEC-21 nor DEC-22 applies, as in 0.14.0", () => {
+  for (const off of [undefined, false]) {
+    const e = clean().map(at(RV7));
+    if (off !== undefined) e[0].tdd = off;
+    const r = run(e);
+    assert.equal(r.status, 0, r.stdout);
+    const p = run(tdd((x) => { x[0].tdd = off; x[7].result = "passes"; x.splice(5, 1); }));
+    assert.equal(p.status, 0, p.stdout);
+  }
+  assert.match(run(tdd((x) => { x[0].tdd = "yes"; })).stdout, /^LEDGER line 1: triage tdd must be true or false/m);
+  const sticky = run(tdd((x) => { x.splice(1, 0, at(RV7)(ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["Makefile"] }))); x.splice(6, 1); }));
+  assert.match(sticky.stdout, /^DEC-21 /m, "a later triage without tdd does not turn it off");
 });

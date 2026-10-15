@@ -25,7 +25,9 @@ export const FIELDS = {
   release_tool: { required: false, enum: ["none", "release-please", "changesets", "semantic-release", "goreleaser", "other"] },
   changelog: { required: false },
   version_files: { required: false, list: true },
-  // DEC-21: `yes` asks the coder to commit the failing test before the fix; unset means no.
+  // DEC-21, DEC-22 apply only with tdd: yes (unset means no). test_first_commit: yes asks the coder to commit the failing
+  // test before the fix; it means something only with tdd: yes (loadProfile warns otherwise).
+  tdd: { required: false, enum: ["no", "yes"] },
   test_first_commit: { required: false, enum: ["no", "yes"] },
 };
 export const RELEASE_FIELDS = ["release_when", "release_via", "release_tool", "changelog", "version_files"];
@@ -92,7 +94,9 @@ export function loadProfile(root, path) {
   const file = resolve(root, path ?? ".agents/project.md");
   if (!existsSync(file)) return { file, data: null, warnings: [] };
   const warnings = [];
-  return { file, data: parseProfileText(readFileSync(file, "utf8"), warnings), warnings };
+  const data = parseProfileText(readFileSync(file, "utf8"), warnings);
+  if (data?.test_first_commit === "yes" && data.tdd !== "yes") warnings.push("test_first_commit is yes but tdd is not yes: it has no effect");
+  return { file, data, warnings };
 }
 
 // The segments of a glob, as globMatch reads them; none (`""`, `/`, `./`, `//`) would match every file.

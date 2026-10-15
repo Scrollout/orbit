@@ -126,13 +126,13 @@
       "id": "DEC-21",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "the coder's report shows each proof and fix-round test red, then green (`RED <test> -- ` and `GREEN <test> -- ` lines), or `CANNOT FAIL FIRST <test> -- <reason>` (exempt from the reviewers' revert check); `scripts/proof-check.mjs --coder` passes on it before any review."
+      "text": "with the profile's `tdd: yes`, the coder's report shows each proof and fix-round test red, then green (`RED <test> -- ` and `GREEN <test> -- ` lines), or `CANNOT FAIL FIRST <test> -- <reason>` (exempt from the revert check); `scripts/proof-check.mjs --coder` passes on it before any review."
     },
     {
       "id": "DEC-22",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "reviewers revert only the production part of the diff in a scratch worktree, run each non-exempt test of the coder's report alone with the profile's targeted-test command, and write `PROOF CHECK <test> -- fails|passes|not checked: <reason>|exempt`; a pass is a CONFIRMED finding (proof does not prove) and blocks the merge until a later `fails` of that test."
+      "text": "with the profile's `tdd: yes`, reviewers revert only the production part of the diff in a scratch worktree, run each non-exempt test of the coder's report alone with the profile's targeted-test command, and write `PROOF CHECK <test> -- fails|passes|not checked: <reason>|exempt`; a pass is a CONFIRMED finding (proof does not prove) and blocks the merge until a later `fails` of that test."
     },
     {
       "id": "OPR-01",

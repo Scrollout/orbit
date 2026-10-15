@@ -184,3 +184,18 @@ test("test_first_commit is optional: unset, no or yes pass; another value is a g
   const t = spawnSync("node", [join(here, "decide-triage.mjs"), "--root", root, "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
   assert.equal(t.status, 0, t.stdout);
 });
+
+test("tdd is optional: unset, no or yes pass; another value is a gap; test_first_commit yes without tdd yes warns", () => {
+  for (const v of ["no", "yes"]) assert.equal(run(rootWith(block(`${full}\ntdd: ${v}`))).status, 0, v);
+  assert.equal(run(rootWith(block(`${full}\ntdd: maybe`))).stdout.trim(), "profile gap: tdd");
+  const w = run(rootWith(block(`${full}\ntest_first_commit: yes`)));
+  assert.equal(w.status, 0);
+  assert.match(w.stderr, /^profile warning: test_first_commit is yes but tdd is not yes/m);
+  assert.doesNotMatch(run(rootWith(block(`${full}\ntdd: yes\ntest_first_commit: yes`))).stderr, /test_first_commit/);
+  const t = (body) => spawnSync("node", [join(here, "decide-triage.mjs"), "--root", rootWith(block(body)), "--files", "x.md", "--lines", "sec=no,door=no,prod=no", "--kind", "small"], { encoding: "utf8" });
+  assert.match(t(`${full}\ntdd: yes`).stdout, /^tdd: yes$/m);
+  assert.match(t(full).stdout, /^tdd: no$/m);
+  const bad = t(`${full}\ntdd: maybe`);
+  assert.equal(bad.status, 0, bad.stdout);
+  assert.match(bad.stdout, /^tdd: no$/m);
+});

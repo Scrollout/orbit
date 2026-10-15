@@ -2,7 +2,7 @@
 //   node <plugin>/scripts/decide-triage.mjs --root . (--base <ref> --branch <ref> | --files a,b)
 //     [--lines sec=yes|no,door=yes|no,prod=yes|no] [--kind small|design|incident] [--profile path]
 // A branch whose `git diff --name-only <base>...<branch>` (three dots) touches a profile security glob forces sec=yes.
-// Prints the track, the per-role call caps (rules/tracks.json) and the coder model; a line left unset is a
+// Prints the track, the per-role call caps (rules/tracks.json), the coder model and tdd (DEC-21, DEC-22: record it on the triage event); a line left unset is a
 // `triage gap` (exit 2), never a guess: a forced security yes does not fill the door or prod lines, the one-way-door
 // question is separate. `prod` is skipped when the profile has no production_env. `--files` triages planned paths when
 // there is no branch yet (step 2 of /decide). Exit codes: 0 ok, 1 profile gap, 2 triage gap, 64 usage, 70 git failure.
@@ -20,8 +20,8 @@ if (!planned && (!base || !branch)) { console.error("usage: decide-triage.mjs --
 
 const { data: profile } = loadProfile(root, flag("profile"));
 // production_env TODO is not a profile gap here: it just means the prod= line must be given (or the field set to none).
-// Release fields and test_first_commit do not affect triage.
-const pg = gaps(profile).filter((g) => g !== "production_env" && g !== "test_first_commit" && !RELEASE_FIELDS.includes(g));
+// Release fields, tdd and test_first_commit do not affect triage; tdd is printed (anything but yes is no) for the triage event.
+const pg = gaps(profile).filter((g) => g !== "production_env" && g !== "tdd" && g !== "test_first_commit" && !RELEASE_FIELDS.includes(g));
 if (pg.length) { for (const g of pg) console.log(`profile gap: ${g}`); process.exit(1); }
 const kind = flag("kind");
 if (kind !== undefined && !["small", "design", "incident"].includes(kind)) { console.error(`bad --kind: ${kind} (small, design or incident)`); process.exit(64); }
@@ -68,3 +68,4 @@ console.log(`track: ${track}`);
 console.log(`caps: ${T.roles.map((r) => `${r} ${caps[r][0] === caps[r][1] ? caps[r][0] : caps[r].join("-")}`).join(", ")}`);
 console.log(`max calls: ${caps.max}`);
 console.log(`coder model: ${anyYes || kind === "incident" ? "opus" : "sonnet"}`);
+console.log(`tdd: ${profile.tdd === "yes" ? "yes" : "no"}`);
