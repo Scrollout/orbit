@@ -538,3 +538,12 @@ test("tdd auto: a recorded tdd false that tdd-suggest would call yes (security p
   assert.match(warn.stdout, /^warn: line 1: triage of t touches production code \(src\/a\.go\) with tdd false under tdd: auto/m);
   assert.doesNotMatch(runA(tri({ sec: "no", files: ["docs/a.md"] })).stdout, /tdd false/);
 });
+
+test("condition events: needs topic, id, step, test and status; status is open or proved", () => {
+  const c = (o = {}) => ev("condition", { topic: "t", id: "C1", step: "s1", test: "TestDenyPath", status: "open", ...o });
+  assert.equal(run([...clean(), c(), c({ status: "proved" })]).status, 0);
+  const bad = run([...clean(), c({ status: "done" })]);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /LEDGER line 11: condition status must be open or proved/);
+  assert.match(run([...clean(), c({ test: undefined })]).stdout, /condition needs test/);
+});

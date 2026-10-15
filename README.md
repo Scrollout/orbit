@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.15.3 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.16.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -88,6 +88,7 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 | `release` | `tag`, `url`, `via` (`session` default, or `ci`), `verify_tag`, `latest`, `prerelease` |
 | `coder_report` | `branch`, `evidence` (`ok` or `gap`, the exit of `proof-check.mjs --coder`), `tests` (its `--json` `required`: the RED/GREEN tests, `[]` when none), `exempt` (the CANNOT FAIL FIRST ones), `sha` |
 | `proof_check` | `branch`, `sha` (the reviewed head), `test`, `result` (`fails`, `passes`, `not-checked`, `exempt`) |
+| `condition` | `topic`, `id`, `step`, `test` (the proof test name), `status` (`open` or `proved`) |
 
 The audit covers the `script` rules: reviews only on green CI of every recorded workflow and never on a red one, no second review of a sha without a fix, one re-reviewer per fix round on a new sha, security glob matches sticky, caps (delivery reviewers excluded), coder and reviewer models, merge only for a reviewed branch (or an owner waiver) with tree equality and green catch-up CI, base push alone, by the profile's pusher and only for a built merge, issue close after that push with `origin/<base>` equal to the merge sha; releases (OPR-09): a SemVer tag, annotated and pushed alone by its full ref by the profile's pusher (a `release_tool`'s own tags from CI excepted) on a commit pushed to the base (or a `release/X.Y` line), never moved; a release only from a pushed tag, with `--verify-tag` unless CI made it, made the way `release_via` says, `latest` only on the highest version, a pre-release marked as one, never re-created; TDD evidence, only for a topic whose `triage` recorded `tdd: true`: a review starts only after a `coder_report` with evidence `ok` since the last coder run (DEC-21, when that coder run is stamped with rules 1.7.0 or later), and a merge needs a `proof_check` on the reviewed head for every test in the `coder_report`'s `tests` (exempt tests need none; `not-checked` is a `warn:`) and no test whose `passes` was not cleared by a later `fails` (DEC-22); on a `tdd: true` topic a rules version going backwards is a LEDGER violation and mixed versions a `warn:`; a profile with `tdd: yes` and a triage (rules 1.7.0 or later) without `tdd: true` is a LEDGER violation; with `tdd: yes` or `auto` a rules version going backwards anywhere in the ledger is one; with `auto`, a triage that records `tdd: false` where `tdd-suggest` (from the triage files alone) says yes for a security path or one-way door is one, and `tdd: false` on a triage that touches production code is a `warn:`; an all-exempt coder report on a step that touches production code is a `warn:`; with `release_when: change-set` (and no `release_tool`), no merge is pushed while the previous one has no release (a last unreleased merge, or an unset `release_when`, is a `warn:`). Signing and the milestone-close timing are not in the ledger: `release-check --repo` reports signing, the worker's report the timing. The ledger is self-reported: it finds drift, it does not prove honesty.
 
@@ -104,11 +105,14 @@ The audit covers the `script` rules: reviews only on green CI of every recorded 
 - **Add one**: copy a close scenario, edit the ledger, run `--print`, check that every violation is the one you meant, save it as `expect.json`. A new `script` rule needs a scenario that expects its id (a test checks it).
 - **Why they fail on purpose**: `scenarios/pin.json` holds the `/decide`, operator and rules versions the scenarios were reviewed against. An edit that changes behaviour fails its scenario; an edit that does not change it still needs a version bump (manifest), which fails the pin until the scenarios are re-read and the pin is updated. Scenarios use the anonymised fixture only; a test rejects project, host and user names.
 
-### Next steps (not built yet)
-- Cross-project diff: compare two profile blocks and flag the fields that differ.
-- Decision-record lint: parse the decision-record table for columns, verdict words and the three triage lines.
-- Condition ledger: `condition` events so every security condition has a proof test before the merge.
-- Ledger auto-capture: hooks append `agent_start` and `push` events so the ledger does not depend on the operator remembering.
+### Ledger auto-capture
+- `hooks/capture.mjs` (PostToolUse on `Bash`) appends `push` (`ref`, `sha`, `chained`, `by: agent`) for a successful `git push`, in a project whose main checkout has a profile (`.agents/project.md`), by `scripts/ledger.mjs`. The event goes to the main checkout's ledger even when the push ran in a worktree (`git -C <dir>` and `cd <dir> &&` are followed for the sha and the branch). The command is read the way a shell reads it, so a push inside a quoted string or heredoc records nothing; dry runs, deletes, tag pushes and a response that shows an error are skipped; the command line and remote are never recorded. Fail-open: any error means no event, never a blocked call. The owner's pushes are not seen, and `agent_start` stays a hand-appended event. Tests: `scripts/capture.test.mjs`.
+
+### Condition ledger
+- `condition` events (`topic`, `id`, `step`, `test`, `status` open or proved) track each condition of a security `conditions` verdict. `node scripts/condition-check.mjs [ledger] [--topic <branch>] [--json]` fails (exit 2, `condition gap:` lines) for a condition still open, or proved by a test that no `coder_report` of the topic lists (after the condition was opened) and no later `proof_check` shows failing without the change, or whose last `proof_check` passes; `--topic` with no condition of that topic also fails. The audit validates the event (`status`); the check is the merge-ready gate. Tests: `scripts/condition-check.test.mjs`.
+
+### Decision-record lint
+- `node scripts/decision-lint.mjs <record|-> [--json]` reads the step 8 table: the seven columns, a PM row, the verdict word for each call (security `accept|conditions|block`, PM and tech lead `adopt|reject <proposal>`, engineers and reviewers `for|against <proposal>`), a Conditions cell for `conditions`, no empty or placeholder cell, and, after the table, the three triage lines (`Security paths:`, `One-way door:`, `Touches real:`, exact labels at the start of a line) answered yes or no. Exit 2 with `decision gap:` lines, 64 bad usage. It checks the shape, not the judgment. Tests: `scripts/decision-lint.test.mjs`.
 
 ## Releases
 Every project that sets `release_when` releases like a team with a release process: operator rule OPR-09, steps in [the merge protocol](skills/operator/refs/merge-protocol.md#releases), checked by the audit.

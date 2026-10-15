@@ -14,6 +14,7 @@
 //   coder_report{branch,evidence,tests,exempt?,sha?}   evidence: ok or gap, the exit of scripts/proof-check.mjs --coder (DEC-21); tests: the proved
 //                                              (RED/GREEN) test names, exempt: the CANNOT FAIL FIRST ones (proof-check --json)
 //   proof_check{branch,sha,test,result}        result: fails, passes, not-checked or exempt, one per PROOF CHECK line (DEC-22)
+//   condition{topic,id,step,test,status}       a security condition and its proof test; status open or proved (checked by scripts/condition-check.mjs)
 // DEC-21 and DEC-22 apply only to a topic whose triage recorded tdd: true (unset or false: neither, as before 0.15.0).
 // DEC-21 applies to a review when the last coder run (or, without one, the review) is stamped with rules 1.7.0 or later; DEC-22's
 // coverage when the coder_report before the review is. A rules version going backwards in the ledger is a LEDGER violation.
@@ -40,11 +41,11 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 // DEC-21, DEC-22: only for events stamped with rules 1.7.0 or later
 const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };
@@ -253,6 +254,10 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       bs(e.branch).report = e;
       const code = codeFiles(triage[e.branch]?.files);
       if (tddOn.has(e.branch) && !e.tests.length && (e.exempt ?? []).length && code.length) warns.push(`warn: line ${n}: every test of ${e.branch}'s coder_report is exempt but the step touches production code (${code.slice(0, 5).join(", ")})`);
+      break;
+    }
+    case "condition": {
+      if (!["open", "proved"].includes(e.status)) v("LEDGER", n, `condition status must be open or proved, got ${JSON.stringify(e.status)}`);
       break;
     }
     case "proof_check": {

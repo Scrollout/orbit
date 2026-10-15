@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0
+- Ledger auto-capture (rules 1.8.2): the PostToolUse hook `hooks/capture.mjs` appends `push` for a successful `git push` (ref, sha, chained, `by: agent`) to the main checkout's ledger, following `git -C` and `cd`, reading the command like a shell (quotes and heredocs record nothing), skipping tag pushes and failed responses. Fail-open and silent without a profile; no command line or remote is recorded. `agent_start` is not captured (wrong checkout, recorded after the call): it stays hand-appended.
+- Condition ledger: `condition` events (`topic`, `id`, `step`, `test`, `status` open or proved), validated by the audit, and `scripts/condition-check.mjs`, which fails a topic with a condition still open or proved by a test that no later `coder_report` lists and no later `proof_check` shows failing, and `--topic` with no condition.
+- Decision-record lint: `scripts/decision-lint.mjs` checks the step 8 table (columns, verdict words by role, conditions, placeholders) and the three triage lines; exit 2 on gaps. `/decide` 1.4.2 and operator 1.5.1: `push` is no longer appended by hand (the owner's excepted); the ledger ref documents the new kind and the capture, the record ref the lint. Scenario `ledger-condition-bad-status`, pin updated.
+- README: the "Next steps" section is gone (its four items are built or dropped).
+
 ## 0.15.3
 - Static-analysis findings fixed (rules 1.7.3 to 1.7.6; no behaviour change): the ReDoS-prone and non-literal regexes in `hooks/guard.mjs`, the audit, OKF, release-check, intent-plan and proof-check parsers are plain code or simple patterns (`scripts/rx.mjs`, pinned by `scripts/rx.test.mjs` and `scripts/rx-diff.test.mjs`, which run the former regexes as the reference over generated inputs); the CI baseline holds only the reference regexes of that differential test. Eleven new golden scenarios cover the checks that had unit tests only, the anonymisation tests use a hashed denylist (`scripts/denylist.mjs`), and a line break inside the argument of `node --eval=` or `env -S` no longer skips the guard's scripter and env-split checks (#4).
 
