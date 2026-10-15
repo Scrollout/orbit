@@ -7,6 +7,13 @@
         "no-unused-vars": 1,
         "no-regex-spaces": 2
       }
+    },
+    {
+      "file": "scripts/proof-check.mjs",
+      "counts": {
+        "no-useless-escape": 1
+      },
+      "reason": "unnecessary escape at line 85, new in 0.15.0; reported, not fixed in the CI-only change"
     }
   ],
   "security": [
@@ -86,6 +93,13 @@
       "counts": {
         "security/detect-non-literal-regexp": 1
       }
+    },
+    {
+      "file": "scripts/proof-check.mjs",
+      "counts": {
+        "security/detect-unsafe-regex": 1
+      },
+      "reason": "possible ReDoS at line 26, new in 0.15.0; triage with Scrollout/orbit#3"
     }
   ]
 }
