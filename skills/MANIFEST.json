@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.4.2",
-      "hash": "340ec6d342792dabd2f790a5e57fe5250d9ead1187a99791e8a1d2c71ddbc921",
+      "version": "1.4.4",
+      "hash": "dc4fe511be23bbcc4fe4541d272a782d20322cd30555f8980d259869122db130",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -34,8 +34,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.5.1",
-      "hash": "0ea864cb0fb519ae05b7b88527e9ba5795538a0d8ddcbc53540f8dc85ccf1289",
+      "version": "1.5.3",
+      "hash": "3aeb2ea6b6150fc15c130e80863a428a659bc637577d467ea9b4a18e50741515",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -53,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.9.0",
-      "hash": "daa7f75ef3e67dd5c09750717d457c68b0c94c82dc3cf1b190308824029b3a5b",
+      "version": "1.10.1",
+      "hash": "14d6becbf94633b6c84af8f870d1de85ac4e5e46a76aefc6dbfefa2758e1d8a1",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -93,7 +93,6 @@
         "agents/designer.md",
         "agents/explorer.md",
         "agents/operator.md",
-        "agents/re-reviewer.md",
         "agents/reviewer.md",
         "agents/security.md",
         "scenarios/dec-01-review-before-green/expect.json",

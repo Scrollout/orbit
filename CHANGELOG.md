@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.18.0
+- One `reviewer` agent with two modes (rules 1.10.1, `/decide` 1.4.4, operator 1.5.3, scenario pin and manifest bumped): the full review of a built step (default) and a fix-round mode, used only when the brief starts with the line `Mode: fix-round` (with the kept findings and the fix's `<base>..<branch>`; without it the full review runs). Fix-round mode also applies the security check to the fix diff and caps new findings at five (full review: ten). The `re-reviewer` agent is removed; DEC-14 and DEC-19 now name the reviewer in fix-round mode (model set per call: Sonnet only for a tests-or-docs-only fix round, else Opus). The ledger role value `re-reviewer` stays on `agent_start` and `review_start` events, so the audit is unchanged.
+
 ## 0.17.0
 - The architect agent judges from a hyperscale-operator mindset (rules 1.9.0, scenario pin and manifest bumped): control and data planes apart, failure domains, retry-safe calls, safe change, operable at 2 a.m., with the simplicity lens as the counterweight.
 

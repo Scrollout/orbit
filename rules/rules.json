@@ -1,5 +1,5 @@
 {
-  "version": "1.9.0",
+  "version": "1.10.1",
   "rules": [
     {
       "id": "DEC-01",
@@ -84,7 +84,7 @@
       "id": "DEC-14",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "the `re-reviewer` runs once per fix round, after the fix's first green CI run; still open after that, stop and show the owner both positions."
+      "text": "the `reviewer` in fix-round mode runs once per fix round, after the fix's first green CI run; still open after that, stop and show the owner both positions."
     },
     {
       "id": "DEC-15",
@@ -114,7 +114,7 @@
       "id": "DEC-19",
       "file": "commands/decide.md",
       "tag": "script",
-      "text": "reviewers run on Opus; the `re-reviewer` runs on Sonnet only when the fix round changes only tests or docs, otherwise on Opus."
+      "text": "reviewers run on Opus; the `reviewer` in fix-round mode runs on Sonnet only when the fix round changes only tests or docs (model set per call), otherwise on Opus."
     },
     {
       "id": "DEC-20",
