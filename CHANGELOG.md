@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.17.0
+- The architect agent judges from a hyperscale-operator mindset (rules 1.9.0, scenario pin and manifest bumped): control and data planes apart, failure domains, retry-safe calls, safe change, operable at 2 a.m., with the simplicity lens as the counterweight.
+
 ## 0.16.2
 - `base_pusher: operator` is accepted as a documented legacy alias of `agent` (rules 1.8.4, scenario pin and manifest bumped): the profile parser normalizes it to `agent` before any reader (triage, audit, guard, intent-plan, capture, release-check) sees it and warns `base_pusher: operator is a legacy alias of agent; write agent`; any other value stays a gap. Profiles that wrote `operator` no longer fail with `profile gap: base_pusher`.
 
