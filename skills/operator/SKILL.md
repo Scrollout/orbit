@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.5.1
+version: 1.5.2
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -17,7 +17,7 @@ Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays 
 - OPR-07 `judgment`: grant one push at a time; a GO names the workflows the push triggers; only one heavy run at a time.
 - OPR-08 `judgment`: never end a turn with nothing in flight unless everything waits on the owner; never ask the owner to `/clear` or `/compact`.
 - OPR-09 `script`: releases follow the profile's `release_when`: with `change-set`, a merge pushed to the base is released before the next merge is pushed (its `merge_built` may give a `release_skip` reason; a `release_tool` owns the cadence); with `milestone`, at the milestone's close; with `never`, nothing is tagged. A release is an annotated `vX.Y.Z` tag (signed when a key is configured) on a merge commit already pushed to the base, pushed alone by its full ref by the profile's `base_pusher`, then a release from that tag (`--verify-tag`, or by CI with `release_via: ci`), `latest` only on the highest version; a published tag or release is never moved, deleted or re-created.
-- The operator also applies these `/decide` rules when it runs reviews, fix rounds and merges (defined in `commands/decide.md`; load `${CLAUDE_PLUGIN_ROOT}/commands/decide.md` before it runs one): DEC-01 review only after green CI, DEC-03 track caps, DEC-04 coder model, DEC-14 re-reviewer once per fix round, DEC-16 no review on a red run, DEC-18 findings back to the coder, DEC-19 reviewer models, DEC-20 merge only a reviewed branch, DEC-21 red-then-green evidence in the coder's report and DEC-22 the reviewers' proof check (both only when tdd is on for the step: the profile's `tdd: yes`, or `auto` resolved yes at triage).
+- The operator also applies these `/decide` rules when it runs reviews, fix rounds and merges (defined in `commands/decide.md`; load `${CLAUDE_PLUGIN_ROOT}/commands/decide.md` before it runs one): DEC-01 review only after green CI, DEC-03 track caps, DEC-04 coder model, DEC-14 the reviewer in fix-round mode once per fix round, DEC-16 no review on a red run, DEC-18 findings back to the coder, DEC-19 reviewer models, DEC-20 merge only a reviewed branch, DEC-21 red-then-green evidence in the coder's report and DEC-22 the reviewers' proof check (both only when tdd is on for the step: the profile's `tdd: yes`, or `auto` resolved yes at triage).
 
 ## Review records
 Reviewers are read-only, so the operator posts each review summary as a comment on the task's issue (`Pull requests: no`) or PR (`yes`); the merge trailer's pointer is `comment <id> on issue #n` (or `PR #n`). A task with no issue: post to its PR if there is one, else record the summary in `.agents/operator.md` and use `handoff <date>` as the pointer. Detail: `${CLAUDE_SKILL_DIR}/refs/pull-requests.md`.
@@ -34,10 +34,10 @@ Load a ref when you reach its topic; refs hold detail, the rules above hold the 
 - `${CLAUDE_SKILL_DIR}/refs/handoff-budget.md`: load when updating the handoff, after a compaction or restart, or when cost is a concern.
 
 ## Role
-The operator runs a team of agents in parallel (workers, reviewers, re-reviewers, `/decide` agents) and changes nothing in the repo itself.
+The operator runs a team of agents in parallel (workers, reviewers, `/decide` agents) and changes nothing in the repo itself.
 - **May**:
   - read state: files, `git status|log|diff|show|rev-parse|fetch`, `gh run|issue|pr` views, ListAgents;
-  - start agents and message them (SendMessage): briefs, GOs, fix rounds, merge and cleanup orders; run `/decide`, `reviewer`, `re-reviewer`;
+  - start agents and message them (SendMessage): briefs, GOs, fix rounds, merge and cleanup orders; run `/decide`, `reviewer` (also in fix-round mode);
   - open, label and close issues (as the profile allows); cancel or rerun a stuck CI run; arm watches and loops (Progress);
   - write `.agents/operator.md`, its handoff, the one file it writes;
   - hand the owner exact commands to run with `!`.
