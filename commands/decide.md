@@ -1,7 +1,7 @@
 ---
 description: Act as project manager and run a decision the way a team does - triage, discovery, proposals, design review, sign-off, decision record, delivery - with only the people the question needs
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.4.3
+version: 1.4.4
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
@@ -49,4 +49,4 @@ Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` when naming calls, choos
 3. to 7. **Discovery, proposal, design review, research, sign-off.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/discovery-signoff.md` before step 3 and follow it through step 7; it covers the brief and hypotheses, engineer focuses, reviewers, the security officer, the one research round, the tech lead's sign-off, the missing-fact round and the Contest escalation.
 8. **Decision record.** Always. Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/record.md` for the table shape and the lines after it.
 9. **Act.** Update the docs with the decision (a decision record when it is new, in the profile's format and location), write the failing test or check first, and implement. Delegate a decided build step with a clear spec to `coder` on a new worktree branch (the profile's convention), passing the conditions and the `proof` test; commit there only. With an operator session, every write (docs, decision record, failing test, implementation) goes to a worker; the PM writes nothing in the repo. Merge as step 10 says, the base pushed by whoever the profile's "who pushes the base" names; deploy stays with the owner unless the profile says otherwise.
-10. **Delivery.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/delivery.md` when delegating or delivering a build: step split, coder and fix-round reviewer models, caps, CI test policy, review, issues, triage of findings, merge build, fix round.
+10. **Delivery.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/delivery.md` when delivering a build: step split, models, caps, CI test policy, review, issues, findings, merge build, fix round (the `reviewer` brief starts `Mode: fix-round`).
