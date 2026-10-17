@@ -1,6 +1,6 @@
 # CI for the Orbit repo
 
-**TL;DR:** `make ci` runs vet, quality and security inside a pinned toolbox image (host needs git, make, docker) and prints a Markdown report; GitHub Actions runs the same and publishes it as the job summary. Everything lives under `ci/`, plus the root `Makefile` and `.github/workflows/ci.yml`; no plugin file is touched or needed by CI.
+**TL;DR:** `make ci` runs vet, quality and security inside a pinned toolbox image (host needs git, make, docker) and prints a Markdown report; GitHub Actions runs the same as parallel jobs (one toolbox image build; the job `ci` is the required check) once per push to a PR branch, and publishes it as the job summary. Everything lives under `ci/`, plus the root `Makefile` and `.github/workflows/ci.yml`; no plugin file is touched or needed by CI.
 
 ## Targets
 | Target | Does |
@@ -14,6 +14,7 @@
 | `make report` | prints the Markdown report of the last run |
 | `make report-test` | renderer self-test on `ci/fixtures/` (pass, fail, skipped, oversize); also run by `make vet` |
 | `make ci` | vet, quality, security; every check runs even after a failure; prints the report; exit status is the failure; clears `ci/out` first |
+| `make bump V=x.y.z [RULES=x.y.z]` | version ritual: `plugin.json`, optional `rules/rules.json` version, `manifest --update` |
 
 A check prints `<target>/<check>: pass|fail|skipped`, a target `PASS`/`FAIL`.
 
