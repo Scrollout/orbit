@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.22.3
+The unattended go says why it did not apply (rules 1.15.25; scenario pin and manifest updated).
+- **Failed check named** (`hooks/guard.mjs`): in a mode that prompts, a go shape that fails a check asked with only "approve only if you gave the go"; its ask (and the `dontAsk` deny) now has the line `the go did not apply: <check>`, in the words of the `bypassPermissions` deny. What is allowed, asked or denied is unchanged. `ci/tsc-baseline.json`: `hooks/guard.mjs` TS2339 57 to 55 (two findings gone with it).
+- **Merged topic delete** (`scripts/unattended.test.mjs`): a real repo with a bare origin shows `git [-C <dir>] push origin --delete <topic>` of a `--no-ff` merged topic allowed in every mode but `plan`, and an unmerged, absent, protected or respelled one not. A delete that asked under an open go had failed the floor check: the session's main checkout (its cwd's repository, also for a `-C` into another one) had no profile `base_branch`, so no go shape applied; the README says so.
+
 ## 0.22.2
 Plugin-guideline compliance batch, and the unattended go in every permission mode but plan (rules 1.15.24, command `decide` 1.7.8, command `unattended` 1.1.6, skill `peer` 1.1.2; scenario pin and manifest updated).
 - **Unattended go in every mode but plan** (`hooks/go.mjs`, `hooks/guard.mjs`, `hooks/unattended.mjs`, `hooks/capture.mjs`): the go no longer needs `bypassPermissions`; for its session's main thread the guard answers the verified pinned base push, tag push, `gh release create` and merged-branch delete with the hook's `allow`, so `/orbit:unattended on` removes their prompts in any mode but `plan` (there they ask or deny as without a go). Nothing else is ever allowed; other shared actions and failed checks keep their mode's ask or deny. A word the shell expands (glob, brace, `~`, `$VAR`, `$(...)`) is no go shape, so `-t`/`-n` cannot upload files; capture logs class `go` only for a call the guard allowed. Docs: a hook `allow` does not override a settings deny rule and may skip the owner's settings `ask` rules for `git push`.

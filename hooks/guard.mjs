@@ -1627,14 +1627,16 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
 // The decision for a shared finding: deny when not alone or when the mode cannot prompt, else ask.
 // Under the go in bypassPermissions (go: goSession) every shared action other than the go's own (base push, release steps,
 // merged branch delete; a verified one is allowed before this, in every mode) is denied: it waits for the owner.
-function sharedDecision(f, input, multi, go = null) {
+// goWhy: the check a go shape failed in a mode that is not bypassPermissions, named in the answer as the go's deny names it.
+function sharedDecision(f, input, multi, go = null, goWhy = null) {
   if (go) {
     const base = f.sub === "push" && f.what === "push to protected branch" && f.dst ? safe(f.dst) : null;
     return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only its verified release steps and merged branch deletes)", do: base ? `push the verified merge as git push origin <40-hex sha>^{object}:refs/heads/${base}` : "leave it for the owner" });
   }
   if (multi) return outwardReason("DENY", f, input, { note: "not alone in its call", do: "run it alone in its own call" });
-  if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
-  return { ask: outwardReason("ASK", f, input) };
+  const why = goWhy ? `the go did not apply: ${goWhy}` : undefined;
+  if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: why ? `no prompt in this permission mode; ${why}` : "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
+  return { ask: outwardReason("ASK", f, input, { note: why }) };
 }
 
 function mcpOut(tool, ti) {
@@ -1945,7 +1947,7 @@ function claudeWrite(cmds, st, dirs) {
 // Under the go: the base push of a verified merge (pinned sha), the literal delete of a merged topic branch, and the release
 // steps bound to a verified merge (its pinned semver tag push and gh release create, #41). A ref form is denied with the pinned
 // command to run (git re-resolves a ref at push time). null: not one of them (classify as usual); { allow: reason } (the hook's
-// "allow", so no permission mode prompts for it), reason naming the pinned shape; or the deny reason naming the check that failed.
+// "allow", so no permission mode prompts for it), reason naming the pinned shape; or { deny: reason, why } naming the check that failed.
 function goAction(cmds, cwd, input, getCtx, env) {
   const g = goForm(cmds);
   if (!g) return null;
@@ -1957,7 +1959,7 @@ function goAction(cmds, cwd, input, getCtx, env) {
   const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${pinned ? pinned.slice(0, 12) : safe(g.src)}` : g.kind === "delete" ? `git push --delete → origin/${safe(g.name)}`
     : g.kind === "tag" ? `git push → origin tag ${g.tag}${pinned ? ` at ${pinned.slice(0, 12)}` : ""}` : `gh release create ${g.tag}`;
   const what = { base: "unattended base push", delete: "unattended branch delete", tag: "unattended tag push", release: "unattended release" }[g.kind];
-  const no = (why, run) => outwardReason("DENY", { what, action }, input, { note: why, do: run ? `run the pinned form instead: ${run}` : "leave it for the owner" });
+  const no = (why, run) => ({ deny: outwardReason("DENY", { what, action }, input, { note: why, do: run ? `run the pinned form instead: ${run}` : "leave it for the owner" }), why });
   const shape = { base: "git push origin <sha>^{object}:refs/heads/<base>", tag: "git push origin <sha>^{object}:refs/tags/vX.Y.Z",
     release: "gh release create vX.Y.Z", delete: "git push origin --delete <merged topic>" }[g.kind];
   const ok = () => ({ allow: outwardReason("ALLOW", { what, action }, input, { note: `the unattended go's verified pinned shape: ${shape}`, do: "nothing: the go allows it" }) });
@@ -2059,19 +2061,20 @@ export function guard(input, env = {}, ctx = null) {
   if (d) return outwardReason("DENY", withCommit(d), input);
   // The go (its session's main thread, any permission mode but plan): a verified pinned shape is allowed outright, and marked
   // for capture. A failed check denies in bypassPermissions (nobody answers a prompt); in a mode that prompts the call is
-  // classified as without a go.
+  // classified as without a go, and its answer names the failed check.
+  let goWhy = null;
   if (goState(input, env)) {
     const a = goAction(cmds, cwd, input, getCtx, env);
-    if (a !== null) markAllowed(input, env, typeof a?.allow === "string");
+    if (a !== null) markAllowed(input, env, typeof a.allow === "string");
     if (typeof a?.allow === "string") return a;
-    if (go && typeof a === "string") return a;
+    if (typeof a?.deny === "string") { if (go) return a.deny; goWhy = a.why; }
   }
   if (op || /\bgit\b/.test(ti.command)) {
     const r = checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
     if (r) return r;
   }
   const s = out.findings.find((f) => f.cls === "shared");
-  return s ? sharedDecision(withCommit(s), input, out.multi, go) : null;
+  return s ? sharedDecision(withCommit(s), input, out.multi, go, goWhy) : null;
 }
 
 // The hook entry: raw stdin in, { code, stdout, stderr } out. Fails closed only for the operator.

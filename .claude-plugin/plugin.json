@@ -1,6 +1,6 @@
 {
   "name": "orbit",
-  "version": "0.22.2",
+  "version": "0.22.3",
   "description": "Personal team workflow for Claude Code: role agents, a /decide PM command, an operator that keeps worker agents in progress, and a PreToolUse guard that denies destructive git and GitHub actions and has the owner approve shared ones.",
   "author": {
     "name": "Marius Gologan"

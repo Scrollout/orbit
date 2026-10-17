@@ -1230,3 +1230,85 @@ test("#41 review 5: the go's evidence reads the real objects: a replace ref or a
     assert.ok(!ev.git(w, "rev-list", "--parents", "-n", "1", A).out.includes(X), "a graft");
   });
 });
+
+// ---------- 0.22.3: the merged topic delete on a real repo, and the failed check named in every answer ----------
+// A main checkout w with a bare origin r: topic ci1 merged into main with --no-ff, wip unmerged, release/1 and keep-1 (the
+// profile protects keep-*) on origin, gone only local; `other` is a second repo without a profile, like a session whose cwd
+// is another project. The guard's own context runs; only the URL read is stubbed (the go needs origin on github.com).
+function mergedRepo(fn) {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), "orbit-del-"))), w = join(d, "w"), r = join(d, "r.git"), other = join(d, "other");
+  try {
+    for (const a of [["init", "-q", "--bare", r], ["init", "-q", "-b", "main", w], ["init", "-q", "-b", "main", other]]) assert.equal(realGit(d, ...a).status, 0);
+    const g = (...a) => assert.equal(realGit(w, ...a).status, 0, a.join(" "));
+    mkdirSync(join(w, ".agents"));
+    writeFileSync(join(w, ".agents/project.md"), "# Profile\n\n```yaml orbit-profile\nbase_branch: main\nreview_trailer: Reviewed-by\nprotected_branches: [keep-*]\n```\n");
+    g("commit", "-q", "--allow-empty", "-m", "A");
+    g("remote", "add", "origin", r);
+    g("push", "-q", "origin", "main");
+    g("checkout", "-q", "-b", "ci1"); g("commit", "-q", "--allow-empty", "-m", "B"); g("push", "-q", "origin", "ci1");
+    g("checkout", "-q", "-b", "wip"); g("commit", "-q", "--allow-empty", "-m", "W"); g("push", "-q", "origin", "wip");
+    g("checkout", "-q", "main"); g("merge", "-q", "--no-ff", "-m", "Merge ci1", "ci1"); g("push", "-q", "origin", "main");
+    for (const b of ["release/1", "keep-1"]) { g("branch", b, "ci1"); g("push", "-q", "origin", b); }
+    g("branch", "gone", "ci1");
+    g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    const live = (cwd) => {
+      const c = realCtx(cwd, {});
+      return { ...c, evidence: () => {
+        const ev = c.evidence();
+        return { ...ev, git: (dir, ...a) => (a[0] === "remote" && a[1] === "get-url" ? { code: 0, out: ORIGIN } : ev.git(dir, ...a)) };
+      } };
+    };
+    fn({ w, other, live });
+  } finally { rmSync(d, { recursive: true, force: true }); }
+}
+
+test("0.22.3: under the go a merged topic delete is allowed on a real repo in every mode but plan; unmerged, protected, absent and respelled ones are not", () => {
+  mergedRepo(({ w, other, live }) => withGo((env) => {
+    for (const mode of ["default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"]) {
+      const who = { session_id: SID, cwd: w, permission_mode: mode }, at = (c, cwd = w) => guard(bash(c, { ...who, cwd }), env, live(cwd));
+      for (const c of [`git -C ${w} push origin --delete ci1`, "git push origin --delete ci1"]) assert.equal(kind(at(c)), "go", `${mode}: ${c}: ${JSON.stringify(at(c))}`);
+      // A failed check: the bypassPermissions deny names it; in a mode that prompts the answer is as without a go and names it too.
+      const failed = (c, why, cwd = w) => {
+        const r = at(c, cwd), text = typeof r === "string" ? r : r?.ask;
+        assert.equal(kind(r), mode === "bypassPermissions" || mode === "dontAsk" ? "deny" : "ask", `${mode}: ${c}`);
+        assert.ok(text.includes(mode === "bypassPermissions" ? `\nnote     ${why}\n` : `the go did not apply: ${why}\n`), `${mode}: ${c}: ${text}`);
+      };
+      failed(`git -C ${w} push origin --delete wip`, "it is not merged into origin/main");
+      failed(`git -C ${w} push origin --delete gone`, "the branch is not on origin");
+      // The session's cwd in another repo: the floor profile is that checkout's, which has none (so no base_branch).
+      failed(`git -C ${w} push origin --delete ci1`, "origin/HEAD (main) is not the main checkout profile's base_branch", other);
+      for (const b of ["main", "release/1", "keep-1"]) assert.equal(kind(at(`git -C ${w} push origin --delete ${b}`)), "deny", `${mode}: ${b}`);
+      for (const c of ["git push --delete origin ci1", "git push origin :ci1", "git push origin -d ci1", "git push origin --delete ci1 wip", "git push origin --delete ci?",
+        "git push origin --delete refs/heads/ci1", `git -C ${w} push origin --delete ci1 && echo ok`, "git push upstream --delete ci1"]) {
+        assert.notEqual(kind(at(c)), "go", `${mode}: ${c}`);
+      }
+    }
+    const plan = guard(bash("git push origin --delete ci1", { session_id: SID, cwd: w, permission_mode: "plan" }), env, live(w));
+    assert.equal(kind(plan), "ask", "plan: as without a go");
+    assert.ok(!plan.ask.includes("the go did not apply"), plan.ask);
+  }));
+});
+
+test("0.22.3: a go shape that fails a check in a mode that prompts asks naming the check in the deny's words; without a go no such line", () => {
+  withGo((env) => {
+    for (const { c, over } of [{ c: PINNED, over: ok41({ "config --bool --get push.followTags": "true" }) }, { c: PTAG, over: ok41({ ...PUSHED, [`rev-parse --verify -q ${TAGOBJ}^{commit}`]: P1 }) },
+      { c: "git push origin --delete old-topic", over: ok41({ [`merge-base --is-ancestor ${TIP} ${P1}`]: null }) }]) {
+      const deny = guard(bash(c), env, ctx(over));
+      assert.equal(kind(deny), "deny", c);
+      const why = /\nnote {5}(.*)\n/.exec(deny)[1];
+      for (const mode of ["default", "acceptEdits", "auto"]) {
+        const r = guard(bash(c, { ...MAIN, permission_mode: mode }), env, ctx(over));
+        assert.equal(kind(r), "ask", `${mode}: ${c}`);
+        assert.ok(r.ask.includes(`\nnote     the go did not apply: ${why}\ndo       approve only if you gave the go`), `${mode}: ${c}: ${r.ask}`);
+      }
+      const dont = guard(bash(c, { ...MAIN, permission_mode: "dontAsk" }), env, ctx(over));
+      assert.ok(dont.includes(`no prompt in this permission mode; the go did not apply: ${why}`), dont);
+    }
+  });
+  const h = home();
+  try {
+    const r = guard(bash(PINNED, { ...MAIN, permission_mode: "default" }), { HOME: h }, ctx(ok41({ "config --bool --get push.followTags": "true" })));
+    assert.equal(kind(r), "ask");
+    assert.ok(!r.ask.includes("the go did not apply"), r.ask);
+  } finally { rmSync(h, { recursive: true, force: true }); }
+});
