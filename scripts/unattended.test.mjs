@@ -52,8 +52,8 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
         }
         // Nested in sh -c, eval or find (#38): denied, never asked (the prompt would not show the real command).
         for (const c of [`bash -c "node ${repo}/hooks/unattended''.mjs on 24h"`, `bash -c 'node ${repo}/hooks/unattende?.mjs on 24h'`, `eval "node ${repo}/hooks/unattende''d.mjs on 24h"`,
-          `bash -c 'node ${SCRIPT} on 8h'`, `find ${repo}/hooks -name 'unattende?.mjs' -exec node {} on 24h \;`, `find ${repo} -path '*/hooks/unatt*' -exec node {} on 24h +`,
-          `find ${repo}/hooks -execdir bun {} on 24h \;`, `find ${repo}/hooks -iname 'UNATT*' | xargs -I{} node {} on 24h`]) {
+          `bash -c 'node ${SCRIPT} on 8h'`, `find ${repo}/hooks -name 'unattende?.mjs' -exec node {} on 24h \\;`, `find ${repo} -path '*/hooks/unatt*' -exec node {} on 24h +`,
+          `find ${repo}/hooks -execdir bun {} on 24h \\;`, `find ${repo}/hooks -iname 'UNATT*' | xargs -I{} node {} on 24h`]) {
           assert.equal(kind(g(c)), "deny", `${mode} ${k}: ${c}`);
         }
         // A glob that cannot match unattended.mjs, or a variable operand, is not the go's command: this rule does not deny it.
