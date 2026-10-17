@@ -19,6 +19,8 @@ export const FIELDS = {
   production_env: { required: false },
   standing_waivers: { required: false, list: true },
   ledger_path: { required: false },
+  // Branches the outward guard protects in addition to its fixed floor (main, master, release/*, origin/HEAD, base_branch); add-only.
+  protected_branches: { required: false, list: true },
   // Releases (OPR-09). Optional: unset means the audit checks release events but not when they are due.
   release_when: { required: false, enum: ["change-set", "milestone", "never"] },
   release_via: { required: false, enum: ["ci", "session"] },

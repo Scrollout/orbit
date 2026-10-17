@@ -20,6 +20,11 @@ const ctx = (over = {}) => ({
   mergeHead: () => null,
   baseShas: () => [],
   readFile: (f) => files[f] ?? null,
+  alias: () => null,
+  refKind: () => ({ tag: false, branch: true, remote: true }),
+  head: () => "topic",
+  originHead: () => null,
+  commit: () => null,
   ...over,
 });
 const op = { agent_type: "orbit:operator", cwd: "/r/main" };
@@ -57,8 +62,6 @@ const ALLOWED = [
   "cat >> .agents/operator.md <<'EOF'\n- note\nEOF",
   "sed -n '1,20p' README.md",
   "cp README.md /tmp/scratch/",
-  "git push origin HEAD:main",
-  "git -C /r/main-merge push origin HEAD:main",
   "grep -rn 'git commit' docs/ | head",
   "for f in a b; do echo $f; done",
   "echo $(git rev-parse HEAD)",
@@ -116,8 +119,9 @@ test("operator: every denied case is denied and names its rule id", () => {
   for (const [c, id] of DENIED) {
     const r = run(bash(c));
     assert.ok(r, `not denied: ${c}`);
-    assert.ok(r.includes(id), `${c}: ${r}`);
-    assert.match(r, /OPR-01/, `${c}: every operator deny names OPR-01`);
+    // 0.21.0: a destructive action is denied for every session with the outward shape, before OPR-01 runs.
+    assert.ok(r.includes(id) || r.startsWith("orbit · DENY · "), `${c}: ${r}`);
+    assert.match(r, /OPR-01|^orbit · DENY · /, `${c}: every operator deny names OPR-01 or is an outward deny`);
   }
   assert.ok(ALLOWED.length + DENIED.length >= 30);
 });
@@ -127,7 +131,12 @@ test("operator: the base push needs a base_pusher and the profile's base", () =>
   assert.match(run(bash("git push origin HEAD:main"), none), /OPR-01.*base_pusher/);
   assert.match(run(bash("git push origin HEAD:main"), ctx({ profile: () => null })), /OPR-01/);
   assert.match(run(bash("git push origin HEAD:develop")), /OPR-01/);
-  assert.equal(run(bash("git push origin HEAD:main"), ctx({ profile: () => ({ base: "main", pusher: "agent", trailer: null }) })), null);
+  // 0.21.0: the lone base push asks the owner (was: allowed).
+  const agent = ctx({ profile: () => ({ base: "main", pusher: "agent", trailer: null }) });
+  for (const c of ["git push origin HEAD:main", "git -C /r/main-merge push origin HEAD:main"]) {
+    assert.match(run({ ...bash(c), permission_mode: "default" }, agent).ask, /^orbit · ASK · push to protected branch/, c);
+    assert.match(run(bash(c), agent), /^orbit · DENY · /, `${c}: no permission mode, no prompt`);
+  }
 });
 
 test("operator: Edit/Write/MultiEdit/NotebookEdit only on .agents/operator.md", () => {
@@ -288,10 +297,11 @@ test("finding 5: gh merges and ref writes are denied wherever the flags sit; rea
     "gh pr -R o/r merge 4", "gh -R o/r pr merge 4", "gh pr --repo o/r checkout 4", "gh --repo=o/r pr merge 4 --squash",
     "gh api -X PUT repos/o/r/pulls/4/merge", "gh api --method POST repos/o/r/merges -f base=main -f head=t",
     "gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", "gh api -XPATCH repos/o/r/git/refs/heads/main -f sha=abc",
-    "gh api --method=DELETE repos/o/r/git/refs/heads/t", "gh api -X PUT repos/o/r/contents/README.md --input body.json",
+    "gh api -X PUT repos/o/r/contents/README.md --input body.json",
     "gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'",
     "gh api graphql -f query=\"$Q\"",
   ]) deniedOp(c);
+  assert.match(run(bash("gh api --method=DELETE repos/o/r/git/refs/heads/t")), /^orbit · DENY · gh api DELETE/, "destructive for every session (0.21.0)");
   for (const c of [
     "gh api repos/o/r/pulls/4", "gh api repos/o/r/git/refs/heads/main", "gh api -X GET repos/o/r/contents/README.md",
     "gh api repos/o/r/issues/3/comments -f body=hi", "gh api graphql -f query='query { viewer { login } }'",
@@ -360,10 +370,10 @@ test("realCtx reads review_trailer and base_pusher from the profile", async () =
     spawnSync("git", ["init", "-q", "-b", "main", root]);
     mkdirSync(join(root, ".agents"));
     const prof = (lines) => { writeFileSync(join(root, ".agents/project.md"), "```yaml orbit-profile\n" + lines + "\n```\n"); return realCtx(root, {}).profile(root); };
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner"), { base: "main", pusher: "owner", trailer: "Reviewed-By" });
-    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By" });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null, protected: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner\nprotected_branches: [staging, TODO]"), { base: "main", pusher: "owner", trailer: "Reviewed-By", protected: ["staging"] });
+    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null, protected: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By", protected: [] });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

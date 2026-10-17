@@ -3,12 +3,14 @@
 // checkout.) Reads the hook event on stdin and always exits 0 and prints nothing: a failure here must never block or slow a tool
 // call. Silent without a project profile (.agents/project.md) in the repo's main checkout, where the ledger lives, so removing a
 // worktree never loses events. Records only ref, sha, `chained` and `by: agent`: never the command line, the remote or an option.
+// Also appends `outward` (class, subcommand, refs, session kind, agent_id, exit code) for each shared or destructive action the
+// guard's classifier finds in the call, read again after it ran; never the command line or a token. Nothing reads it as an authorisation.
 import { readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { loadProfile } from "../scripts/profile.mjs";
-import { parseShell } from "./guard.mjs";
+import { FAIL, classifyOutward, isOperator, parseShell, realCtx, safe } from "./guard.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REF_SRC = /^\+?[\w./@^~-]+$/;
@@ -89,6 +91,25 @@ export function events(event, git) {
   return out;
 }
 
+// The outward events of a hook event: [{dir, argv}] for each shared or destructive action, argv after the session.
+// After the call a deleted remote branch has no remote-tracking ref left, so a name that is no local tag reads as a branch.
+export function outwardEvents(event, getCtx, env = {}) {
+  const text = event.tool_input?.command;
+  if (event.tool_name !== "Bash" || typeof text !== "string") return [];
+  let cmds;
+  try { cmds = parseShell(text); } catch { return []; }
+  const cwd = resolve(event.cwd ?? process.cwd());
+  const after = () => { const c = getCtx(); return { ...c, refKind: (d, n) => { const k = c.refKind(d, n); return k === FAIL || k.tag ? k : { ...k, remote: true }; } }; };
+  const kind = isOperator(event, env) ? "operator" : event.agent_id ? "subagent" : "peer";
+  const r = event.tool_response;
+  const code = [r?.exit_code, r?.exitCode, r?.returnCode].find((x) => typeof x === "number") ?? (failed(r) ? 1 : 0);
+  return classifyOutward(cmds, text, cwd, env, after).findings.filter((f) => f.cls === "shared" || f.cls === "destructive").map((f) => ({
+    dir: f.dir ?? cwd,
+    argv: ["outward", `class=${f.cls}`, `subcommand=${String(f.sub ?? "?").split(" ").map(safe).join(" ")}`, `refs:=${JSON.stringify((f.refs ?? []).map((x) => String(x)))}`,
+      `session_kind=${kind}`, ...(typeof event.agent_id === "string" ? [`agent_id=${safe(event.agent_id)}`] : []), `exit_code:=${code}`],
+  }));
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const event = JSON.parse(readFileSync(0, "utf8"));
@@ -98,6 +119,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     for (const e of events(event, git)) {
       if (!loadProfile(e.root).data) continue;
       spawnSync("node", [join(here, "..", "scripts", "ledger.mjs"), "--root", e.root, "--session", session, ...e.argv], { timeout: 5000, stdio: "ignore" });
+    }
+    let ctx = null;
+    const cwd = resolve(event.cwd ?? process.cwd());
+    for (const o of outwardEvents(event, () => (ctx ??= realCtx(cwd, process.env)), process.env)) {
+      const root = mainRoot(o.dir, git);
+      if (!root || !loadProfile(root).data) continue;
+      spawnSync("node", [join(here, "..", "scripts", "ledger.mjs"), "--root", root, "--session", session, ...o.argv], { timeout: 5000, stdio: "ignore" });
     }
   } catch { /* fail-open: a capture error never blocks a tool call */ }
   process.exit(0);

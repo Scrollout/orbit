@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.20.0 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.21.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -51,7 +51,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 - `refs/decide/`, `skills/operator/refs/`: detail (tables, templates, per-step procedures) split out of the two long files; each core file keeps the numbered rules and the flow and says when to load each ref.
 - `scripts/`, `rules/`, `skills/MANIFEST.json`: the drift guard (see Drift guard below).
 - `hooks/operator-context.sh`: the operator's SessionStart hook (self-test: `sh hooks/operator-context.test.sh`).
-- `hooks/guard.mjs`: the PreToolUse guard for OPR-01 and DEC-08 (see Operator guard below; tests: `scripts/guard.test.mjs`).
+- `hooks/guard.mjs`: the PreToolUse guard for OPR-01, DEC-08 and outward actions (see Operator guard and Outward guard below; tests: `scripts/guard.test.mjs`, `scripts/outward.test.mjs`). Threat model: [docs/threat-model.md](docs/threat-model.md).
 - `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
 
 ## Drift guard
@@ -84,6 +84,7 @@ Keeps the skills and the sessions from drifting. Zero dependencies (Node built-i
 | `merge_built` | `branch` (required), `merge_sha`, `tree_equal`, `ci_state` (of the catch-up merge), `catchup_sha` (the head of the catch-up merge; needs a green `ci_run` in the ledger; required from rules 1.12.1), `waived` (a `standing_waivers` class of the profile, or `owner` with `waiver_reason`), `release_skip` (why this merge is not released, OPR-09) |
 | `push` | `ref` (`main`, `HEAD:main`, `origin/main`, `refs/heads/main` all mean the base), `sha`, `chained`, `by` (`agent` or `owner`) |
 | `issue_close` | `n`, `origin_base_sha`, `merge_sha` |
+| `outward` | `class` (`shared` or `destructive`), `subcommand` (`push`, `release create`, ...), `refs` (array: `origin/main`, a tag or a target, from parsed fields), `session_kind` (`operator`, `peer` or `subagent`), `agent_id` (a subagent's), `exit_code` (the response's code, else 1 when it shows a failure and 0 otherwise): appended by the capture hook after a shared action ran, read again after the call (a deleted branch whose name is no local tag reads as a branch); never the command line or a token; nothing reads it as an authorisation |
 | `tag_push` | `tag` (`vX.Y.Z`), `ref` (`refs/tags/vX.Y.Z`, the full ref it was pushed by), `sha` (the merge commit), `by` (`agent` or `owner`; `ci` when a `release_tool` tags), `annotated`, `chained`, `signed` |
 | `release` | `tag`, `url`, `via` (`session` default, or `ci`), `verify_tag`, `latest`, `prerelease` |
 | `coder_report` | `branch`, `evidence` (`ok` or `gap`, the exit of `proof-check.mjs --coder`), `tests` (its `--json` `required`: the RED/GREEN tests, `[]` when none), `exempt` (the CANNOT FAIL FIRST ones), `sha` |
@@ -128,7 +129,7 @@ Every project that sets `release_when` releases like a team with a release proce
 - **`node scripts/release-check.mjs --repo`** reads the forge's guard rails through `gh api` (required checks and no force push on the base, a tag ruleset on `v*`, immutable releases, CI, tag signing) and prints each gap with its fix for the owner. It changes nothing.
 
 ## Operator guard
-`hooks/guard.mjs` runs before every Bash, Edit, Write, MultiEdit and NotebookEdit call and denies a breach with the rule id and what to delegate. **A guardrail against slips, not a sandbox**: it reads the command the way a shell would for the common forms and fails closed on what it cannot read, but a determined session can still write a file in a way it does not model (for example a compiled program, or a tool it does not list). The permission system stays the real boundary.
+`hooks/guard.mjs` runs before every Bash, Edit, Write, MultiEdit, NotebookEdit and MCP call (MCP: Outward guard below) and denies a breach with the rule id and what to delegate. **A guardrail against slips, not a sandbox**: it reads the command the way a shell would for the common forms and fails closed on what it cannot read, but a determined session can still write a file in a way it does not model (for example a compiled program, or a tool it does not list). The permission system stays the real boundary.
 - **Who is the operator**: the main thread of a session started with `claude --agent orbit:operator` (the hook input's `agent_type` is `orbit:operator` and it has no `agent_id`), or of a session started with `ORBIT_ROLE=operator claude`. A main checkout that only gets the SessionStart handoff is not detected: set `ORBIT_ROLE=operator` there. A subagent (hook input with `agent_id`) is never the operator, even when the variable is inherited.
 - **OPR-01, files** (operator only): Edit, Write, MultiEdit and NotebookEdit are denied inside any git worktree of the repo (symlinks resolved), except `.agents/operator.md`; files outside the repo (a PR body in a temp dir) stay allowed.
 - **OPR-01, git**: only read-only git runs (`status`, `log`, `diff`, `show`, `fetch`, `rev-parse`, `ls-remote`, `grep`, `worktree list`, `branch`, `tag`, `remote`, `stash` and `notes` listings, `config` reads, `reflog` views, ...). Each has an allowlist of known-safe options: any other option (`--upload-pack`, `--receive-pack`, `--exec`, `--output`, `grep -O`, an abbreviation such as `--outp`, a cluster such as `-nOecho`) is denied and named; so are `git -c`, a dynamic `-C` or argument, a `src:dst` refspec, and `git remote` with anything but `-v`, `show` or `get-url`. Every other subcommand is denied (`commit`, `merge`, `rebase`, `reset`, `checkout`, `switch`, branch changes, `worktree add|remove`, `cherry-pick`, `stash` changes, `tag` changes, ...). `push` runs only as a lone `git [-C <dir>] push origin HEAD:<base>` when the profile has a `base_pusher` (`agent` or `owner`; the legacy `operator` reads as `agent` with a warning); without one, no push.
@@ -137,6 +138,24 @@ Every project that sets `release_when` releases like a team with a release proce
 - **DEC-08** (every session, only with a profile whose `review_trailer` is set): a `git merge --no-ff` of a ref other than the base (`<base>`, `origin/<base>`, `FETCH_HEAD`, the base tip's SHA; the message never exempts it), also behind `git -c` or `git -C <dir>`, and a `git commit` that concludes a merge in progress, need a readable message with the `review_trailer` line in the last paragraph, with every `Co-Authored-By` line. No message, `--no-edit`, `--continue`, `-C|-c|--reuse-message`, a variable or a missing file are denied: pass `-F <file>`. Clustered flags (`-qm`, `-am`) are read.
 - **Known limits** (out of scope, by design): interpreters running a script file (`python x.py`, `node x.mjs`, `make`, `npm run`), programs it does not list (compiled tools, editors), `find`/`xargs` forms beyond the listed writers, symlinks created in the same command or outside the repo that point into it, aliases and shell functions from the session, a variable or `$(...)` that expands to an option at run time in a non-git command, heredoc bodies with unquoted `$` expansions, and a worker's `git -C "$X"` with a dynamic directory, whose merge state is read from the session's own repo (a relative `-F` file there counts as unreadable).
 - Other sessions see nothing from OPR-01. Without node the hook is silent (except with `ORBIT_ROLE=operator`, where it denies).
+
+## Outward guard
+The same hook classifies every `git`, `gh` and GitHub MCP call of every session (operator, peer, subagent) by what it does to the forge, after resolving wrappers (`env`, `sh -c`, `eval`, `xargs`, `command`, a path to git), `git -C`, aliases (`git config --get alias.<name>` and `-c alias.*`) and `cd`. Threat model: [docs/threat-model.md](docs/threat-model.md).
+- **Local** and **branch push** (a push to `origin` of a literal, non-protected branch): silent, as before.
+- **Shared**: a push to a protected branch (`main`, `master`, `release/*`, the target of `origin/HEAD`, the profile's `base_branch` and `protected_branches`; the profile only adds) or to a target it cannot tell (bare `git push`, `git push <remote>`, another remote or a URL, `--repo`, a variable, a dynamic `-C`, `xargs`), a tag push (`--tags`, `--follow-tags`, `--all`, `refs/tags/`, a local tag name), a remote branch delete, `gh release create|edit|upload`, `gh pr merge`, `gh run cancel|rerun`, `gh workflow run`, `gh auth token|login|refresh|setup-git`, `gh alias set`, `gh api` writes on refs, git, releases, merges, pulls, contents, actions, branches or tags and GraphQL mutations, `git config` or `-c` of `alias.*`, the hooks path, `remote.*.pushurl|push`, `url.*.insteadOf`, `GIT_CONFIG_*` variables, an unknown git subcommand or gh command, and a parse error or guard error on text with git or gh and an outward word. The hook answers **ask** under the permission modes that prompt (`default`, `acceptEdits`, `plan`, `auto`, `bypassPermissions`), so the owner approves it in the prompt; **deny** under `dontAsk` or a missing or unknown mode (headless `-p` runs stop there). A shared action that is not alone in its call (more than one command, a pipe, `||`, a condition) is denied: run it alone.
+- **Destructive**: any force push (`-f`, `--force`, `--force-with-lease`, `--force-if-includes`, `+refspec`, `--mirror`, `--prune`, also on an own topic branch), deleting a tag, a protected branch or a target it cannot read (`push --delete $VAR`: name the branch literally), `gh api -X DELETE` (or a method it cannot read), `gh release delete|delete-asset`, `gh release upload --clobber`, `gh repo delete|archive`, and GitHub MCP tools whose name holds `delete` or `force` (or with `force: true`): **deny** in every mode, decided before the profile is read. The owner runs it with `!` (the `!` path skips the hook).
+- **GitHub MCP**: a tool whose name holds `github` and `merge`, `push`, `create_ref`, `update_ref`, `release`, `cancel`, `rerun` or `dispatch` is shared; other MCP tools are untouched.
+- **Operator**: every OPR-01 deny stays; the lone `git push origin HEAD:<base>` now asks instead of running.
+- **Strict on doubt**: a helper git call (alias, tag, branch, `origin/HEAD`) that fails or runs out of its time budget (7 s for the whole hook run) gives the stricter class. The guard never reads the ledger; the capture hook records each shared action it saw run as an `outward` event, never as an authorisation.
+- **Reason shape**: plain aligned text, a headline then only the rows that apply, values from parsed fields only (no URL, query, token or environment value):
+  ```
+  orbit · ASK · push to protected branch
+  action   git push → origin/main
+  commit   1a2b3c4 "first line of subject"
+  by       subagent orbit:coder
+  do       approve only if you gave the go
+  ```
+- **Not covered** (the permission system stays the boundary; see the threat model): git hook files (`.git/hooks`, `.githooks`) that push on commit, scripts and interpreters running a file (`node x.mjs`, `python x.py`, `bash x.sh`), `make` targets and `npm run`, `curl` or another HTTP client with a token, non-GitHub MCP servers, shell state persisting across calls (an `export` or alias from an earlier call), a `node` shadowed on `PATH`, and sessions where node is missing (the hook is then silent, except with `ORBIT_ROLE=operator`).
 
 ## OKF docs
 Optional docs automation for projects that keep docs as an [Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing) (OKF) v0.2 bundle (default `docs/okf`).

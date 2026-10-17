@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.7.1",
-      "hash": "18303b66ff419b7c9bfcdb9fe125b675822bce84cbed97e299ed606218863377",
+      "version": "1.7.2",
+      "hash": "0ec8227a816836df6ede65179d496c14491aa9259cc5aed096339815f455d9a7",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -34,8 +34,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.7.0",
-      "hash": "28875e2f16a6740fe151ab4e99547899d2d0954ff709657c494d98df90c49743",
+      "version": "1.8.0",
+      "hash": "698db6901233b90ea54a78e602ebfb6f6a81a2392247d5c4571dedae55dfe8bf",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -53,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.12.1",
-      "hash": "b1d032d825334207704ea8a570cabb0f49cfa3ccd8d23a74581f3edaead55db2",
+      "version": "1.13.0",
+      "hash": "80192d42f6543dbf9b685d250e6b51d4ed72c8cdde536154df7eebcaaaad7a18",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",

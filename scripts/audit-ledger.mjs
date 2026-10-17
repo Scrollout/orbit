@@ -14,6 +14,7 @@
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
 //   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.1)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
+//   outward{class,subcommand,refs?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run; recorded, never an authorisation
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
@@ -49,11 +50,11 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition", "intent", "handoff", "owner_go"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition", "intent", "handoff", "owner_go", "outward"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"], intent: ["milestone", "phase"], handoff: ["topic", "from", "to"], owner_go: ["topic"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"], intent: ["milestone", "phase"], handoff: ["topic", "from", "to"], owner_go: ["topic"], outward: ["class", "subcommand"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 // DEC-21, DEC-22: only for events stamped with rules 1.7.0 or later
 const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };

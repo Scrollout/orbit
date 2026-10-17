@@ -1,0 +1,284 @@
+// Outward actions (Orbit 0.21.0): every git, gh and GitHub MCP call is classified for every session and mode.
+// The one test (security condition set, round 2): a write to a protected ref is never allowed, in any spelling, session,
+// permission mode or worktree profile; destructive actions are denied everywhere; branch pushes and local actions stay silent.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { FAIL, guard, hookMain, outwardReason, realCtx } from "../hooks/guard.mjs";
+
+const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
+const env = { HOME: "/home/u", TMPDIR: "/tmp/scratch" };
+const REFS = { tags: ["v1.0", "x"], heads: ["main", "my-topic", "old-topic"], remote: ["main", "my-topic", "old-topic"] };
+const ctx = (over = {}) => ({
+  roots: ["/r/main", "/r/main-topic"],
+  operatorFiles: ["/r/main/.agents/operator.md"],
+  profile: () => ({ base: "main", pusher: "agent", trailer: "Reviewed-By", protected: [] }),
+  mergeHead: () => null,
+  baseShas: () => [],
+  readFile: () => null,
+  alias: (dir, n) => ({ ship: "push", st: "status", sh: "!git push origin HEAD:main" })[n] ?? null,
+  refKind: (dir, n) => ({ tag: REFS.tags.includes(n), branch: REFS.heads.includes(n), remote: REFS.remote.includes(n) }),
+  head: () => "my-topic",
+  originHead: () => "main",
+  commit: () => ({ sha: "1a2b3c4", subject: "first line of subject" }),
+  ...over,
+});
+const hostile = () => ctx({ profile: () => ({ base: "foo", pusher: "agent", trailer: null, protected: [] }) });
+const SESSIONS = {
+  operator: { agent_type: "orbit:operator", cwd: "/r/main" },
+  peer: { cwd: "/r/main-topic" },
+  subagent: { agent_id: "a1", agent_type: "orbit:coder", cwd: "/r/main-topic" },
+};
+const ASK_MODES = ["default", "acceptEdits", "plan", "auto", "bypassPermissions"];
+const MODES = [...ASK_MODES, "dontAsk", undefined];
+const call = (command, who, mode, c = ctx()) => guard({ ...who, ...(mode ? { permission_mode: mode } : {}), tool_name: "Bash", tool_input: { command } }, env, c);
+const kind = (r) => (r === null ? "allow" : typeof r === "string" ? "deny" : "ask");
+
+const BASE_PUSH = [
+  "git push origin HEAD:main",
+  "git -c alias.ship=push ship origin HEAD:main",
+  "git ship origin HEAD:main",
+  "git sh",
+  "env git push origin HEAD:main",
+  "FOO=1 git push origin HEAD:main",
+  "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.go GIT_CONFIG_VALUE_0=push git go origin HEAD:main",
+  "sh -c 'git push origin HEAD:main'",
+  "bash -c \"git push origin HEAD:main\"",
+  "eval git push origin HEAD:main",
+  "echo HEAD:main | xargs git push origin",
+  "xargs git push origin < refs.txt",
+  "git push origin \\\nHEAD:main",
+  "git push origin\nHEAD:main",
+  "git push origin +main",
+  "git push origin HEAD:refs/heads/main",
+  "git push origin main",
+  "git push origin 'HEAD:main'",
+  "git push -u origin HEAD:main",
+  "git -C /r/main push origin HEAD:main",
+  "git push origin HEAD:master",
+  "git push origin HEAD:release/1.2",
+  "G=git; $G push origin HEAD:main",
+  "$G push origin HEAD:main",
+  "/usr/bin/git push origin HEAD:main",
+  "command git push origin HEAD:main",
+  "g\\it push origin HEAD:main",
+  "\"g\"it push origin HEAD:main",
+  "git push origin HEAD:main && echo done",
+  "git fetch && git push origin HEAD:main",
+  "git push https://github.com/o/r.git HEAD:main",
+  "git push upstream HEAD:main",
+  "git push",
+  "git push origin",
+  "git push --repo=origin HEAD:main",
+  "git push -C . origin HEAD:main",
+  "git -C \"$X\" push origin HEAD:main",
+  "git push origin $DST",
+  "git push origin 'HEAD:main",
+  "bash <<'EOF'\ngit push origin HEAD:main\nEOF",
+  "python3 -c 'import os; os.system(\"git push origin HEAD:main\")'",
+];
+
+const DESTRUCTIVE = [
+  "git push --delete origin v1.0",
+  "git push -d origin v1.0",
+  "git push origin :v1.0",
+  "git push origin :refs/tags/v1.0",
+  "git push origin --delete refs/tags/v1.0",
+  "git push --delete origin $T",
+  "git push --delete origin unknown-name",
+  "git push --delete origin main",
+  "echo v1.0 | xargs git push --delete origin",
+  "sh -c 'git push --delete origin v1.0'",
+  "git push -f origin HEAD:my-topic",
+  "git push --force origin my-topic",
+  "git push --force-with-lease origin HEAD:my-topic",
+  "git push --force-with-lease=my-topic origin HEAD:my-topic",
+  "git push -uf origin my-topic",
+  "git push origin +HEAD:my-topic",
+  "git push --mirror origin",
+  "gh api -X DELETE repos/o/r/git/refs/tags/v1.0",
+  "gh api --method delete repos/o/r/releases/1",
+  "gh api --method=DELETE repos/o/r",
+  "gh api -XDELETE repos/o/r/git/refs/heads/x",
+  "gh api -X $M repos/o/r/git/refs/heads/x",
+  "gh release delete v1.0",
+  "gh release delete v1.0 --yes",
+  "gh -R o/r release delete v1.0",
+  "echo v1.0 | xargs gh release delete",
+  "gh release delete-asset v1.0 a.zip",
+  "gh release upload v1.0 a.zip --clobber",
+  "gh repo delete o/r --yes",
+  "gh repo archive o/r",
+];
+
+const LOCAL = ["git push origin HEAD:my-topic", "ls", "git tag -d x", "git fetch --prune", "git push origin my-topic", "git push -u origin HEAD:my-topic",
+  "git push origin HEAD", "git status", "git st", "gh pr view 4", "gh release list", "gh auth status", "git config --get alias.ship", "git tag v2",
+  "git branch -D old-topic", "git remote prune origin", "gh api repos/o/r/git/refs/heads/main", "gh api repos/o/r/issues/3/comments -f body=hi",
+  "git commit -m 'fix the push of a tag'", "echo git push origin HEAD:main"];
+const OPERATOR_LOCAL = ["ls", "git fetch --prune"];
+
+const SHARED = ["git push origin v1.0", "git push origin refs/tags/v1.0", "git push origin HEAD:refs/tags/v2", "git push --tags", "git push --follow-tags origin my-topic",
+  "git push --delete origin old-topic", "gh release create v1.0", "gh release edit v1.0", "gh release upload v1.0 a.zip", "gh pr merge 4", "gh run cancel 1",
+  "gh run rerun 1", "gh workflow run ci.yml", "gh auth token", "gh auth login", "gh auth refresh", "gh auth setup-git", "git config alias.ship push",
+  "git config core.hooksPath x", "git config remote.origin.pushurl x", "git config url.x.insteadOf y", "git -c core.hooksPath=/x commit -m x",
+  "gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=x", "gh api graphql -f query='mutation { x }'", "gh alias set ship 'pr merge'",
+  "git frobnicate", "gh frobnicate", "git -c core.pager='git push origin HEAD:main' log", "git send-pack origin main"];
+
+test("the one test: every spelling of a base push asks or denies, never allows, for every session, mode and profile", () => {
+  for (const [name, who] of Object.entries(SESSIONS)) for (const mode of MODES) for (const c of [ctx(), hostile()]) for (const cmd of BASE_PUSH) {
+    const r = call(cmd, who, mode, c), k = kind(r);
+    assert.notEqual(k, "allow", `${name} ${mode} ${cmd}`);
+    if (!ASK_MODES.includes(mode)) assert.equal(k, "deny", `${name} ${mode} ${cmd}: no prompt in this mode`);
+  }
+});
+
+test("the one test: every destructive spelling is denied for every session, mode and profile", () => {
+  for (const [name, who] of Object.entries(SESSIONS)) for (const mode of MODES) for (const c of [ctx(), hostile()]) for (const cmd of DESTRUCTIVE) {
+    assert.equal(kind(call(cmd, who, mode, c)), "deny", `${name} ${mode} ${cmd}`);
+  }
+});
+
+test("the one test: branch pushes and local actions stay silent; the profile changes none of it", () => {
+  for (const name of ["peer", "subagent"]) for (const mode of MODES) for (const c of [ctx(), hostile()]) for (const cmd of LOCAL) {
+    assert.equal(call(cmd, SESSIONS[name], mode, c), null, `${name} ${mode} ${cmd}`);
+  }
+  for (const mode of MODES) for (const cmd of OPERATOR_LOCAL) assert.equal(call(cmd, SESSIONS.operator, mode), null, `operator ${mode} ${cmd}`);
+});
+
+test("shared actions ask where the mode prompts and deny elsewhere; a shared action not alone in its call is denied", () => {
+  for (const name of ["peer", "subagent"]) for (const cmd of SHARED) {
+    for (const mode of ASK_MODES) assert.equal(kind(call(cmd, SESSIONS[name], mode)), "ask", `${name} ${mode} ${cmd}`);
+    for (const mode of ["dontAsk", undefined, "weird"]) assert.equal(kind(call(cmd, SESSIONS[name], mode)), "deny", `${name} ${mode} ${cmd}`);
+    assert.equal(kind(call(`${cmd}; ls`, SESSIONS[name], "default")), "deny", `${cmd}; ls`);
+  }
+  assert.equal(kind(call("git status | cat && git push origin HEAD:main", SESSIONS.peer, "bypassPermissions")), "deny");
+});
+
+test("a hostile worktree profile only adds: base_branch foo protects foo, main stays protected; an added list protects more", () => {
+  assert.equal(kind(call("git push origin HEAD:foo", SESSIONS.subagent, "default", hostile())), "ask");
+  assert.equal(kind(call("git push origin HEAD:main", SESSIONS.subagent, "default", hostile())), "ask");
+  const extra = ctx({ profile: () => ({ base: "main", pusher: "owner", trailer: null, protected: ["staging", "hotfix/*"] }) });
+  for (const d of ["staging", "hotfix/1"]) assert.equal(kind(call(`git push origin HEAD:${d}`, SESSIONS.subagent, "default", extra)), "ask", d);
+  assert.equal(call("git push origin HEAD:my-topic", SESSIONS.subagent, "default", extra), null);
+  assert.equal(kind(call("git push origin HEAD:develop", SESSIONS.subagent, "default", ctx({ originHead: () => "develop" }))), "ask", "origin/HEAD target");
+});
+
+test("a helper git call that fails or times out gives the stricter class", () => {
+  const failing = ctx({ alias: () => FAIL, refKind: () => FAIL, head: () => FAIL, originHead: () => FAIL });
+  assert.equal(kind(call("git ship origin HEAD:x", SESSIONS.peer, "default", failing)), "ask");
+  assert.equal(kind(call("git push --delete origin old-topic", SESSIONS.peer, "default", failing)), "deny");
+  assert.equal(kind(call("git push origin HEAD", SESSIONS.peer, "default", failing)), "ask");
+  assert.equal(kind(call("git push origin HEAD:my-topic", SESSIONS.peer, "default", failing)), "ask");
+});
+
+test("the operator: only the lone base push moved, allow to ask; every other deny stays", () => {
+  const o = SESSIONS.operator;
+  assert.equal(kind(call("git push origin HEAD:main", o, "default")), "ask");
+  assert.equal(kind(call("git push origin HEAD:main", o, "dontAsk")), "deny");
+  assert.match(call("git push origin HEAD:main", o, "default", ctx({ profile: () => ({ base: "main", pusher: null, trailer: null, protected: [] }) })), /^OPR-01/);
+  for (const c of ["git push origin my-topic", "git commit -m x", "git fetch && git push origin HEAD:main", "gh pr merge 4"]) assert.equal(kind(call(c, o, "bypassPermissions")), "deny", c);
+});
+
+test("the hook prints ask or deny JSON; a parse error on outward text asks; a guard error on outward text asks", () => {
+  const out = (o) => JSON.parse(o.stdout).hookSpecificOutput;
+  const ev = (command, extra = {}) => JSON.stringify({ cwd: "/r/main-topic", agent_id: "a1", agent_type: "orbit:coder", permission_mode: "default", tool_name: "Bash", tool_input: { command }, ...extra });
+  const fn = (input, e) => guard(input, e, ctx());
+  assert.equal(out(hookMain(ev("git push origin HEAD:main"), {}, fn)).permissionDecision, "ask");
+  assert.equal(out(hookMain(ev("git push --delete origin v1.0"), {}, fn)).permissionDecision, "deny");
+  assert.equal(out(hookMain(ev("git push origin HEAD:main", { permission_mode: "dontAsk" }), {}, fn)).permissionDecision, "deny");
+  const boom = () => { throw new Error("boom"); };
+  assert.equal(out(hookMain(ev("git push origin HEAD:main"), {}, boom)).permissionDecision, "ask");
+  assert.equal(hookMain(ev("ls"), {}, boom).stdout, "");
+});
+
+const SNAP_BASE_ASK = [
+  "orbit · ASK · push to protected branch",
+  "action   git push → origin/main",
+  "commit   1a2b3c4 \"first line of subject\"",
+  "by       subagent orbit:coder",
+  "do       approve only if you gave the go",
+].join("\n");
+const SNAP_TAG_DELETE = [
+  "orbit · DENY · tag delete",
+  "action   git push --delete → origin/v1.0",
+  "do       run it yourself with ! git push --delete origin v1.0",
+].join("\n");
+const SNAP_CHAINED = [
+  "orbit · DENY · push to protected branch",
+  "action   git push → origin/main",
+  "commit   1a2b3c4 \"first line of subject\"",
+  "note     not alone in its call",
+  "do       run it alone in its own call",
+].join("\n");
+const SNAP_MCP = [
+  "orbit · ASK · GitHub merge",
+  "action   mcp__github__merge_pull_request o/r#4",
+  "by       subagent orbit:coder",
+  "do       approve only if you gave the go",
+].join("\n");
+
+test("reason snapshots: base push ask, tag delete deny, chained push deny, MCP ask; at most 6 lines", () => {
+  assert.equal(call("git push origin HEAD:main", SESSIONS.subagent, "default").ask, SNAP_BASE_ASK);
+  assert.equal(call("git push --delete origin v1.0", SESSIONS.peer, "default"), SNAP_TAG_DELETE);
+  assert.equal(call("git fetch && git push origin HEAD:main", SESSIONS.peer, "default"), SNAP_CHAINED);
+  const mcp = guard({ ...SESSIONS.subagent, permission_mode: "auto", tool_name: "mcp__github__merge_pull_request", tool_input: { owner: "o", repo: "r", pullNumber: 4 } }, env, ctx());
+  assert.equal(mcp.ask, SNAP_MCP);
+  for (const s of [SNAP_BASE_ASK, SNAP_TAG_DELETE, SNAP_CHAINED, SNAP_MCP]) assert.ok(s.split("\n").length <= 6);
+  assert.equal(outwardReason("ASK", { what: "x", action: "y" }, {}), "orbit · ASK · x\naction   y\ndo       approve only if you gave the go");
+});
+
+test("a token-looking value in the command never appears in the reason", () => {
+  const tok = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+  for (const c of [
+    `git push https://x:${tok}@github.com/o/r.git HEAD:main`,
+    `GH_TOKEN=${tok} gh release delete v1.0`,
+    `gh api -H "Authorization: token ${tok}" -X DELETE 'repos/o/r?access_token=${tok}'`,
+    `git push origin HEAD:main -o ${tok}`,
+    `gh api -X DELETE repos/o/r/${tok}`,
+  ]) for (const mode of ["default", "dontAsk"]) {
+    const r = call(c, SESSIONS.subagent, mode);
+    const text = typeof r === "string" ? r : r?.ask;
+    assert.ok(text, c);
+    assert.ok(!text.includes(tok) && !text.includes("ghp_") && !text.includes("example"), `${c}\n${text}`);
+  }
+});
+
+test("GitHub MCP tools: delete or force denied, writes ask (deny without a prompt), other MCP untouched", () => {
+  const mcp = (tool_name, mode = "default", tool_input = {}) => guard({ ...SESSIONS.subagent, permission_mode: mode, tool_name, tool_input }, env, ctx());
+  for (const t of ["mcp__github__delete_file", "mcp__github__delete_ref", "mcp__plugin_github_github__force_push"]) assert.equal(kind(mcp(t)), "deny", t);
+  assert.equal(kind(mcp("mcp__github__update_ref", "default", { force: true })), "deny");
+  for (const t of ["mcp__github__merge_pull_request", "mcp__github__push_files", "mcp__github__create_ref", "mcp__github__update_ref", "mcp__github__create_release",
+    "mcp__github__cancel_workflow_run", "mcp__github__rerun_workflow_run", "mcp__github__run_workflow_dispatch"]) {
+    assert.equal(kind(mcp(t)), "ask", t);
+    assert.equal(kind(mcp(t, "dontAsk")), "deny", t);
+  }
+  for (const t of ["mcp__github__get_pull_request", "mcp__github__list_issues", "mcp__linear__delete_issue", "mcp__slack__merge"]) assert.equal(mcp(t), null, t);
+  const pre = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks.PreToolUse;
+  const g = pre.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard")));
+  assert.ok(g.matcher.split("|").includes("mcp__.*"), "the guard matcher covers MCP tools");
+});
+
+test("realCtx: aliases from .git/config, tags, the current branch, origin/HEAD and the protected_branches list", () => {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), "outward-")));
+  try {
+    const g = (...a) => spawnSync("git", ["-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { encoding: "utf8" });
+    g("init", "-q", "-b", "my-topic"); g("commit", "-q", "--allow-empty", "-m", "first line of subject"); g("tag", "v1.0"); g("config", "alias.ship", "push");
+    const c = realCtx(d, {});
+    assert.equal(c.alias(d, "ship"), "push");
+    assert.equal(c.alias(d, "nope"), null);
+    assert.deepEqual(c.refKind(d, "v1.0"), { tag: true, branch: false, remote: false });
+    assert.equal(c.head(d), "my-topic");
+    assert.equal(c.originHead(d), null);
+    assert.match(c.commit(d, "HEAD").subject, /first line/);
+    assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git ship origin HEAD:main" } }, {}, c)), "ask");
+    assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git push --delete origin v1.0" } }, {}, realCtx(d, {}))), "deny");
+    const spent = realCtx(d, {}, 0);
+    assert.equal(spent.alias(d, "ship"), FAIL, "no time left: FAIL, never a guess");
+    assert.equal(spent.refKind(d, "v1.0"), FAIL);
+    assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git push origin HEAD:my-topic" } }, {}, spent)), "ask", "the stricter class");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

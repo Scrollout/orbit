@@ -1,5 +1,5 @@
 {
-  "version": "1.12.1",
+  "version": "1.13.0",
   "rules": [
     {
       "id": "DEC-01",
@@ -151,7 +151,7 @@
       "id": "OPR-03",
       "file": "skills/operator/SKILL.md",
       "tag": "script",
-      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names."
+      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names; the push prompts the owner (the guard asks on every protected-branch push, and denies one not alone in its call), so an operator GO never completes it alone."
     },
     {
       "id": "OPR-04",

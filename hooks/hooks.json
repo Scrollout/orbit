@@ -1,9 +1,9 @@
 {
-  "description": "Before Bash and file edits, deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer (hooks/guard.mjs); after Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); after a successful `git push`, append a push event to the session ledger (hooks/capture.mjs, fail-open, silent without a profile); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
+  "description": "Before Bash, file edits and MCP calls, deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer, and classify outward git, gh and GitHub MCP actions for every session: destructive denied, shared asked where the permission mode prompts, else denied (hooks/guard.mjs); after Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); after a successful `git push`, append a push event, and an outward event for each shared action, to the session ledger (hooks/capture.mjs, fail-open, silent without a profile); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator (silent without it)",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
         "hooks": [
           {
             "type": "command",

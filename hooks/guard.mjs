@@ -8,6 +8,8 @@
 // inline scripts or shells it cannot read. What it cannot parse or resolve is denied (fail closed).
 // DEC-08 (any session, only with a profile whose review_trailer is set): a `git merge --no-ff` of a non-base ref, and
 // the commit that concludes it, need a readable message with the review trailer in the last paragraph, with Co-Authored-By.
+// Outward (every session, every git, gh and GitHub MCP call): destructive actions are denied, shared ones ask where the
+// permission mode prompts and are denied elsewhere or when not alone in their call (see "outward actions" below).
 // A guardrail against slips, not a sandbox: it does not model every way a program can write a file.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -268,10 +270,10 @@ export function resolveCmd(words) {
 }
 
 // ---------- context (git and the profile); tests pass their own ----------
-const git = (dir, ...a) => {
-  const r = spawnSync("git", ["-C", dir, ...a], { encoding: "utf8", timeout: 5000 });
-  return r.status === 0 ? r.stdout.trim() : null;
-};
+// A helper git call that times out or cannot run returns FAIL; the outward classes then take the stricter class.
+export const FAIL = Object.freeze({ fail: true });
+const HELPER_BUDGET_MS = 7000;   // every helper git call of one hook run shares it, so the hook stays under its 10 s timeout
+const HELPER_CALL_MS = 3000;     // one helper git call
 const todo = (v) => typeof v !== "string" || !v.trim() || /^TODO\b/i.test(v.trim());
 
 // The path with symlinks resolved, for the part of it that exists.
@@ -285,7 +287,15 @@ export function real(f) {
   }
 }
 
-export function realCtx(cwd, env) {
+export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
+  const deadline = Date.now() + budgetMs;
+  const run = (dir, ...a) => {
+    const left = deadline - Date.now();
+    if (left < 50) return FAIL;
+    const r = spawnSync("git", ["-C", dir, ...a], { encoding: "utf8", timeout: Math.min(HELPER_CALL_MS, left) });
+    return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
+  };
+  const git = (dir, ...a) => { const r = run(dir, ...a); return r !== FAIL && r.code === 0 ? r.out : null; };
   const project = env.CLAUDE_PROJECT_DIR ? real(resolve(env.CLAUDE_PROJECT_DIR)) : null;
   const list = (git(cwd, "worktree", "list", "--porcelain") ?? "").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => real(resolve(l.slice(9))));
   const roots = [...new Set([...list, ...(project ? [project] : [])])];
@@ -307,6 +317,7 @@ export function realCtx(cwd, env) {
           base: todo(data.base_branch) ? null : data.base_branch,
           pusher: ["agent", "owner"].includes(data.base_pusher) ? data.base_pusher : null,
           trailer: todo(data.review_trailer) || data.review_trailer === "none" ? null : data.review_trailer,
+          protected: (Array.isArray(data.protected_branches) ? data.protected_branches : []).filter((b) => !todo(b)),
         });
       }
       return profiles.get(key);
@@ -317,6 +328,32 @@ export function realCtx(cwd, env) {
     },
     baseShas: (dir, base) => [base, `origin/${base}`].map((r) => git(dir, "rev-parse", "--verify", "-q", `${r}^{commit}`)).filter(Boolean),
     readFile: (f) => { try { return readFileSync(f, "utf8"); } catch { return null; } },
+    // Outward helpers: a value, null (none) or FAIL (timeout, error, or a name it will not pass to git).
+    alias(dir, name) {
+      if (!/^[\w.-]+$/.test(name)) return FAIL;
+      const r = run(dir, "config", "--get", `alias.${name}`);
+      return r === FAIL ? FAIL : r.code === 0 ? r.out : r.code === 1 ? null : FAIL;
+    },
+    refKind(dir, name) {
+      if (name.startsWith("-") || !/^[\w./@{}^~-]+$/.test(name)) return FAIL;
+      const r = run(dir, "for-each-ref", "--format=%(refname)", `refs/tags/${name}`, `refs/heads/${name}`, `refs/remotes/origin/${name}`);
+      if (r === FAIL || r.code !== 0) return FAIL;
+      const l = r.out.split("\n");
+      return { tag: l.includes(`refs/tags/${name}`), branch: l.includes(`refs/heads/${name}`), remote: l.includes(`refs/remotes/origin/${name}`) };
+    },
+    head(dir) { const r = run(dir, "symbolic-ref", "-q", "--short", "HEAD"); return r === FAIL ? FAIL : r.code === 0 ? r.out : null; },
+    originHead(dir) {
+      const r = run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD");
+      if (r === FAIL) return FAIL;
+      return r.code === 0 && r.out.startsWith("origin/") ? r.out.slice(7) : null;
+    },
+    commit(dir, rev) {
+      if (rev.startsWith("-") || !/^[\w./@{}^~-]+$/.test(rev)) return null;
+      const r = run(dir, "log", "-1", "--format=%h%x09%s", `${rev}^{commit}`, "--");
+      if (r === FAIL || r.code !== 0 || !r.out) return null;
+      const t = r.out.indexOf("\t");
+      return { sha: r.out.slice(0, t), subject: r.out.slice(t + 1) };
+    },
   };
 }
 
@@ -476,21 +513,30 @@ const GH_GLOBAL_VALUED = ["-R", "--repo", "--hostname"];
 const GH_API_VALUED = ["-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "-p", "--preview", "--cache"];
 const GH_WRITE_ENDPOINT = /(^|\/)(merges|pulls|merge|refs|contents|git)(\/|$|\?)/;
 
-function ghDeny(args) {
-  const pos = [], fields = [];
-  let method = null, input = false;
+// The positionals, api method (null: dynamic), fields, --input, -R/--repo and the other flags of a gh call.
+function ghParse(args) {
+  const pos = [], fields = [], flags = new Set();
+  let method, input = false, repo;
   for (let i = 0; i < args.length; i++) {
     const a = args[i].lit;
     if (a === null) { pos.push(args[i]); continue; }
-    if (a === "-X" || a === "--method") { method = args[i + 1]?.lit ?? "?"; i++; continue; }
+    if (a === "-X" || a === "--method") { method = args[i + 1] ? args[i + 1].lit : null; i++; continue; }
     if (/^(-X|--method=)./.test(a)) { method = a.replace(/^(-X|--method=)/, ""); continue; }
     if (["-f", "-F", "--field", "--raw-field"].includes(a)) { fields.push(args[i + 1] ?? { lit: null }); i++; continue; }
     if (/^(--field|--raw-field)=/.test(a)) { fields.push({ lit: a.replace(/^[^=]*=/, "") }); continue; }
     if (a === "--input" || a.startsWith("--input=")) { input = true; if (a === "--input") i++; continue; }
+    if (a === "-R" || a === "--repo") { repo = args[i + 1]?.lit ?? null; i++; continue; }
+    if (a.startsWith("--repo=")) { repo = a.slice(7); continue; }
     if ([...GH_GLOBAL_VALUED, ...GH_API_VALUED].includes(a)) { i++; continue; }
-    if (a.startsWith("-")) continue;
+    if (a.startsWith("-")) { flags.add(a.split("=")[0]); continue; }
     pos.push(args[i]);
   }
+  return { pos, method, fields, input, repo, flags };
+}
+
+function ghDeny(args) {
+  const { pos, method: m0, fields, input } = ghParse(args);
+  const method = m0 === null ? "?" : m0 ?? null;
   const [p0, p1] = pos.map((w) => w.lit);
   if (p0 === "pr" && (p1 === "merge" || p1 === "checkout")) return `run "gh pr ${p1}" (the merge is the verified local --no-ff merge a worker builds)`;
   if (p0 !== "api") return null;
@@ -808,7 +854,298 @@ function target_(w, st, ctx) {
   return ctx.roots.some((r) => inside(r, f)) ? `${shown(w)} inside the repo` : null;
 }
 
-// Returns the deny reason, or null to allow.
+// ---------- outward actions (every session): git, gh and GitHub MCP calls that reach the forge ----------
+// Classes: local and branch push (silent), shared (ask where the permission mode prompts, else deny; denied when not alone
+// in its call), destructive (deny in every mode; the owner runs it with `!`). Protected branches: main, master, release/*,
+// the target of origin/HEAD, plus the profile's base_branch and protected_branches (the profile only adds). A helper git call
+// that fails or times out gives the stricter class. Reasons use one short fixed shape built from parsed fields, never the command line.
+const ASK_MODES = new Set(["default", "acceptEdits", "plan", "auto", "bypassPermissions"]);
+const GITGH = /\b(git|gh)\b/;
+const COND1 = /\b(push|tag|release|api|run|pr|repo|config|auth)\b|--delete/;
+const TOKENISH = /gh[pousr]_|github_pat_|glpat-|xox[a-z]-|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/;
+const TOKENISH_ALL = /gh[pousr]_\w*|github_pat_\w*|glpat-[\w-]*|xox[a-z]-[\w-]*|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/g;
+const CONFIG_KEYS = [/^alias\./i, /^core\.hookspath$/i, /^remote\..+\.pushurl$/i, /^remote\..+\.push$/i, /^url\..+\.insteadof$/i, /^url\..+\.pushinsteadof$/i];
+const GIT_BUILTINS = new Set(("add am annotate apply archive backfill bisect blame branch bundle cat-file check-attr check-ignore check-mailmap check-ref-format " +
+  "checkout checkout-index cherry cherry-pick citool clean clone column commit commit-graph commit-tree config count-objects credential describe diff " +
+  "diff-files diff-index diff-tree difftool fetch fetch-pack filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck gc get-tar-commit-id " +
+  "grep gui hash-object help hook index-pack init instaweb interpret-trailers log ls-files ls-remote ls-tree mailinfo mailsplit maintenance merge merge-base " +
+  "merge-file merge-index merge-tree mergetool mktag mktree multi-pack-index mv name-rev notes pack-objects pack-refs patch-id prune prune-packed pull " +
+  "range-diff read-tree rebase reflog refs remote repack replace replay request-pull rerere reset restore rev-list rev-parse revert rm shortlog show " +
+  "show-branch show-ref sparse-checkout stash status stripspace submodule switch symbolic-ref tag unpack-objects update-index update-ref var " +
+  "verify-commit verify-pack verify-tag version whatchanged worktree write-tree").split(" "));
+const GH_TOP = new Set(("agent-task alias api attestation auth browse cache codespace completion config copilot extension gist gpg-key help issue label " +
+  "org pr preview project release repo ruleset run search secret ssh-key status variable version workflow").split(" "));
+const GH_OUT_ENDPOINT = /(^|\/)(merges|pulls|merge|refs|contents|git|releases|actions|branches|tags)(\/|$|\?)/;
+const MCP_SHARED = ["merge", "push", "create_ref", "update_ref", "release", "cancel", "rerun", "dispatch"];
+
+// A value fit for a reason: no URL, query, token-looking run or shell text.
+export function safe(v) {
+  if (typeof v !== "string" || v === "") return "?";
+  if (TOKENISH.test(v)) return "<redacted>";
+  const s = v.split("?")[0];
+  if (s === "") return "?";
+  if (s.includes("://") || /^[^@]*@[^{]/.test(s)) return "<url>";
+  if (/[^\w./@{}^~+:*#=,-]/.test(s)) return "…";
+  return s.length > 80 ? `${s.slice(0, 77)}…` : s;
+}
+const argShow = (w) => (w.lit === null ? "<?>" : safe(w.lit));
+const remoteShow = (r) => (r == null ? "?" : r === "origin" ? "origin" : /[:/@]/.test(r) ? "<url>" : safe(r));
+const sessionBy = (input) => (input?.agent_id ? `subagent ${safe(input.agent_type ?? "?")}` : null);
+
+// The reason: a headline, then only the rows that apply (at most 6 lines). kind: ASK or DENY.
+export function outwardReason(kind, f, input, extra = {}) {
+  const rows = [`orbit · ${kind} · ${f.what}`];
+  const row = (k, v) => rows.push(`${k.padEnd(9)}${v}`);
+  row("action", f.action);
+  if (f.commit) row("commit", `${f.commit.sha} "${String(f.commit.subject).replace(/[\p{Cc}"]/gu, "").replace(TOKENISH_ALL, "<redacted>").slice(0, 60)}"`);
+  const by = sessionBy(input);
+  if (by) row("by", by);
+  if (extra.note) row("note", extra.note);
+  row("do", extra.do ?? (kind === "ASK" ? "approve only if you gave the go" : f.cmd ? `run it yourself with ! ${f.cmd}` : "do it yourself, outside the agent"));
+  return rows.join("\n");
+}
+
+// git push: force, deletes, tags, unknown targets and protected candidates (resolved after the walk).
+function pushOut(rest, dir, cwd, getCtx, add, xargs) {
+  let force = false, del = false, wide = false, other = false;
+  const pos = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i].lit;
+    if (a === null) { pos.push(null); continue; }
+    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => w.lit)); break; }
+    if (a.startsWith("--")) {
+      const n = a.split("=")[0];
+      if (["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--prune"].includes(n)) force = true;
+      else if (n === "--delete") del = true;
+      else if (["--tags", "--follow-tags", "--all", "--branches"].includes(n)) wide = true;
+      else if (["--repo", "--receive-pack", "--exec"].includes(n)) { other = true; if (!a.includes("=")) i++; }
+      else if (n === "--push-option" && !a.includes("=")) i++;
+      continue;
+    }
+    if (a.length > 1 && a.startsWith("-")) {
+      for (let k = 1; k < a.length; k++) {
+        if (a[k] === "f") force = true;
+        else if (a[k] === "d") del = true;
+        else if (a[k] === "o") { if (k === a.length - 1) i++; break; }
+      }
+      continue;
+    }
+    pos.push(a);
+  }
+  const remote = pos[0], specs = pos.slice(1), rs = remoteShow(remote);
+  const cmd = `git ${dir && dir !== cwd ? `-C ${safe(dir)} ` : ""}push ${rest.map(argShow).join(" ")}`.trim();
+  const flag = force ? " --force" : del ? " --delete" : "";
+  const f = (cls, what, dst, more = {}) => add({ cls, what, sub: "push", action: `git push${flag} → ${rs}/${safe(dst ?? "?")}`, refs: [`${rs}/${safe(dst ?? "?")}`], dst, cmd, dir, ...more });
+  const dstOf = (s) => (s == null ? null : s.includes(":") ? s.slice(s.indexOf(":") + 1) : s.replace(/^\+/, ""));
+  if (force || specs.some((s) => s?.startsWith("+"))) return f("destructive", "force push", dstOf(specs.find((s) => s !== "") ?? null));
+  const dels = del ? specs : specs.filter((s) => s !== null && s.startsWith(":")).map((s) => s.slice(1));
+  if (del || dels.length) {
+    if (remote !== "origin" || !dir || !dels.length || xargs) return f("destructive", "remote delete of a target it cannot read", dels[0] ?? null);
+    for (const t of dels) {
+      if (!t) { f("destructive", "remote delete of a target it cannot read", t); continue; }
+      if (t.startsWith("refs/tags/")) { f("destructive", "tag delete", t.slice(10)); continue; }
+      if (t.startsWith("refs/heads/")) { f("candidate", "", t.slice(11), { del: true }); continue; }
+      if (t.startsWith("refs/")) { f("destructive", "remote delete of a target it cannot read", t); continue; }
+      const k = getCtx().refKind(dir, t);
+      if (k === FAIL || k.tag) f("destructive", k === FAIL ? "remote delete of a target it cannot read" : "tag delete", t);
+      else if (k.branch || k.remote) f("candidate", "", t, { del: true });
+      else f("destructive", "remote delete of a target it cannot read", t);
+    }
+    if (del) return;
+  }
+  const plain = specs.filter((s) => !(s !== null && s.startsWith(":")));
+  if (xargs) return f("shared", "push with arguments it cannot read", null);
+  if (!dir) return f("shared", "push from a directory it cannot tell", dstOf(plain[0]));
+  if (remote === undefined) return f("shared", "push with no remote or refspec", null);
+  if (remote !== "origin") return f("shared", remote !== null && /[:/@]/.test(remote) ? "push to a URL" : "push to another remote", dstOf(plain[0]));
+  if (other) return f("shared", "push with --repo, --receive-pack or --exec", dstOf(plain[0]));
+  if (wide) return f("shared", "push of tags or all branches", dstOf(plain[0]) ?? "*");
+  if (!plain.length && !dels.length) return f("shared", "push with no refspec", null);
+  for (const s of plain) {
+    if (s === null || s.includes("*") || s === "") { f("shared", "push with a refspec it cannot read", s); continue; }
+    const c = s.indexOf(":"), src = c < 0 ? s : s.slice(0, c);
+    let dst = c < 0 ? null : s.slice(c + 1);
+    if (dst === null && src === "HEAD") {
+      const h = getCtx().head(dir);
+      if (h === FAIL || !h) { f("shared", "push of HEAD on a branch it cannot read", "HEAD"); continue; }
+      dst = h;
+    }
+    dst ??= src;
+    if (dst.startsWith("refs/tags/") || src.startsWith("refs/tags/")) { f("shared", "tag push", dst.replace(/^refs\/tags\//, ""), { rev: src }); continue; }
+    const qualified = dst.startsWith("refs/heads/");
+    if (qualified) dst = dst.slice(11);
+    else if (dst.startsWith("refs/") || dst === "HEAD") { f("shared", "push to a ref outside branches", dst); continue; }
+    const names = [...new Set([src !== "HEAD" && !src.startsWith("refs/") && !/^[0-9a-f]{7,40}$/.test(src) ? src : null, qualified ? null : dst].filter(Boolean))];
+    const kinds = names.map((n) => getCtx().refKind(dir, n));
+    if (kinds.includes(FAIL)) { f("shared", "push of a ref it cannot read", dst); continue; }
+    if (kinds.some((k) => k.tag && !k.branch)) { f("shared", "tag push", dst, { rev: src }); continue; }
+    f("candidate", "", dst, { rev: src });
+  }
+}
+
+// git config writes and -c/--config-env overrides that can redirect a push or run a command.
+const riskyKey = (k) => CONFIG_KEYS.some((r) => r.test(k));
+function gitConfigOut(args, add) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i].lit;
+    if (a === null) return;
+    let kv = null;
+    if (a === "-c") kv = args[++i]?.lit ?? null;
+    else if (/^-c./.test(a)) kv = a.slice(2);
+    else if (a === "--config-env" || a.startsWith("--config-env=")) return add({ cls: "shared", what: "git config from the environment", sub: "config", action: "git --config-env", refs: [], cmd: null });
+    else if (["-C", "--git-dir", "--work-tree", "--namespace"].includes(a)) { i++; continue; }
+    else if (a.startsWith("-")) continue;
+    else return;
+    const key = kv === null ? null : kv.split("=")[0];
+    if (kv === null || riskyKey(key) || GITGH.test(kv.slice(key.length))) return add({ cls: "shared", what: "git config that can redirect a command", sub: "config", action: `git -c ${safe(key ?? "?")}`, refs: [], cmd: null });
+  }
+}
+
+function gitOut(r, st, getCtx, add, depth) {
+  const g = gitSplit(r.args, st.cwd, false);
+  gitConfigOut(r.args, add);
+  if (g.bad) return add({ cls: "shared", what: "git with an option it cannot read", sub: "git", action: "git", refs: [], cmd: null });
+  if (!g.sub) { if (r.xargs) add({ cls: "shared", what: "git with arguments it cannot read", sub: "git", action: "git", refs: [], cmd: null }); return; }
+  const sub = g.sub, rest = g.rest, shared = (what) => add({ cls: "shared", what, sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
+  if (sub === "push") return pushOut(rest, g.dir, st.cwd, getCtx, add, r.xargs);
+  if (sub === "send-pack" || sub === "http-push") return shared("low-level push");
+  if (sub === "config") {
+    if (!gitNotReadOnly("config", rest)) return;
+    const lits = rest.map((w) => w.lit);
+    if (lits.includes(null) || lits.some((x) => x === "-e" || x === "--edit") || lits.some((x) => riskyKey(x))) return shared("git config that can redirect a command");
+    return;
+  }
+  if ((sub === "submodule" || sub === "rebase" || sub === "bisect") && GITGH.test(rest.map((w) => w.raw).join(" "))) return shared("git running a command");
+  if (GIT_BUILTINS.has(sub)) return;
+  if (depth > 2 || !g.dir) return shared("unknown git subcommand");
+  const a = getCtx().alias(g.dir, sub);
+  if (a === FAIL || a === null) return shared("unknown git subcommand");
+  if (a.trim().startsWith("!")) return shared("git shell alias");
+  const words = a.trim().split(/\s+/).map((lit) => ({ lit, exp: lit, raw: lit, vars: [] }));
+  return gitOut({ ...r, args: [...(g.dir !== st.cwd ? [{ lit: "-C", raw: "-C" }, { lit: g.dir, exp: g.dir, raw: g.dir }] : []), ...words, ...rest] }, st, getCtx, add, depth + 1);
+}
+
+function ghOut(r, add) {
+  const p = ghParse(r.args), [p0, p1] = p.pos.map((w) => w.lit);
+  const where = p.repo === undefined ? "" : ` in ${safe(p.repo)}`;
+  const cmd = `gh ${r.args.map(argShow).join(" ")}`;
+  const target = p.pos.slice(2).map(argShow).join(" ");
+  const f = (cls, what, action) => add({ cls, what, sub: [p0, p1].filter(Boolean).join(" "), action: `${action ?? `gh ${p0} ${p1 ?? "?"}${target ? ` ${target}` : ""}`}${where}`, refs: [target || safe(p1 ?? "?")], cmd });
+  if (!p.pos.length) { if (r.xargs) f("shared", "gh with arguments it cannot read", "gh"); return; }
+  if (p0 === null || (p1 === null && p0 !== "api")) return f("shared", "gh command it cannot read", "gh");
+  if (!GH_TOP.has(p0)) return f("shared", "unknown gh command (an alias or extension)", `gh ${safe(p0)}`);
+  if (p1 === undefined && r.xargs && ["release", "repo", "pr", "run", "workflow", "auth", "alias"].includes(p0)) return f("shared", "gh command it cannot read");
+  if (p0 === "auth" && ["token", "login", "refresh", "setup-git"].includes(p1)) return f("shared", "GitHub credential access");
+  if (p0 === "alias" && ["set", "import"].includes(p1)) return f("shared", "gh alias");
+  if (p0 === "release") {
+    if (p1 === "delete" || p1 === "delete-asset") return f("destructive", p1 === "delete" ? "release delete" : "release asset delete");
+    if (p1 === "upload") return p.flags.has("--clobber") ? f("destructive", "release asset overwrite") : f("shared", "release upload");
+    if (p1 === "create" || p1 === "edit") return f("shared", `release ${p1}`);
+    return;
+  }
+  if (p0 === "repo" && (p1 === "delete" || p1 === "archive")) return f("destructive", `repo ${p1}`);
+  if (p0 === "pr" && p1 === "merge") return f("shared", "pull request merge");
+  if (p0 === "run" && (p1 === "cancel" || p1 === "rerun")) return f("shared", `run ${p1}`);
+  if (p0 === "workflow" && p1 === "run") return f("shared", "workflow dispatch");
+  if (p0 !== "api") return;
+  const ep = p1 ?? null, epShow = ep === null ? "<?>" : safe(ep);
+  if (p.method === null) return f("destructive", "gh api with a method it cannot read", `gh api ? ${epShow}`);
+  const m = (p.method ?? (p.fields.length || p.input ? "POST" : "GET")).toUpperCase();
+  if (m === "DELETE") return f("destructive", "gh api DELETE", `gh api DELETE ${epShow}`);
+  if (ep === "graphql") {
+    if (p.input || p.fields.some((x) => x.lit === null || /\bmutation\b/.test(x.lit) || /^[^=]*=@/.test(x.lit))) return f("shared", "GraphQL mutation", "gh api graphql");
+    return;
+  }
+  if (m !== "GET" && m !== "HEAD" && (ep === null || GH_OUT_ENDPOINT.test(ep))) return f("shared", `gh api ${safe(m)}`, `gh api ${safe(m)} ${epShow}`);
+}
+
+// Walks the commands like checkCmds (wrappers, sh -c, eval, cd) and adds a finding per outward action.
+function outWalk(cmds, st, getCtx, add, text) {
+  if (cmds.length > 1 || cmds.complex) st.out.multi = true;
+  const unreadable = () => { if (GITGH.test(text) && COND1.test(text)) add({ cls: "shared", what: "a command the guard cannot read", sub: "unknown", action: "git or gh inside a script or shell it cannot read", refs: [], cmd: null }); };
+  for (const cmd of cmds) {
+    if (cmd.words.some((w) => /^GIT_CONFIG\w*=/.test(w.raw))) add({ cls: "shared", what: "git config from the environment", sub: "config", action: "GIT_CONFIG_* variables", refs: [], cmd: null });
+    const r = resolveCmd(cmd.words);
+    assigns(cmd, r, st);
+    if (!r) continue;
+    if (r.dynamic) {
+      if (/\b(push|tag|release|api|run|pr|repo|delete|config|auth|merge|workflow|alias)\b/.test(cmd.words.map((w) => w.raw).join(" "))) add({ cls: "shared", what: "a command whose program it cannot tell", sub: "unknown", action: "a program named by a variable", refs: [], cmd: null });
+      continue;
+    }
+    if (r.name === "cd" || r.name === "pushd") {
+      const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
+      const e = t ? expOf(t, st) : st.env.HOME;
+      st.cwd = cmd.depth > 0 || st.complex || e == null || e === "-" ? null : isAbsolute(e) ? e : st.cwd && resolve(st.cwd, e);
+      continue;
+    }
+    if (r.name === "popd") { st.cwd = null; continue; }
+    if (r.opaque || r.scripter || ("inner" in r && r.inner === null)) { unreadable(); continue; }
+    if ("inner" in r) {
+      let inner;
+      try { inner = parseShell(r.inner, st.env); } catch { unreadable(); continue; }
+      const sub = r.name === "eval" ? st : { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp) };
+      sub.complex ||= inner.complex;
+      outWalk(inner, sub, getCtx, add, text);
+      continue;
+    }
+    if (r.name === "git") gitOut(r, st, getCtx, add, 0);
+    else if (r.name === "gh") ghOut(r, add);
+  }
+}
+
+const FLOOR = (b) => b === "main" || b === "master" || b.startsWith("release/");
+// Classifies a parsed command: { findings, multi }. Destructive findings are final before any profile read; the profile is
+// read only to add protected branches to the push and delete candidates.
+export function classifyOutward(cmds, text, cwd, env, getCtx) {
+  const out = { findings: [], multi: false };
+  outWalk(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, out }, getCtx, (f) => out.findings.push(f), text);
+  if (out.findings.some((f) => f.cls === "destructive")) return out;
+  const prot = new Map();
+  const isProt = (dir, b) => {
+    if (!prot.has(dir)) {
+      const oh = getCtx().originHead(dir);
+      const p = getCtx().profile(dir);
+      prot.set(dir, oh === FAIL ? null : [oh, p?.base, ...(p?.protected ?? [])].filter((x) => typeof x === "string" && x));
+    }
+    const list = prot.get(dir);
+    return list === null || FLOOR(b) || list.some((x) => x === b || (x.endsWith("*") && b.startsWith(x.slice(0, -1))));
+  };
+  out.findings = out.findings.map((f) => {
+    if (f.cls !== "candidate") return f;
+    const p = isProt(f.dir, f.dst);
+    if (f.del) return { ...f, cls: p ? "destructive" : "shared", what: p ? "protected branch delete" : "remote branch delete" };
+    return { ...f, cls: p ? "shared" : "branch", what: "push to protected branch" };
+  });
+  return out;
+}
+
+// The decision for a shared finding: deny when not alone or when the mode cannot prompt, else ask.
+function sharedDecision(f, input, multi) {
+  if (multi) return outwardReason("DENY", f, input, { note: "not alone in its call", do: "run it alone in its own call" });
+  if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
+  return { ask: outwardReason("ASK", f, input) };
+}
+
+function mcpOut(tool, ti) {
+  const t = tool.toLowerCase();
+  if (!t.includes("github")) return null;
+  const target = [ti.owner && ti.repo ? `${ti.owner}/${ti.repo}` : null, ti.pullNumber ?? ti.pull_number ?? ti.issue_number ?? null, ti.ref ?? ti.branch ?? ti.tag ?? ti.tag_name ?? ti.run_id ?? null];
+  const show = `${target[0] === null ? "" : safe(String(target[0]))}${target[1] === null ? "" : `#${safe(String(target[1]))}`}${target[2] === null ? "" : ` ${safe(String(target[2]))}`}`.trim();
+  const base = { sub: tool, action: `${safe(tool)}${show ? ` ${show}` : ""}`, refs: show ? [show] : [], cmd: null };
+  const d = ["delete", "force"].find((w) => t.includes(w)) ?? (ti.force === true ? "force" : null);
+  if (d) return { ...base, cls: "destructive", what: `GitHub ${d}` };
+  const s = MCP_SHARED.find((w) => t.includes(w));
+  return s ? { ...base, cls: "shared", what: `GitHub ${s.replace("_", " ")}` } : null;
+}
+
+// A parse error or guard error on git/gh text with an outward word: shared (condition 1).
+function unreadableDecision(input) {
+  const text = input?.tool_input?.command;
+  if (typeof text !== "string" || !GITGH.test(text) || !COND1.test(text)) return null;
+  return sharedDecision({ cls: "shared", what: "a command the guard cannot read", action: "git or gh in a command it cannot parse", cmd: null }, input, false);
+}
+
+// Returns the deny reason (a string), { ask: reason }, or null to allow.
 export function guard(input, env = {}, ctx = null) {
   const op = isOperator(input, env);
   const tool = input?.tool_name, ti = input?.tool_input ?? {};
@@ -822,12 +1159,28 @@ export function guard(input, env = {}, ctx = null) {
     if (c.operatorFiles.includes(abs) || !c.roots.some((r) => inside(r, abs))) return null;
     return `OPR-01: the operator session does not edit or write ${f} inside the repo (its one file is .agents/operator.md); ${DELEGATE}.`;
   }
+  if (typeof tool === "string" && tool.startsWith("mcp__")) {
+    const f = mcpOut(tool, ti);
+    return !f ? null : f.cls === "destructive" ? outwardReason("DENY", f, input) : sharedDecision(f, input, false);
+  }
   if (tool !== "Bash") return null;
   if (typeof ti.command !== "string") return op ? `OPR-01: the operator session does not run a Bash call without a command string; ${DELEGATE}.` : null;
   let cmds;
-  try { cmds = parseShell(ti.command, env); } catch (e) { return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : null; }
-  if (!op && !/\bgit\b/.test(ti.command)) return null;
-  return checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
+  try { cmds = parseShell(ti.command, env); } catch (e) { return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input); }
+  const out = classifyOutward(cmds, ti.command, cwd, env, getCtx);
+  const withCommit = (f) => {
+    if (!f.rev || !f.dir) return f;
+    const c = getCtx().commit(f.dir, f.rev);
+    return c && c !== FAIL ? { ...f, commit: c } : f;
+  };
+  const d = out.findings.find((f) => f.cls === "destructive");
+  if (d) return outwardReason("DENY", withCommit(d), input);
+  if (op || /\bgit\b/.test(ti.command)) {
+    const r = checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
+    if (r) return r;
+  }
+  const s = out.findings.find((f) => f.cls === "shared");
+  return s ? sharedDecision(withCommit(s), input, out.multi) : null;
 }
 
 // The hook entry: raw stdin in, { code, stdout, stderr } out. Fails closed only for the operator.
@@ -839,10 +1192,11 @@ export function hookMain(raw, env, fn = guard) {
   }
   let reason;
   try { reason = fn(input, env); } catch (e) {
-    if (!isOperator(input, env)) return { code: 0, stdout: "", stderr: "" };
-    reason = `OPR-01: the orbit guard failed (${e.message}), so the operator's tool call is denied.`;
+    if (!isOperator(input, env)) reason = input?.tool_name === "Bash" ? unreadableDecision(input) : null;
+    else reason = `OPR-01: the orbit guard failed (${e.message}), so the operator's tool call is denied.`;
   }
-  const stdout = reason ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }) + "\n" : "";
+  const ask = reason !== null && typeof reason === "object";
+  const stdout = reason ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: ask ? "ask" : "deny", permissionDecisionReason: ask ? reason.ask : reason } }) + "\n" : "";
   return { code: 0, stdout, stderr: "" };
 }
 
