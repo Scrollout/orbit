@@ -190,33 +190,37 @@ function word(p, depth) {
       add(s.slice(p.i, j + 1)); p.i = j + 1; dyn = unexp = glob = ext = true; continue;
     }
     if (META.has(c)) break;
-    if (c === "\\") { if (s[p.i + 1] !== "\n") add(s[p.i + 1] ?? ""); p.i += 2; continue; }
+    if (c === "\\") { if (s[p.i + 1] !== "\n") add(s[p.i + 1] ?? "\\"); p.i += 2; continue; }
     if (c === "'") {
       const e = s.indexOf("'", p.i + 1);
       if (e < 0) throw new ParseError("unclosed '");
       add(s.slice(p.i + 1, e)); p.i = e + 1; continue;
     }
     if (c === "$" && s[p.i + 1] === "'") {
-      let j = p.i + 2, t = "";
-      // Every ANSI-C escape decoded as bash does (#31): an unknown one (\z, \x without a digit) stays as written; a NUL ends the
-      // segment. \c before a backslash or quote, or a code point beyond Unicode, is a parse error.
+      // The end as bash's lexer finds it: a backslash escapes the next character, a quote too.
+      let e = p.i + 2, t = "";
+      while (e < s.length && s[e] !== "'") e += s[e] === "\\" ? 2 : 1;
+      if (e >= s.length) throw new ParseError("unclosed $'");
+      const b = s.slice(p.i + 2, e);
+      // Every ANSI-C escape decoded as bash does (#31, #33): an unknown one (\z, \x without a digit) and a closing \c stay as
+      // written; \c\\ is one control character; a NUL ends the segment. A value beyond ASCII is a raw byte or depends on the
+      // locale: the word is unreadable.
       const esc = { a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
-      for (; j < s.length && s[j] !== "'"; j++) {
-        if (s[j] !== "\\" || j + 1 >= s.length) { t += s[j]; continue; }
-        const m = /^(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|c(.))/s.exec(s.slice(j + 1, j + 10));
-        if (!m) { j++; t += esc[s[j]] ?? "\\" + s[j]; continue; }
+      for (let j = 0; j < b.length; j++) {
+        if (b[j] !== "\\" || j + 1 >= b.length) { t += b[j]; continue; }
+        const m = /^(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|c(.))/s.exec(b.slice(j + 1, j + 10));
+        if (!m) { j++; t += esc[b[j]] ?? "\\" + b[j]; continue; }
         j += m[0].length;
-        if (m[5] !== undefined) {
-          if ("\\'".includes(m[5])) throw new ParseError("\\c before a backslash or quote in $'");
-          t += m[5] === "?" ? "\x7f" : String.fromCharCode(m[5].toUpperCase().charCodeAt(0) & 31); continue;
-        }
-        const n = parseInt(m[1] ?? m[2] ?? m[3] ?? m[4], m[1] ? 8 : 16);
-        if (n > 0x10ffff) throw new ParseError("code point beyond Unicode in $'");
-        t += m[1] || m[2] ? String.fromCharCode(n & 255) : String.fromCodePoint(n);
+        if (m[5] === "\\" && b[j + 1] === "\\") j++;
+        let n;
+        if (m[5] === undefined) { n = parseInt(m[1] ?? m[2] ?? m[3] ?? m[4], m[1] ? 8 : 16); if (m[1] || m[2]) n &= 255; }
+        else n = m[5] === "?" ? 0x7f : m[5].charCodeAt(0) > 0x7f ? 0x80 : m[5].toUpperCase().charCodeAt(0) & 31;
+        if (n > 0x7f) dyn = unexp = true; else t += String.fromCharCode(n);
       }
-      if (j >= s.length) throw new ParseError("unclosed $'");
-      add(t.split("\0")[0]); p.i = j + 1; continue;
+      add(t.split("\0")[0]); p.i = e + 1; continue;
     }
+    // A locale string $"..." is a double-quoted string to bash: the $ is dropped (#32).
+    if (c === "$" && s[p.i + 1] === '"') { p.i++; continue; }
     if (c === '"') {
       p.i++;
       while (p.i < s.length && s[p.i] !== '"') {
@@ -231,10 +235,19 @@ function word(p, depth) {
     }
     if (c === "$") { dollar(); continue; }
     if (c === "`") { backtick(); continue; }
-    if (c === "~" && p.i === start && (p.i + 1 >= s.length || s[p.i + 1] === "/" || META.has(s[p.i + 1]))) {
-      lit += "~"; litChars++; p.i++;
-      if (p.env.HOME === undefined) unexp = true; else exp += p.env.HOME;
-      continue;
+    // A tilde prefix: at the word's start, or after the first = or an unquoted : of an assignment-shaped word (bash expands
+    // those in arguments too; after an escaped-looking \: it is unreadable). ~user, ~+ and ~- make the word unreadable; a quoted
+    // character after ~ leaves it literal.
+    const pre = c === "~" && /^[A-Za-z_]\w*\+?=/.test(s.slice(start, p.i)) ? s.slice(start, p.i) : null;
+    if (pre?.endsWith("\\:")) dyn = unexp = true;
+    if (c === "~" && (p.i === start || /^[A-Za-z_]\w*\+?=$/.test(pre ?? "") || /[^\\]:$/.test(pre ?? ""))) {
+      const n = s[p.i + 1];
+      if (n === undefined || n === "/" || META.has(n) || (n === ":" && p.i > start)) {
+        lit += "~"; litChars++; p.i++;
+        if (p.env.HOME === undefined) unexp = true; else exp += p.env.HOME;
+        continue;
+      }
+      if (!"'\"\\$`".includes(n)) dyn = unexp = true;
     }
     // An unquoted { may start a brace expansion ({a,b}, {a..b}): counted with the glob characters (#28).
     if (c === "*" || c === "?" || c === "[" || c === "{") glob = true;
@@ -451,6 +464,8 @@ function gitSplit(args, cwd, op) {
   let i = 0, dir = cwd, config = false, redirect = false;
   while (i < args.length) {
     const a = args[i].lit;
+    // A glob or brace word among the global options, their values or as the subcommand may expand to any subcommand (#34).
+    if (args[i].glob || (["-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"].includes(a) && args[i + 1]?.glob)) return { bad: "a glob or brace word", glob: true };
     if (a === null) return { bad: "a dynamic git option" };
     if (a === "-C") {
       const d = args[i + 1]?.exp;
@@ -1186,6 +1201,7 @@ const REMOTE_WRITES = new Set(["add", "set-url", "set-head", "set-branches", "re
 function gitOut(r, st, getCtx, add, depth, loose = false) {
   const g = gitSplit(r.args, st.cwd, false);
   gitConfigOut(r.args, add);
+  if (g.glob) return add({ cls: "destructive", what: "git with a glob or brace word before or as the subcommand", sub: "git", action: "git", refs: [], cmd: null });
   if (g.bad) return add({ cls: "shared", what: "git with an option it cannot read", sub: "git", action: "git", refs: [], cmd: null });
   if (!g.sub) { if (r.xargs) add({ cls: "shared", what: "git with arguments it cannot read", sub: "git", action: "git", refs: [], cmd: null }); return; }
   const sub = g.sub, rest = g.rest, shared = (what) => add({ cls: "shared", what, sub, action: `git ${safe(sub)}`, refs: [], cmd: null });

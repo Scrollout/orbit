@@ -62,7 +62,7 @@
     },
     "rules/rules.json": {
       "version": "1.15.7",
-      "hash": "71ff0965dd60aab95fb9fb308ee595c3a96f97d0e78dccdd62617a12becb7c70",
+      "hash": "2d4bdea6cd2efbd0907bc85e8282dfbafb2b8c79cd58aeef0c4b1395a381deaf",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",

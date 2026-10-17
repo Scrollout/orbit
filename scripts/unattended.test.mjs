@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { FAIL, guard, realCtx } from "../hooks/guard.mjs";
+import { FAIL, guard, parseShell, realCtx } from "../hooks/guard.mjs";
 import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
 import { onPrompt, parentTerminal } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
@@ -727,6 +727,35 @@ test("#31: $'...' decodes every ANSI-C escape as bash does, so a force option or
     denyEvery(env, ["git push origin $'\\x2df'", "git push origin $'-f'", "git push origin $'\\053main'", "git push $'\\055\\055force' origin feat", "git push origin $'\\u002bmain'", "git push origin $'\\U0000002Bmain'", "git push origin $'\\0'-f"]);
     const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
     assert.equal(guard(bash("git push origin $'feat'", { ...MAIN, permission_mode: "default" }), env, branch), null, "a plain $'feat' stays silent");
+  });
+});
+
+test("#32: a locale string $\"...\" drops its $, so a force option, +refspec or protected write spelled with it is denied", () => {
+  withGo((env, h) => {
+    denyEvery(env, ['git push origin $"+main"', 'git push $"-f" origin feat', 'git push origin $"--force" feat']);
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ['echo x > "$HOME/.claude/settings.json"', 'echo x > $"$HOME/.claude/settings.json"']) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+    }
+    assert.equal(parseShell('$"-f"x"$"')[0].words[0].lit, "-fx$");
+  });
+});
+
+test("#33: $'...' forms bash accepts are decoded or only that word is unreadable; a destructive push in the line is still denied", () => {
+  withGo((env) => denyEvery(env, ["git push origin +main; echo $'\\c\\\\'", "git push origin +main; echo $'a\\c'", "git push origin +main; echo $'\\U110000'", "echo $'\\c'; git push -f origin feat"]));
+  const lit = (w) => parseShell(`echo ${w}`)[0].words[1].lit;
+  assert.equal(lit("$'\\c\\\\'"), "\x1c");
+  assert.equal(lit("$'\\c\\\\x'"), "\x1cx");
+  assert.equal(lit("$'a\\c'"), "a\\c");
+  assert.equal(lit("$'\\U110000'"), null);
+});
+
+test("#34: a glob or brace word among git's global options or as the subcommand is denied in every mode", () => {
+  withGo((env) => {
+    denyEvery(env, ["git -C {.,push} origin +main", "git {-C,.} push --force origin feat", "git -C . pu{s,}h origin +main", "git -C . p[u]sh origin +main",
+      "git -c {x.y=z,push} origin +main", "git --git-dir {.git,push} origin +main", "git -[C] . push origin +main", "git p?sh origin +main"]);
+    const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
+    for (const c of ["git -C /r push origin feat", "git -c x=y push origin feat"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
   });
 });
 
