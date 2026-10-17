@@ -519,3 +519,10 @@ test("#22 OPR-01: ghDeny denies a control character, an unknown gh api flag, an 
   allowedOp("gh api graphql -f query='query{viewer{login}}'");
   allowedOp("gh api repos/o/r/pulls --jq '.[].number'");
 });
+
+test("#24 OPR-01: ghDeny denies any gh call under xargs, find -exec, fd -x or parallel", () => {
+  for (const c of ["printf merge | xargs -I{} gh pr {} 1", "echo delete 5 --yes | xargs gh issue", "echo 1 --approve | xargs gh pr review", "echo exec x | xargs gh extension",
+    "find . -exec gh pr merge {} \\;", "find . -execdir gh issue view {} \\;", "fd -x gh pr view", "fd -X gh issue list", "parallel gh pr view ::: 1"]) deniedOp(c);
+  allowedOp("find . -name gh");
+  allowedOp("gh pr view 4");
+});

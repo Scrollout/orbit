@@ -96,8 +96,9 @@ export function pluginProblems(pl, changelog, market) {
   return p;
 }
 export const skillNameProblems = (entries) => entries.filter(([dir, text]) => fields(text).get("name") !== dir).map(([dir]) => `skills/${dir}: frontmatter name is not ${dir}`);
-// The documented frontmatter keys per kind (version is allowed everywhere; Claude Code ignores it). Skill keys as Claude
-// Code 2.1.302 reads them; commands and agents as Orbit #23 lists them.
+// The documented frontmatter keys per kind (version is allowed everywhere; Claude Code ignores it). Skill keys read from
+// the skill loader of the Claude Code 2.1.302 build on the dev host (CI pins 2.1.288, ci/package-lock.json, for
+// plugin-validate); commands and agents as Orbit #23 lists them.
 const FM_KEYS = {
   commands: ["description", "argument-hint", "disable-model-invocation", "model", "allowed-tools"],
   skills: ["name", "description", "when_to_use", "argument-hint", "disable-model-invocation", "user-invocable", "allowed-tools", "model", "effort", "context", "agent", "hooks", "paths", "shell"],
@@ -112,7 +113,8 @@ export function frontmatterProblems(kind, text) {
   if (m !== undefined && !MODELS.has(m) && !/^claude-[a-z0-9-]+$/.test(m)) p.push(`model ${m} is not a documented value`);
   return p;
 }
-// Hook events as Claude Code 2.1.302 documents them (its hook event list).
+// Hook events read from the hook event list of the Claude Code 2.1.302 build on the dev host (CI pins 2.1.288,
+// ci/package-lock.json, for plugin-validate).
 const HOOK_EVENTS = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "Notification", "UserPromptSubmit",
   "UserPromptExpansion", "SessionStart", "SessionEnd", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact",
   "PreModelSwitch", "PostModelSwitch", "PermissionRequest", "PermissionDenied", "Setup", "TeammateIdle", "TaskCreated", "TaskCompleted",
@@ -265,6 +267,8 @@ test("every skill's frontmatter name equals its directory", () => {
 });
 
 test("frontmatter keys are documented for their kind and model is a documented value", () => {
+  // #24: a missing commands/ or agents/ dir would leave nothing checked.
+  for (const d of ["commands", "agents"]) assert.ok(md(d).length, `${d}/ has no .md files`);
   const all = [...md("commands").map((f) => ["commands", f]), ...md("agents").map((f) => ["agents", f]), ...skills.map((f) => ["skills", f])];
   assert.deepEqual(all.flatMap(([k, f]) => frontmatterProblems(k, read(f)).map((p) => `${f}: ${p}`)), []);
 });

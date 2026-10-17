@@ -599,3 +599,30 @@ test("#22: the tracker --plan lines and a plain read query stay silent", () => {
     for (const c of [...cmds, `gh api graphql ${QV}`]) assert.equal(guard(bash(c, who), env, ctx()), null, c);
   });
 });
+
+// ---------- fix-round 5 re-review of 0.21.0 (Orbit #24): globs and wrappers the guard cannot read exactly ----------
+test("#24 row 1: a glob form the matcher does not model exactly is never silent; everyday globs stay silent", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of [
+        "echo '{}' > ~/.[[:lower:]]laude/settings.json", "cp x ~/.[[:lower:]]laude/settings.json", "ln -sf x ~/.[[:lower:]]laude/settings.json",
+        "echo '{}' > ~/.{c..c}laude/settings.json", "cp x ~/.{c..c}laude/settings.json", "ln -sf x ~/.{c..c}laude/settings.json",
+        "cp x {~,/nonexistent}/.claud?/settings.json", "ln -sf x {~,/nonexistent}/.claud?/settings.json", "echo '{}' > {~,/nonexistent}/.claud?/settings.json",
+        "echo '{}' > ~/.[[=c=]]laude/settings.json", "echo '{}' > ~/.[[.c.]]laude/settings.json", "echo '{}' > ~/{x/../.{c,x}laude/settings.json",
+      ]) assert.notEqual(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      // A brace group without a comma is literal; the comma group after it still expands.
+      assert.equal(kind(guard(bash("echo '{}' > ~/{x}/../.{c,x}laude/settings.json", who), env, ctx())), "deny", `${m}: a literal group before a comma group`);
+      for (const c of ["rm *.log", "sed -i s/a/b/ *.md", "ls src/{a,b}.js", "cp src/{a,b}.js dist/", "rm a[0-9].txt", "touch {}"]) assert.equal(guard(bash(c, { ...who, cwd: repo }), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
+
+test("#24 row 2: any gh call under xargs, find -exec, fd -x or parallel is shared", () => {
+  withGo((env) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      for (const c of ["printf merge | xargs -I{} gh pr {} 1", "echo delete 5 --yes | xargs gh issue", "echo 1 --approve | xargs gh pr review", "echo exec x | xargs gh extension"]) assert.notEqual(guard(bash(c, { ...MAIN, permission_mode: m }), env, ctx()), null, `${m}: ${c}`);
+    }
+    attendedAsk(env, ["xargs -a a.txt gh issue", "xargs -I{} -a a.txt gh pr {} 1", "find . -exec gh pr view {} \\;", "find . -execdir gh issue view {} \\;", "fd -x gh issue view", "fd -X gh pr view", "parallel gh pr view ::: 1"]);
+  });
+});

@@ -15,7 +15,7 @@ help:
 toolbox:
 	@docker build -q -t $(CI_IMAGE) ci >/dev/null && echo "toolbox: built $(CI_IMAGE)" >&2
 
-## vet: static checks (shellcheck, node --check, JSON, actionlint, hadolint, report self-test, plugin validate)
+## vet: static checks (shellcheck, node --check, JSON, actionlint, hadolint, report self-test, plugin validate and its self-test)
 vet: toolbox
 	@$(IN) sh ci/scripts/vet.sh
 

@@ -615,6 +615,7 @@ function ghApiOdd(args, p, xargs) {
 }
 
 function ghDeny(args, xargs = false) {
+  if (xargs) return "run gh under xargs, find -exec, fd -x or parallel (the wrapper appends or substitutes its arguments)";
   const p = ghParse(args), { pos, method: m0, fields, input } = p;
   const method = m0 === null ? "?" : m0 ?? null;
   const [p0, p1] = pos.map((w) => w.lit);
@@ -907,6 +908,10 @@ function checkCmds(cmds, st, ctx, op, total) {
     }
     if (!op) continue;
     if (r.name === "gh") { const d = ghDeny(r.args, r.xargs); if (d) return deny(d); continue; }
+    if (SUBST_PROGRAMS.has(r.name)) {
+      const from = EXEC_OPTS[r.name] ? r.args.findIndex((w) => EXEC_OPTS[r.name].includes(w.lit)) : 0;
+      if (from >= 0 && r.args.slice(from).some((w) => w.lit !== null && basename(w.lit) === "gh")) return deny(ghDeny([], true));
+    }
     const targets = writeTargets(r.name, r.args);
     if (r.xargs && (targets.length || r.name in WRITERS || r.name === "sed")) return deny(`run "xargs ${r.name}" (its targets are unknown before it runs)`);
     for (const t of targets) { const d = target_(t, st, ctx); if (d) return deny(`write ${d} (${r.name})`); }
@@ -1280,10 +1285,11 @@ function ghOut(r, add, loose = false) {
   const cmd = `gh ${r.args.map(argShow).join(" ")}`;
   const target = p.pos.slice(2).map(argShow).join(" ");
   const f = (cls, what, action) => add({ cls, what, sub: [p0, p1].filter(Boolean).join(" "), action: `${action ?? `gh ${p0} ${p1 ?? "?"}${target ? ` ${target}` : ""}`}${where}`, refs: [target || safe(p1 ?? "?")], cmd });
-  if (!p.pos.length) { if (r.xargs) f("shared", "gh with arguments it cannot read", "gh"); return; }
+  // Under xargs, find -exec, fd -x or parallel the wrapper appends or substitutes arguments (#24): shared, whatever the rest says.
+  if (r.xargs) f("shared", "gh with arguments a wrapper appends or substitutes", "gh");
+  if (!p.pos.length) return;
   if (p0 === null || (p1 === null && p0 !== "api")) return f("shared", "gh command it cannot read", "gh");
   if (!GH_TOP.has(p0)) return loose ? undefined : f("shared", "unknown gh command (an alias or extension)", `gh ${safe(p0)}`);
-  if (p1 === undefined && r.xargs && ["release", "repo", "pr", "run", "workflow", "auth", "alias"].includes(p0)) return f("shared", "gh command it cannot read");
   if (p0 === "auth" && ["token", "login", "refresh", "setup-git"].includes(p1)) return f("shared", "GitHub credential access");
   if (p0 === "alias" && ["set", "import"].includes(p1)) return f("shared", "gh alias");
   if (p0 === "release") {
@@ -1542,9 +1548,11 @@ const stateDeny = (what, action, input) => outwardReason("DENY", { what, action 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
 const hasGlob = (s) => /[*?[{]/.test(s);
 // A pattern with its {a,b} alternatives expanded (at most 64; null beyond: the caller takes the stricter answer).
-function braces(s, n = 0) {
-  const i = s.indexOf("{");
-  if (i < 0 || n > 8) return [s];
+// A group with no comma, or with no closing }, is literal, as in bash; the next group still expands.
+function braces(s, n = 0, from = 0) {
+  const i = s.indexOf("{", from);
+  if (i < 0) return [s];
+  if (n > 8) return null;
   let depth = 0, j = i;
   const parts = [], start = [i + 1];
   for (; j < s.length; j++) {
@@ -1552,10 +1560,26 @@ function braces(s, n = 0) {
     else if (s[j] === "}" && --depth === 0) break;
     else if (s[j] === "," && depth === 1) start.push(j + 1);
   }
-  if (j >= s.length || start.length < 2) return [s];
+  if (j >= s.length || start.length < 2) return braces(s, n, i + 1);
   for (let k = 0; k < start.length; k++) parts.push(s.slice(start[k], (start[k + 1] ?? j + 1) - 1));
-  const out = parts.flatMap((p) => braces(s.slice(0, i) + p + s.slice(j + 1), n + 1));
-  return out.length > 64 ? null : out;
+  const out = parts.flatMap((p) => braces(s.slice(0, i) + p + s.slice(j + 1), n + 1) ?? [null]);
+  return out.length > 64 || out.includes(null) ? null : out;
+}
+// Whether braces and segMatch model the glob exactly (#24, an allowlist): *, ?, a plain [...] set (no [: [= [. class,
+// equivalence or collating form), and brace groups with a comma, no ~ and no {a..b} sequence (a group with no comma and
+// no .. is literal). Any other form is shared: bash may expand it to a path the matcher does not see.
+function globExact(s) {
+  if (s.includes("~") || /\[[:=.]/.test(s)) return false;
+  for (let i = s.indexOf("{"); i >= 0; i = s.indexOf("{", i + 1)) {
+    let depth = 0, j = i, comma = false;
+    for (; j < s.length; j++) {
+      if (s[j] === "{") depth++;
+      else if (s[j] === "}" && --depth === 0) break;
+      else if (s[j] === "," && depth === 1) comma = true;
+    }
+    if (j >= s.length || (!comma && s.slice(i, j).includes(".."))) return false;
+  }
+  return true;
 }
 // Whether one path segment matches a glob segment: *, ?, [...] (with ! or ^ and ranges); a [ without ] is literal.
 function segMatch(p, s, i = 0, k = 0) {
@@ -1602,12 +1626,17 @@ function globUnder(pat, base, dirs) {
 }
 
 // A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null. A glob
-// in a write target or an ln/cp operand counts when it can match under ~/.claude; any other glob is silent (#22).
+// in a write target or an ln/cp operand counts when it can match under ~/.claude; a form the matcher does not model
+// exactly is a shared finding in st.links (#24); any other glob is silent (#22).
 function claudeWrite(cmds, st, dirs) {
   const names = [...new Set([...dirs, ...[st.env?.HOME && join(st.env.HOME, ".claude"), st.env?.CLAUDE_CONFIG_DIR].filter((d) => typeof d === "string" && isAbsolute(d))])];
   const hit = (w, base = st.cwd) => {
     const e = expOf(w, st);
-    if (e != null && hasGlob(e)) return globUnder(e, base, names) || w.raw.includes(".claude") ? w.raw : null;
+    if (e != null && hasGlob(e)) {
+      if (globUnder(e, base, names) || w.raw.includes(".claude")) return w.raw;
+      if (!globExact(e)) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      return null;
+    }
     if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
     const f = realOrNull(resolve(base ?? "/", e));
     return f === null || dirs.some((d) => inside(d, f)) ? w.raw : null;

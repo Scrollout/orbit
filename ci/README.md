@@ -7,8 +7,8 @@
 |---|---|
 | `make help` | lists targets |
 | `make toolbox` | builds `orbit-ci-toolbox:dev` from `ci/Dockerfile` (context `ci/` only) |
-| `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test, `claude plugin validate` |
-| `make plugin-validate` | `claude plugin validate` on `.` (the marketplace) and `.claude-plugin/plugin.json` (the plugin) alone (`ci/scripts/plugin-validate.sh`): offline, no auth; fails on an error or any warning but `CLAUDE.md` at the plugin root |
+| `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test, `claude plugin validate` and its self-test |
+| `make plugin-validate` | `claude plugin validate` on `.` (the marketplace) and `.claude-plugin/plugin.json` (the plugin) alone (`ci/scripts/plugin-validate.sh`): offline, no auth; fails on an error or any warning but `CLAUDE.md` at the plugin root, also one in another form (any output line outside the known shapes); `ci/scripts/plugin-validate.test.sh` (in `make vet`) runs it on fixture plugins: clean passes, a planted warning or an error fails |
 | `make quality` | eslint (`ci/eslint.config.mjs`), `npm test` |
 | `make security` | gitleaks on the tree and the history (findings as file:line and rule, never the secret), eslint-plugin-security (`ci/eslint.security.mjs`), dependency check |
 | `make report` | prints the Markdown report of the last run |
