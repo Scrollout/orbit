@@ -342,6 +342,10 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
       return { tag: l.includes(`refs/tags/${name}`), branch: l.includes(`refs/heads/${name}`), remote: l.includes(`refs/remotes/origin/${name}`) };
     },
     head(dir) { const r = run(dir, "symbolic-ref", "-q", "--short", "HEAD"); return r === FAIL ? FAIL : r.code === 0 ? r.out : null; },
+    followTags(dir) {
+      const r = run(dir, "config", "--type=bool", "--get", "push.followTags");
+      return r === FAIL ? FAIL : r.code === 0 ? r.out === "true" : r.code === 1 ? false : FAIL;
+    },
     originHead(dir) {
       const r = run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD");
       if (r === FAIL) return FAIL;
@@ -364,24 +368,27 @@ const shown = (w) => w.raw;
 // Global options before the subcommand. A dynamic -C leaves the directory unknown (null): the operator is denied,
 // a worker's DEC-08 check still runs, with the session's cwd for the repo state.
 function gitSplit(args, cwd, op) {
-  let i = 0, dir = cwd, config = false;
+  // redirect: --git-dir, --work-tree or a -C path that is not literal (the outward classes then cannot tell the repo).
+  let i = 0, dir = cwd, config = false, redirect = false;
   while (i < args.length) {
     const a = args[i].lit;
     if (a === null) return { bad: "a dynamic git option" };
     if (a === "-C") {
       const d = args[i + 1]?.exp;
       if (d == null) { if (op || !args[i + 1]) return { bad: "a dynamic git -C path" }; dir = null; i += 2; continue; }
+      if (args[i + 1].lit === null) redirect = true;
       dir = isAbsolute(d) ? d : dir && resolve(dir, d); i += 2; continue;
     }
     if (a === "-c" || a === "--config-env") { config = true; i += 2; continue; }
     if (/^(-c.|--config-env=)/.test(a)) { config = true; i++; continue; }
-    if (["--git-dir", "--work-tree", "--namespace"].includes(a)) { i += 2; continue; }
-    if (/^--(git-dir|work-tree|namespace)=/.test(a) || ["--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--bare"].includes(a)) { i++; continue; }
-    if (["--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"].includes(a)) return { dir, config, sub: "version", rest: [] };
+    if (["--git-dir", "--work-tree", "--namespace"].includes(a)) { redirect ||= a !== "--namespace"; i += 2; continue; }
+    if (/^--(git-dir|work-tree)=/.test(a)) { redirect = true; i++; continue; }
+    if (/^--namespace=/.test(a) || ["--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--bare"].includes(a)) { i++; continue; }
+    if (["--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"].includes(a)) return { dir, config, redirect, sub: "version", rest: [] };
     if (a.startsWith("-")) return { bad: `git option ${a}` };
-    return { dir, config, sub: a, rest: args.slice(i + 1) };
+    return { dir, config, redirect, sub: a, rest: args.slice(i + 1) };
   }
-  return { dir, config, sub: null, rest: [] };
+  return { dir, config, redirect, sub: null, rest: [] };
 }
 
 // Read-only git: a per-subcommand allowlist of options (default deny; no abbreviations). A spec has
@@ -861,10 +868,19 @@ function target_(w, st, ctx) {
 // that fails or times out gives the stricter class. Reasons use one short fixed shape built from parsed fields, never the command line.
 const ASK_MODES = new Set(["default", "acceptEdits", "plan", "auto", "bypassPermissions"]);
 const GITGH = /\b(git|gh)\b/;
-const COND1 = /\b(push|tag|release|api|run|pr|repo|config|auth)\b|--delete/;
+const COND1 = /\b(push|tag|release|api|pr|repo|config|auth)\b|--delete|\bgh\s+(run|workflow)\b/;
 const TOKENISH = /gh[pousr]_|github_pat_|glpat-|xox[a-z]-|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/;
 const TOKENISH_ALL = /gh[pousr]_\w*|github_pat_\w*|glpat-[\w-]*|xox[a-z]-[\w-]*|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/g;
-const CONFIG_KEYS = [/^alias\./i, /^core\.hookspath$/i, /^remote\..+\.pushurl$/i, /^remote\..+\.push$/i, /^url\..+\.insteadof$/i, /^url\..+\.pushinsteadof$/i];
+const CONFIG_KEYS = [/^alias\./i, /^core\.hookspath$/i, /^remote\./i, /^url\./i, /^push\./i, /^include(if\..+)?\.path$/i];
+// Keys whose value git runs as a command; a -c of one asks unless the value is a harmless pager or editor.
+const COMMAND_KEYS = [/^core\.(pager|editor|sshcommand|fsmonitor|askpass|gitproxy|alternaterefscommand)$/i, /^pager\./i, /^sequence\.editor$/i,
+  /^diff\.external$/i, /^diff\..+\.(textconv|command)$/i, /^merge\..+\.driver$/i, /^filter\..+\.(clean|smudge|process)$/i, /^credential\.(.+\.)?helper$/i,
+  /^gpg\.(.+\.)?program$/i, /^(difftool|mergetool|browser|man)\..+\.(cmd|path)$/i, /^uploadpack\.packobjectshook$/i, /^sendemail\.(.+\.)?(smtpserver|tocmd|cccmd|headercmd)$/i,
+  /^trailer\..+\.(cmd|command)$/i];
+const HARMLESS_CMD = new Set(["", "cat", "less", "more", "true", "false", ":"]);
+// Built-ins that run commands or other git commands they are given; the push-capable plumbing.
+const GIT_RUNNERS = new Set(["for-each-repo", "filter-branch", "difftool", "mergetool"]);
+const GIT_PUSHERS = new Set(["send-pack", "http-push", "receive-pack"]);
 const GIT_BUILTINS = new Set(("add am annotate apply archive backfill bisect blame branch bundle cat-file check-attr check-ignore check-mailmap check-ref-format " +
   "checkout checkout-index cherry cherry-pick citool clean clone column commit commit-graph commit-tree config count-objects credential describe diff " +
   "diff-files diff-index diff-tree difftool fetch fetch-pack filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck gc get-tar-commit-id " +
@@ -876,7 +892,13 @@ const GIT_BUILTINS = new Set(("add am annotate apply archive backfill bisect bla
 const GH_TOP = new Set(("agent-task alias api attestation auth browse cache codespace completion config copilot extension gist gpg-key help issue label " +
   "org pr preview project release repo ruleset run search secret ssh-key status variable version workflow").split(" "));
 const GH_OUT_ENDPOINT = /(^|\/)(merges|pulls|merge|refs|contents|git|releases|actions|branches|tags)(\/|$|\?)/;
-const MCP_SHARED = ["merge", "push", "create_ref", "update_ref", "release", "cancel", "rerun", "dispatch"];
+// git push's long options (git 2.53 `push --git-completion-helper-all`); git accepts any unique prefix.
+const PUSH_LONG = "verbose quiet repo all branches mirror delete tags dry-run porcelain force force-with-lease force-if-includes recurse-submodules thin receive-pack exec set-upstream progress prune follow-tags signed atomic push-option".split(" ");
+const PUSH_OPTS = [...PUSH_LONG, ...PUSH_LONG.map((o) => `no-${o}`), "no-verify", "verify", "ipv4", "ipv6"];
+const PUSH_VALUED = new Set(["repo", "recurse-submodules", "receive-pack", "exec", "push-option"]);
+const pushLong = (n) => { if (PUSH_OPTS.includes(n)) return n; const c = PUSH_OPTS.filter((o) => o.startsWith(n)); return n && c.length === 1 ? c[0] : null; };
+// Ref namespaces a short destination can resolve to on the remote that are neither branches nor tags.
+const OTHER_NS = /^(remotes|notes|pull|replace|stash)\//;
 
 // A value fit for a reason: no URL, query, token-looking run or shell text.
 export function safe(v) {
@@ -905,21 +927,24 @@ export function outwardReason(kind, f, input, extra = {}) {
   return rows.join("\n");
 }
 
+// The shorthands git resolves in a refspec side: `@` is HEAD, `heads/X` a branch, `tags/X` a tag.
+const short = (s) => (s === "@" ? "HEAD" : /^(heads|tags)\//.test(s) ? `refs/${s}` : s);
 // git push: force, deletes, tags, unknown targets and protected candidates (resolved after the walk).
 function pushOut(rest, dir, cwd, getCtx, add, xargs) {
-  let force = false, del = false, wide = false, other = false;
+  let force = false, del = false, wide = false, other = false, unknown = false;
   const pos = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;
     if (a === null) { pos.push(null); continue; }
     if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => w.lit)); break; }
     if (a.startsWith("--")) {
-      const n = a.split("=")[0];
-      if (["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--prune"].includes(n)) force = true;
-      else if (n === "--delete") del = true;
-      else if (["--tags", "--follow-tags", "--all", "--branches"].includes(n)) wide = true;
-      else if (["--repo", "--receive-pack", "--exec"].includes(n)) { other = true; if (!a.includes("=")) i++; }
-      else if (n === "--push-option" && !a.includes("=")) i++;
+      const eq = a.indexOf("="), n = pushLong(a.slice(2, eq < 0 ? undefined : eq));
+      if (n === null) { unknown = true; continue; }
+      if (PUSH_VALUED.has(n) && eq < 0) i++;
+      if (["force", "force-with-lease", "force-if-includes", "mirror", "prune"].includes(n)) force = true;
+      else if (n === "delete") del = true;
+      else if (["tags", "follow-tags", "all", "branches"].includes(n)) wide = true;
+      else if (["repo", "receive-pack", "exec"].includes(n)) other = true;
       continue;
     }
     if (a.length > 1 && a.startsWith("-")) {
@@ -938,7 +963,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   const f = (cls, what, dst, more = {}) => add({ cls, what, sub: "push", action: `git push${flag} → ${rs}/${safe(dst ?? "?")}`, refs: [`${rs}/${safe(dst ?? "?")}`], dst, cmd, dir, ...more });
   const dstOf = (s) => (s == null ? null : s.includes(":") ? s.slice(s.indexOf(":") + 1) : s.replace(/^\+/, ""));
   if (force || specs.some((s) => s?.startsWith("+"))) return f("destructive", "force push", dstOf(specs.find((s) => s !== "") ?? null));
-  const dels = del ? specs : specs.filter((s) => s !== null && s.startsWith(":")).map((s) => s.slice(1));
+  const dels = (del ? specs : specs.filter((s) => s !== null && s.startsWith(":")).map((s) => s.slice(1))).map((s) => (s === null ? s : short(s)));
   if (del || dels.length) {
     if (remote !== "origin" || !dir || !dels.length || xargs) return f("destructive", "remote delete of a target it cannot read", dels[0] ?? null);
     for (const t of dels) {
@@ -954,6 +979,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
     if (del) return;
   }
   const plain = specs.filter((s) => !(s !== null && s.startsWith(":")));
+  if (unknown) return f("shared", "push with an option it cannot read", dstOf(plain[0]));
   if (xargs) return f("shared", "push with arguments it cannot read", null);
   if (!dir) return f("shared", "push from a directory it cannot tell", dstOf(plain[0]));
   if (remote === undefined) return f("shared", "push with no remote or refspec", null);
@@ -963,8 +989,8 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   if (!plain.length && !dels.length) return f("shared", "push with no refspec", null);
   for (const s of plain) {
     if (s === null || s.includes("*") || s === "") { f("shared", "push with a refspec it cannot read", s); continue; }
-    const c = s.indexOf(":"), src = c < 0 ? s : s.slice(0, c);
-    let dst = c < 0 ? null : s.slice(c + 1);
+    const c = s.indexOf(":"), src = short(c < 0 ? s : s.slice(0, c));
+    let dst = c < 0 ? null : short(s.slice(c + 1));
     if (dst === null && src === "HEAD") {
       const h = getCtx().head(dir);
       if (h === FAIL || !h) { f("shared", "push of HEAD on a branch it cannot read", "HEAD"); continue; }
@@ -974,7 +1000,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
     if (dst.startsWith("refs/tags/") || src.startsWith("refs/tags/")) { f("shared", "tag push", dst.replace(/^refs\/tags\//, ""), { rev: src }); continue; }
     const qualified = dst.startsWith("refs/heads/");
     if (qualified) dst = dst.slice(11);
-    else if (dst.startsWith("refs/") || dst === "HEAD") { f("shared", "push to a ref outside branches", dst); continue; }
+    else if (dst.startsWith("refs/") || dst === "HEAD" || OTHER_NS.test(dst)) { f("shared", "push to a ref outside branches", dst); continue; }
     const names = [...new Set([src !== "HEAD" && !src.startsWith("refs/") && !/^[0-9a-f]{7,40}$/.test(src) ? src : null, qualified ? null : dst].filter(Boolean))];
     const kinds = names.map((n) => getCtx().refKind(dir, n));
     if (kinds.includes(FAIL)) { f("shared", "push of a ref it cannot read", dst); continue; }
@@ -984,7 +1010,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
 }
 
 // git config writes and -c/--config-env overrides that can redirect a push or run a command.
-const riskyKey = (k) => CONFIG_KEYS.some((r) => r.test(k));
+const riskyKey = (k) => [...CONFIG_KEYS, ...COMMAND_KEYS].some((r) => r.test(k));
 function gitConfigOut(args, add) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i].lit;
@@ -996,19 +1022,29 @@ function gitConfigOut(args, add) {
     else if (["-C", "--git-dir", "--work-tree", "--namespace"].includes(a)) { i++; continue; }
     else if (a.startsWith("-")) continue;
     else return;
-    const key = kv === null ? null : kv.split("=")[0];
-    if (kv === null || riskyKey(key) || GITGH.test(kv.slice(key.length))) return add({ cls: "shared", what: "git config that can redirect a command", sub: "config", action: `git -c ${safe(key ?? "?")}`, refs: [], cmd: null });
+    const key = kv === null ? null : kv.split("=")[0], value = kv === null ? null : kv.slice(key.length + 1);
+    if (kv === null || CONFIG_KEYS.some((r) => r.test(key)) || (COMMAND_KEYS.some((r) => r.test(key)) && !HARMLESS_CMD.has(value.trim())) || GITGH.test(value)) return add({ cls: "shared", what: "git config that can redirect a command", sub: "config", action: `git -c ${safe(key ?? "?")}`, refs: [], cmd: null });
   }
 }
 
-function gitOut(r, st, getCtx, add, depth) {
+// A plumbing push that forces or deletes (or has an argument it cannot read).
+const forcedPlumbing = (lits) => lits.some((x) => x === null || /^[+:]/.test(x) || (/^-[^-]/.test(x) && /[fdD]/.test(x)) ||
+  (x.length > 3 && ["force", "mirror", "delete"].some((n) => `--${n}`.startsWith(x.split("=")[0]))));
+
+// loose: a git word found among another program's arguments; an unknown subcommand there is no git call.
+function gitOut(r, st, getCtx, add, depth, loose = false) {
   const g = gitSplit(r.args, st.cwd, false);
   gitConfigOut(r.args, add);
   if (g.bad) return add({ cls: "shared", what: "git with an option it cannot read", sub: "git", action: "git", refs: [], cmd: null });
   if (!g.sub) { if (r.xargs) add({ cls: "shared", what: "git with arguments it cannot read", sub: "git", action: "git", refs: [], cmd: null }); return; }
   const sub = g.sub, rest = g.rest, shared = (what) => add({ cls: "shared", what, sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
-  if (sub === "push") return pushOut(rest, g.dir, st.cwd, getCtx, add, r.xargs);
-  if (sub === "send-pack" || sub === "http-push") return shared("low-level push");
+  const redirect = g.redirect || r.redirect || st.gitEnv;
+  if (sub === "push") return pushOut(rest, redirect ? null : g.dir, st.cwd, getCtx, add, r.xargs);
+  if (GIT_PUSHERS.has(sub)) {
+    if (!forcedPlumbing(rest.map((w) => w.lit))) return shared("low-level push");
+    return add({ cls: "destructive", what: "low-level forced push or delete", sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
+  }
+  if (GIT_RUNNERS.has(sub)) return shared("git running a command");
   if (sub === "config") {
     if (!gitNotReadOnly("config", rest)) return;
     const lits = rest.map((w) => w.lit);
@@ -1019,13 +1055,14 @@ function gitOut(r, st, getCtx, add, depth) {
   if (GIT_BUILTINS.has(sub)) return;
   if (depth > 2 || !g.dir) return shared("unknown git subcommand");
   const a = getCtx().alias(g.dir, sub);
+  if (a === null && loose) return;
   if (a === FAIL || a === null) return shared("unknown git subcommand");
   if (a.trim().startsWith("!")) return shared("git shell alias");
   const words = a.trim().split(/\s+/).map((lit) => ({ lit, exp: lit, raw: lit, vars: [] }));
-  return gitOut({ ...r, args: [...(g.dir !== st.cwd ? [{ lit: "-C", raw: "-C" }, { lit: g.dir, exp: g.dir, raw: g.dir }] : []), ...words, ...rest] }, st, getCtx, add, depth + 1);
+  return gitOut({ ...r, redirect, args: [...(g.dir !== st.cwd ? [{ lit: "-C", raw: "-C" }, { lit: g.dir, exp: g.dir, raw: g.dir }] : []), ...words, ...rest] }, st, getCtx, add, depth + 1);
 }
 
-function ghOut(r, add) {
+function ghOut(r, add, loose = false) {
   const p = ghParse(r.args), [p0, p1] = p.pos.map((w) => w.lit);
   const where = p.repo === undefined ? "" : ` in ${safe(p.repo)}`;
   const cmd = `gh ${r.args.map(argShow).join(" ")}`;
@@ -1033,7 +1070,7 @@ function ghOut(r, add) {
   const f = (cls, what, action) => add({ cls, what, sub: [p0, p1].filter(Boolean).join(" "), action: `${action ?? `gh ${p0} ${p1 ?? "?"}${target ? ` ${target}` : ""}`}${where}`, refs: [target || safe(p1 ?? "?")], cmd });
   if (!p.pos.length) { if (r.xargs) f("shared", "gh with arguments it cannot read", "gh"); return; }
   if (p0 === null || (p1 === null && p0 !== "api")) return f("shared", "gh command it cannot read", "gh");
-  if (!GH_TOP.has(p0)) return f("shared", "unknown gh command (an alias or extension)", `gh ${safe(p0)}`);
+  if (!GH_TOP.has(p0)) return loose ? undefined : f("shared", "unknown gh command (an alias or extension)", `gh ${safe(p0)}`);
   if (p1 === undefined && r.xargs && ["release", "repo", "pr", "run", "workflow", "auth", "alias"].includes(p0)) return f("shared", "gh command it cannot read");
   if (p0 === "auth" && ["token", "login", "refresh", "setup-git"].includes(p1)) return f("shared", "GitHub credential access");
   if (p0 === "alias" && ["set", "import"].includes(p1)) return f("shared", "gh alias");
@@ -1044,6 +1081,8 @@ function ghOut(r, add) {
     return;
   }
   if (p0 === "repo" && (p1 === "delete" || p1 === "archive")) return f("destructive", `repo ${p1}`);
+  if (p0 === "repo" && p1 === "edit") return [...p.flags].some((x) => /^--(visibility|archive)/.test(x)) ? f("destructive", "repo visibility or archive change") : f("shared", "repo settings edit");
+  if (p0 === "repo" && p1 === "rename") return f("shared", "repo rename");
   if (p0 === "pr" && p1 === "merge") return f("shared", "pull request merge");
   if (p0 === "run" && (p1 === "cancel" || p1 === "rerun")) return f("shared", `run ${p1}`);
   if (p0 === "workflow" && p1 === "run") return f("shared", "workflow dispatch");
@@ -1052,26 +1091,68 @@ function ghOut(r, add) {
   if (p.method === null) return f("destructive", "gh api with a method it cannot read", `gh api ? ${epShow}`);
   const m = (p.method ?? (p.fields.length || p.input ? "POST" : "GET")).toUpperCase();
   if (m === "DELETE") return f("destructive", "gh api DELETE", `gh api DELETE ${epShow}`);
+  const unread = p.input || p.fields.some((x) => x.lit === null || /^[^=]*=@/.test(x.lit));
+  const body = p.fields.map((x) => x.lit ?? "").join("\n");
   if (ep === "graphql") {
-    if (p.input || p.fields.some((x) => x.lit === null || /\bmutation\b/.test(x.lit) || /^[^=]*=@/.test(x.lit))) return f("shared", "GraphQL mutation", "gh api graphql");
-    return;
+    if (unread || !/\bmutation\b/.test(body)) return unread ? f("shared", "GraphQL mutation", "gh api graphql") : undefined;
+    if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(body) || (/\bupdateRefs?\b/.test(body) && /\bforce\s*[:=]\s*true\b/.test(body))) return f("destructive", "GraphQL delete, archive or forced ref update", "gh api graphql");
+    return f("shared", "GraphQL mutation", "gh api graphql");
   }
-  if (m !== "GET" && m !== "HEAD" && (ep === null || GH_OUT_ENDPOINT.test(ep))) return f("shared", `gh api ${safe(m)}`, `gh api ${safe(m)} ${epShow}`);
+  if (m === "GET" || m === "HEAD") return;
+  const path = ep === null ? null : ep.replace(/^https?:\/\/[^/]+/, "").replace(/^\//, "").split("?")[0];
+  if (path !== null && /^repos\/[^/]+\/[^/]+\/?$/.test(path)) {
+    if (unread || p.fields.some((x) => /^archived=true$/i.test(x.lit))) return f("destructive", "repo archive (or a body it cannot read)", `gh api ${safe(m)} ${epShow}`);
+    return f("shared", "repo settings write", `gh api ${safe(m)} ${epShow}`);
+  }
+  if (path !== null && m === "PATCH" && /(^|\/)git\/refs\//.test(path) && (unread || p.fields.some((x) => /^force=true$/i.test(x.lit)))) return f("destructive", "forced ref update (or a body it cannot read)", `gh api ${safe(m)} ${epShow}`);
+  if (ep === null || GH_OUT_ENDPOINT.test(ep)) return f("shared", `gh api ${safe(m)}`, `gh api ${safe(m)} ${epShow}`);
+}
+
+// Walks the commands like checkCmds (wrappers, sh -c, eval, cd) and adds a finding per outward action.
+// Programs that take git or gh as data (a pattern, a page, a package), never as a command to run.
+const DATA_PROGRAMS = new Set(("echo printf grep egrep fgrep rg ag ack man which whereis type help info apropos whatis tldr cat bat less more head tail " +
+  "wc sort uniq tr cut ls file stat basename dirname realpath readlink test [ printenv jq yq sed awk apt apt-get brew dnf yum pacman apk snap").split(" "));
+// Programs that substitute or append arguments to the command they run.
+const SUBST_PROGRAMS = new Set(["find", "fd", "parallel"]);
+const GIT_SUBS = new Set([...GIT_BUILTINS, ...GIT_PUSHERS, ...GIT_RUNNERS, "push"]);
+const isGitWord = (lit) => { const b = basename(lit); return b === "git" || b === "gh" || (b.startsWith("git-") && GIT_SUBS.has(b.slice(4))); };
+const GIT_ENV = /^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)=/;
+
+// A git, git-<sub> or gh command (loose: found among another program's arguments).
+function gitGhOut(r, st, getCtx, add, loose) {
+  if (r.name === "gh") return ghOut(r, add, loose);
+  const args = r.name === "git" ? r.args : [{ lit: r.name.slice(4), exp: r.name.slice(4), raw: r.name.slice(4), vars: [] }, ...r.args];
+  return gitOut({ ...r, args }, st, getCtx, add, 0, loose);
 }
 
 // Walks the commands like checkCmds (wrappers, sh -c, eval, cd) and adds a finding per outward action.
 function outWalk(cmds, st, getCtx, add, text) {
   if (cmds.length > 1 || cmds.complex) st.out.multi = true;
-  const unreadable = () => { if (GITGH.test(text) && COND1.test(text)) add({ cls: "shared", what: "a command the guard cannot read", sub: "unknown", action: "git or gh inside a script or shell it cannot read", refs: [], cmd: null }); };
+  // Condition 1 on the text the guard cannot read: a dynamic or unparseable string, or the words and heredoc of a script runner.
+  const unreadable = (t) => { if (GITGH.test(t) && COND1.test(t)) add({ cls: "shared", what: "a command the guard cannot read", sub: "unknown", action: "git or gh inside a script or shell it cannot read", refs: [], cmd: null }); };
+  // Another program with a git or gh word among its arguments (find -exec, unbuffer, parallel, ...): that word on is the command.
+  const embedded = (r) => {
+    if (DATA_PROGRAMS.has(r.name)) return false;
+    const k = r.args.findIndex((w) => w.lit !== null && isGitWord(w.lit));
+    if (k < 0 || r.args.slice(0, k).some((w) => w.lit !== null && DATA_PROGRAMS.has(basename(w.lit)))) return false;
+    let words = r.args.slice(k).map((w) => (w.lit === "{}" ? { ...w, lit: null, exp: null } : w));
+    const end = words.findIndex((w) => [";", "+", ":::", "::::", ":::+", "::::+"].includes(w.lit));   // find and parallel separators
+    if (end >= 0) words = words.slice(0, end);
+    gitGhOut({ name: basename(words[0].lit), args: words.slice(1), xargs: r.xargs || SUBST_PROGRAMS.has(r.name), redirect: r.redirect }, st, getCtx, add, true);
+    return true;
+  };
   for (const cmd of cmds) {
     if (cmd.words.some((w) => /^GIT_CONFIG\w*=/.test(w.raw))) add({ cls: "shared", what: "git config from the environment", sub: "config", action: "GIT_CONFIG_* variables", refs: [], cmd: null });
     const r = resolveCmd(cmd.words);
     assigns(cmd, r, st);
+    const gitEnv = cmd.words.some((w) => GIT_ENV.test(w.raw));
+    if (gitEnv && (!r || DECLARE.has(r.name))) st.gitEnv = true;
     if (!r) continue;
     if (r.dynamic) {
-      if (/\b(push|tag|release|api|run|pr|repo|delete|config|auth|merge|workflow|alias)\b/.test(cmd.words.map((w) => w.raw).join(" "))) add({ cls: "shared", what: "a command whose program it cannot tell", sub: "unknown", action: "a program named by a variable", refs: [], cmd: null });
+      if (/\b(push|tag|release|api|rerun|cancel|pr|repo|delete|config|auth|merge|workflow|alias)\b/.test(cmd.words.map((w) => w.raw).join(" "))) add({ cls: "shared", what: "a command whose program it cannot tell", sub: "unknown", action: "a program named by a variable", refs: [], cmd: null });
       continue;
     }
+    if (gitEnv) r.redirect = true;
     if (r.name === "cd" || r.name === "pushd") {
       const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
       const e = t ? expOf(t, st) : st.env.HOME;
@@ -1079,17 +1160,18 @@ function outWalk(cmds, st, getCtx, add, text) {
       continue;
     }
     if (r.name === "popd") { st.cwd = null; continue; }
-    if (r.opaque || r.scripter || ("inner" in r && r.inner === null)) { unreadable(); continue; }
+    if ("inner" in r && r.inner === null) { unreadable(text); continue; }
+    if (r.opaque || r.scripter) { if (!embedded(r)) unreadable([...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join("\n")); continue; }
     if ("inner" in r) {
       let inner;
-      try { inner = parseShell(r.inner, st.env); } catch { unreadable(); continue; }
+      try { inner = parseShell(r.inner, st.env); } catch { unreadable(r.inner); continue; }
       const sub = r.name === "eval" ? st : { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp) };
       sub.complex ||= inner.complex;
       outWalk(inner, sub, getCtx, add, text);
       continue;
     }
-    if (r.name === "git") gitOut(r, st, getCtx, add, 0);
-    else if (r.name === "gh") ghOut(r, add);
+    if (r.name === "git" || r.name === "gh" || r.name.startsWith("git-")) gitGhOut(r, st, getCtx, add, false);
+    else embedded(r);
   }
 }
 
@@ -1100,7 +1182,7 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
   const out = { findings: [], multi: false };
   outWalk(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, out }, getCtx, (f) => out.findings.push(f), text);
   if (out.findings.some((f) => f.cls === "destructive")) return out;
-  const prot = new Map();
+  const prot = new Map(), ft = new Map();
   const isProt = (dir, b) => {
     if (!prot.has(dir)) {
       const oh = getCtx().originHead(dir);
@@ -1114,7 +1196,10 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
     if (f.cls !== "candidate") return f;
     const p = isProt(f.dir, f.dst);
     if (f.del) return { ...f, cls: p ? "destructive" : "shared", what: p ? "protected branch delete" : "remote branch delete" };
-    return { ...f, cls: p ? "shared" : "branch", what: "push to protected branch" };
+    if (p) return { ...f, cls: "shared", what: "push to protected branch" };
+    if (!ft.has(f.dir)) ft.set(f.dir, getCtx().followTags(f.dir));
+    const t = ft.get(f.dir);
+    return t === false ? { ...f, cls: "branch", what: "push to protected branch" } : { ...f, cls: "shared", what: t === FAIL ? "push with config it cannot read" : "tag push (push.followTags)" };
   });
   return out;
 }
@@ -1127,15 +1212,16 @@ function sharedDecision(f, input, multi) {
 }
 
 function mcpOut(tool, ti) {
-  const t = tool.toLowerCase();
-  if (!t.includes("github")) return null;
+  const parts = tool.toLowerCase().split("__"), t = parts.slice(2).join("__");
+  if (!(parts[1] ?? "").includes("github")) return null;
   const target = [ti.owner && ti.repo ? `${ti.owner}/${ti.repo}` : null, ti.pullNumber ?? ti.pull_number ?? ti.issue_number ?? null, ti.ref ?? ti.branch ?? ti.tag ?? ti.tag_name ?? ti.run_id ?? null];
   const show = `${target[0] === null ? "" : safe(String(target[0]))}${target[1] === null ? "" : `#${safe(String(target[1]))}`}${target[2] === null ? "" : ` ${safe(String(target[2]))}`}`.trim();
   const base = { sub: tool, action: `${safe(tool)}${show ? ` ${show}` : ""}`, refs: show ? [show] : [], cmd: null };
   const d = ["delete", "force"].find((w) => t.includes(w)) ?? (ti.force === true ? "force" : null);
   if (d) return { ...base, cls: "destructive", what: `GitHub ${d}` };
-  const s = MCP_SHARED.find((w) => t.includes(w));
-  return s ? { ...base, cls: "shared", what: `GitHub ${s.replace("_", " ")}` } : null;
+  if (/^(get|list|search|read)_/.test(t)) return null;
+  const s = ["merge", "push", "release", "cancel", "rerun", "dispatch"].find((w) => t.includes(w));
+  return { ...base, cls: "shared", what: s ? `GitHub ${s}` : "GitHub write" };
 }
 
 // A parse error or guard error on git/gh text with an outward word: shared (condition 1).

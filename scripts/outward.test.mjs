@@ -25,6 +25,7 @@ const ctx = (over = {}) => ({
   head: () => "my-topic",
   originHead: () => "main",
   commit: () => ({ sha: "1a2b3c4", subject: "first line of subject" }),
+  followTags: () => false,
   ...over,
 });
 const hostile = () => ctx({ profile: () => ({ base: "foo", pusher: "agent", trailer: null, protected: [] }) });
@@ -127,6 +128,122 @@ const SHARED = ["git push origin v1.0", "git push origin refs/tags/v1.0", "git p
   "git config core.hooksPath x", "git config remote.origin.pushurl x", "git config url.x.insteadOf y", "git -c core.hooksPath=/x commit -m x",
   "gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=x", "gh api graphql -f query='mutation { x }'", "gh alias set ship 'pr merge'",
   "git frobnicate", "gh frobnicate", "git -c core.pager='git push origin HEAD:main' log", "git send-pack origin main"];
+
+// Fix round 1 (review of 79ba2cb): each failing input of the findings table, with its class.
+const R1_DESTRUCTIVE = [
+  "git push --force-with origin my-topic",            // 1: long options by unique prefix
+  "git push --del origin main",
+  "git push --del origin v1.0",
+  "git push --mirr origin",
+  "git push origin :heads/main",                      // 2: heads/ shorthand
+  "/usr/lib/git-core/git-push --force origin HEAD:main", // 3: git-<sub> programs, plumbing pushers
+  "git-push -f origin HEAD:my-topic",
+  "git-send-pack --force origin main",
+  "git send-pack --force origin main",
+  "git http-push -D x",
+  "find . -maxdepth 0 -exec git push -f origin HEAD:my-topic \\;", // 6: generalised wrappers
+  "unbuffer git push -f origin HEAD:my-topic",
+  "watch git push -f origin HEAD:my-topic",
+  "gh api -X PATCH repos/o/r -f archived=true",       // 8: repo settings, GraphQL, forced ref update
+  "gh api -X PUT /repos/o/r -F archived=true",
+  "gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true",
+  "gh api graphql -f query='mutation { deleteRef(input:{refId:\"x\"}) { clientMutationId } }'",
+  "gh api graphql -f query='mutation { deleteRepository(input:{repositoryId:\"x\"}) { clientMutationId } }'",
+  "gh api graphql -f query='mutation { archiveRepository(input:{repositoryId:\"x\"}) { clientMutationId } }'",
+  "gh api graphql -f query='mutation { updateRef(input:{refId:\"x\", oid:\"y\", force:true}) { clientMutationId } }'",
+  "gh repo edit --visibility public",
+];
+const R1_SHARED = [
+  "git push --tag origin my-topic",                   // 1
+  "git push --follow origin my-topic",
+  "git push --rep=https://example.com/o/r.git my-topic",
+  "git push --f origin my-topic",                     // ambiguous
+  "git push --forc origin my-topic",
+  "git push --frobnicate origin my-topic",            // unknown
+  "git push origin heads/main",                       // 2
+  "git push origin HEAD:heads/main",
+  "git push origin tags/v1.0",
+  "git push origin HEAD:remotes/origin/main",
+  "git-send-pack origin main",                        // 3
+  "git http-push x",
+  "git -c x.r=. for-each-repo --config=x.r push origin HEAD:main", // 4
+  "git difftool -x 'sh -c x'",
+  "git mergetool",
+  "git filter-branch --tree-filter 'x' HEAD",
+  "git -c core.sshCommand=ssh fetch",
+  "git -c diff.external=x diff",
+  "GIT_DIR=/repo/.git git push origin HEAD",          // 5
+  "git --git-dir=/repo/.git push origin HEAD",
+  "git --work-tree /x push origin HEAD",
+  "GIT_WORK_TREE=/x git push origin HEAD",
+  "GIT_INDEX_FILE=/x git push origin HEAD",
+  "git -C \"$HOME/r\" push origin HEAD",
+  "find . -maxdepth 0 -exec git push origin HEAD:main \\;", // 6
+  "unbuffer git push origin HEAD:main",
+  "parallel git push origin ::: HEAD:main",
+  "flock /tmp/l git push origin HEAD:main",
+  "git -c push.followTags=true push origin my-topic", // 7
+  "git config push.followTags true",
+  "git config push.default current",
+  "gh api -X PATCH repos/o/r -f default_branch=x",    // 8
+  "gh api -X PATCH repos/o/r -f visibility=public",
+  "gh api -X POST repos/o/r -f name=y",
+  "gh repo edit --default-branch x",
+  "gh repo rename y",
+  "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"x\"}) { clientMutationId } }'",
+  "gh api -X PATCH repos/o/r/git/refs/heads/main -f sha=x",
+];
+// Routine flows from the review: silent.
+const R1_LOCAL = [
+  "bash scripts/check.sh && git push -u origin my-topic", // 10
+  "make test && git push origin HEAD:my-topic",
+  "npm run lint; git push origin my-topic",
+  "git push --verbose origin my-topic",
+  "git push --set-up origin my-topic",
+  "git push --no-verify origin my-topic",
+  "git push origin feature/x",
+  "git -c core.pager=cat log",
+  "GIT_PAGER=cat git log",
+  "find . -name '*.md' -exec grep -l git {} +",
+  "sudo apt-get install -y git gh",
+  "brew install gh git",
+  "man git",
+  "grep -rn git .",
+  "npm install git-url-parse",
+  "gh api -X PATCH repos/o/r/issues/3 -f state=closed",
+];
+
+test("fix round 1: each failing input of the review gets its class", () => {
+  const wrong = [];
+  const want = (cmd, who, mode, k, c) => { const got = kind(call(cmd, SESSIONS[who], mode, c)); if (got !== k && !(k === "not allow" && got !== "allow")) wrong.push(`${who} ${mode} ${cmd}: ${got}, want ${k}`); };
+  for (const name of ["peer", "subagent"]) {
+    for (const cmd of R1_DESTRUCTIVE) for (const mode of ["default", "bypassPermissions", "dontAsk"]) want(cmd, name, mode, "deny");
+    for (const cmd of R1_SHARED) { want(cmd, name, "default", "ask"); want(cmd, name, "dontAsk", "deny"); }
+    for (const cmd of R1_LOCAL) for (const mode of MODES) want(cmd, name, mode, "allow");
+  }
+  for (const c of [ctx(), hostile()]) for (const cmd of [...R1_DESTRUCTIVE, ...R1_SHARED]) want(cmd, "operator", "default", "not allow", c);
+  assert.deepEqual(wrong, []);
+});
+
+test("fix round 1: @ and a literal -C read the branch of that repo; push.followTags turns a branch push into a tag push", () => {
+  const onMain = ctx({ head: (dir) => (dir === "/r/main" ? "main" : "my-topic") });
+  assert.equal(kind(call("git push origin @", SESSIONS.peer, "default", ctx({ head: () => "main" }))), "ask");
+  assert.equal(call("git push origin @", SESSIONS.peer, "default"), null);
+  assert.equal(kind(call("git -C /r/main push origin HEAD", SESSIONS.peer, "default", onMain)), "ask");
+  assert.equal(call("git push origin HEAD", SESSIONS.peer, "default", onMain), null);
+  assert.equal(kind(call("git push origin my-topic", SESSIONS.peer, "default", ctx({ followTags: () => true }))), "ask");
+  assert.equal(kind(call("git push origin my-topic", SESSIONS.peer, "default", ctx({ followTags: () => FAIL }))), "ask");
+  assert.equal(call("git push origin my-topic", SESSIONS.peer, "default"), null);
+});
+
+test("fix round 1: a script in the same call adds nothing; a shared action not alone is still denied; unreadable git text still asks", () => {
+  assert.equal(kind(call("bash scripts/check.sh && git push origin HEAD:main", SESSIONS.peer, "default")), "deny");
+  assert.equal(kind(call("X='git push origin HEAD:main'; sh -c \"$X\"", SESSIONS.peer, "default")), "deny");
+  assert.equal(kind(call("sh -c \"$X\"", SESSIONS.peer, "default")), "allow");
+  assert.equal(kind(call("python3 -c 'import os; os.system(\"git push origin HEAD:main\")'", SESSIONS.peer, "default")), "ask");
+  assert.equal(call("git log --grep run (", SESSIONS.peer, "default"), null, "bare run is no outward word");
+  assert.equal(kind(call("gh run cancel 1 (", SESSIONS.peer, "default")), "ask", "gh run is");
+});
 
 test("the one test: every spelling of a base push asks or denies, never allows, for every session, mode and profile", () => {
   for (const [name, who] of Object.entries(SESSIONS)) for (const mode of MODES) for (const c of [ctx(), hostile()]) for (const cmd of BASE_PUSH) {
@@ -256,7 +373,12 @@ test("GitHub MCP tools: delete or force denied, writes ask (deny without a promp
     assert.equal(kind(mcp(t)), "ask", t);
     assert.equal(kind(mcp(t, "dontAsk")), "deny", t);
   }
-  for (const t of ["mcp__github__get_pull_request", "mcp__github__list_issues", "mcp__linear__delete_issue", "mcp__slack__merge"]) assert.equal(mcp(t), null, t);
+  for (const t of ["mcp__github__get_pull_request", "mcp__github__list_issues", "mcp__github__search_code", "mcp__github__read_file", "mcp__linear__delete_issue",
+    "mcp__slack__merge", "mcp__linear__github_sync"]) assert.equal(mcp(t), null, t);
+  for (const t of ["mcp__github__create_or_update_file", "mcp__github__run_workflow", "mcp__github__create_issue", "mcp__github__update_repository"]) {
+    assert.equal(kind(mcp(t, "default", { branch: "main" })), "ask", t);
+    assert.equal(kind(mcp(t, "dontAsk")), "deny", t);
+  }
   const pre = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks.PreToolUse;
   const g = pre.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard")));
   assert.ok(g.matcher.split("|").includes("mcp__.*"), "the guard matcher covers MCP tools");
@@ -274,6 +396,11 @@ test("realCtx: aliases from .git/config, tags, the current branch, origin/HEAD a
     assert.equal(c.head(d), "my-topic");
     assert.equal(c.originHead(d), null);
     assert.match(c.commit(d, "HEAD").subject, /first line/);
+    assert.equal(c.followTags(d), false);
+    assert.equal(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git push origin my-topic" } }, {}, realCtx(d, {})), null);
+    g("config", "push.followTags", "yes");
+    assert.equal(realCtx(d, {}).followTags(d), true);
+    assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git push origin my-topic" } }, {}, realCtx(d, {}))), "ask", "push.followTags set: a tag push");
     assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git ship origin HEAD:main" } }, {}, c)), "ask");
     assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git push --delete origin v1.0" } }, {}, realCtx(d, {}))), "deny");
     const spent = realCtx(d, {}, 0);

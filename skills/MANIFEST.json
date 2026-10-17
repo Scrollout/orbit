@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.7.2",
-      "hash": "0ec8227a816836df6ede65179d496c14491aa9259cc5aed096339815f455d9a7",
+      "version": "1.7.3",
+      "hash": "2675c81a0df18c045ed78d58d8985aed5379378138d0a46cadc6dc086ffd40d0",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -53,8 +53,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.13.0",
-      "hash": "80192d42f6543dbf9b685d250e6b51d4ed72c8cdde536154df7eebcaaaad7a18",
+      "version": "1.13.1",
+      "hash": "4322b6fd4cd079c5b91baf330fcb3e3c9da974eb19f9ec10ff87f18c3cbf1c1d",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",

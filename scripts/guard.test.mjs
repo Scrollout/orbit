@@ -25,6 +25,7 @@ const ctx = (over = {}) => ({
   head: () => "topic",
   originHead: () => null,
   commit: () => null,
+  followTags: () => false,
   ...over,
 });
 const op = { agent_type: "orbit:operator", cwd: "/r/main" };
