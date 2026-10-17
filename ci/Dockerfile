@@ -55,8 +55,8 @@ RUN case "${TARGETARCH}" in \
  && curl -fsSL -o rules.tgz "https://github.com/opengrep/opengrep-rules/archive/${OPENGREP_RULES_COMMIT}.tar.gz" \
  && echo "${OPENGREP_RULES_SHA256}  rules.tgz" | sha256sum -c - \
  && mkdir /rules && p="opengrep-rules-${OPENGREP_RULES_COMMIT}" \
- && tar -xzf rules.tgz -C /rules --strip-components=1 "$p/LICENSE" "$p/javascript" "$p/bash" "$p/dockerfile" \
-      "$p/yaml/github-actions/security" "$p/generic/ci/security" "$p/generic/unicode" \
+ && tar -xzf rules.tgz -C /rules --strip-components=1 --wildcards "$p/LICENSE" "$p/javascript/*/security" "$p/bash/*/security" \
+      "$p/dockerfile/security" "$p/yaml/github-actions/security" "$p/generic/ci/security" "$p/generic/unicode" \
  && find /rules -mindepth 2 -type f ! -name '*.yaml' ! -name '*.yml' -delete \
  && find /rules -type f \( -name '*.test.yaml' -o -name '*.test.yml' \) -delete
 
@@ -66,7 +66,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
  && rm -rf /var/lib/apt/lists/*
 COPY --from=shellcheck /bin/shellcheck /usr/local/bin/shellcheck
 COPY --from=tools /out/ /usr/local/bin/
-# The rule packs make sast runs (ci/README.md); LICENSE is the rules' licence and is not a rule file.
+# The rule packs make sast runs (ci/README.md): security directories only (correctness and best-practice style is
+# eslint's in make quality, shellcheck's and hadolint's in make vet); LICENSE is the rules' licence and is not a rule file.
 COPY --from=tools /rules/ /opt/opengrep-rules/
 # Checkov in its own venv, every package hash-pinned, wheels only (no build step runs).
 WORKDIR /opt/checkov
