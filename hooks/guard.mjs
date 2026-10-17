@@ -1625,7 +1625,8 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
 }
 
 // The decision for a shared finding: deny when not alone or when the mode cannot prompt, else ask.
-// Under the go every shared action other than the go's own (base push, release steps, merged branch delete) waits for the owner.
+// Under the go in bypassPermissions (go: goSession) every shared action other than the go's own (base push, release steps,
+// merged branch delete; a verified one is allowed before this, in every mode) is denied: it waits for the owner.
 function sharedDecision(f, input, multi, go = null) {
   if (go) {
     const base = f.sub === "push" && f.what === "push to protected branch" && f.dst ? safe(f.dst) : null;
@@ -1943,8 +1944,8 @@ function claudeWrite(cmds, st, dirs) {
 
 // Under the go: the base push of a verified merge (pinned sha), the literal delete of a merged topic branch, and the release
 // steps bound to a verified merge (its pinned semver tag push and gh release create, #41). A ref form is denied with the pinned
-// command to run (git re-resolves a ref at push time). null: not one of them (classify as usual); { allow: true }; or the
-// deny reason naming the check that failed.
+// command to run (git re-resolves a ref at push time). null: not one of them (classify as usual); { allow: reason } (the hook's
+// "allow", so no permission mode prompts for it), reason naming the pinned shape; or the deny reason naming the check that failed.
 function goAction(cmds, cwd, input, getCtx, env) {
   const g = goForm(cmds);
   if (!g) return null;
@@ -1957,6 +1958,9 @@ function goAction(cmds, cwd, input, getCtx, env) {
     : g.kind === "tag" ? `git push → origin tag ${g.tag}${pinned ? ` at ${pinned.slice(0, 12)}` : ""}` : `gh release create ${g.tag}`;
   const what = { base: "unattended base push", delete: "unattended branch delete", tag: "unattended tag push", release: "unattended release" }[g.kind];
   const no = (why, run) => outwardReason("DENY", { what, action }, input, { note: why, do: run ? `run the pinned form instead: ${run}` : "leave it for the owner" });
+  const shape = { base: "git push origin <sha>^{object}:refs/heads/<base>", tag: "git push origin <sha>^{object}:refs/tags/vX.Y.Z",
+    release: "gh release create vX.Y.Z", delete: "git push origin --delete <merged topic>" }[g.kind];
+  const ok = () => ({ allow: outwardReason("ALLOW", { what, action }, input, { note: `the unattended go's verified pinned shape: ${shape}`, do: "nothing: the go allows it" }) });
   if (!dir) return no("the directory is unknown");
   if (base === FAIL || !base || !/^[\w./-]+$/.test(base)) return no("origin/HEAD cannot be read");
   // The base, the review trailer and the required checks come from the main checkout's profile (an agent can edit a worktree's).
@@ -1984,7 +1988,7 @@ function goAction(cmds, cwd, input, getCtx, env) {
       const sha = g.kind === "tag" ? localCommit(ev, dir, g.sha) : g.sha;
       if (!sha) return no("the object it pushes does not name a local commit");
       const why = verified(sha, g.kind === "tag");
-      return why ? no(why) : { allow: true };
+      return why ? no(why) : ok();
     }
     // release: the project repo only, the tag on origin peeling to a verified merge, no other target.
     const url = pushUrl(ev, dir), repo = url && githubRepo(url);
@@ -1996,14 +2000,15 @@ function goAction(cmds, cwd, input, getCtx, env) {
     if (!sha) return no(`the tag ${g.tag} is not on origin`);
     if (g.target !== null && g.target !== sha) return no("--target is not the tag's merge commit");
     const why = verified(sha, true);
-    return why ? no(why) : { allow: true };
+    return why ? no(why) : ok();
   }
   if (FLOOR(g.name) || g.name === base || p?.base === g.name || (p?.protected ?? []).some((x) => x === g.name || (x.endsWith("*") && g.name.startsWith(x.slice(0, -1))))) return null;
   const why = deleteEvidence(c.evidence(dir), dir, g.name, base);
-  return why ? no(why) : { allow: true };
+  return why ? no(why) : ok();
 }
 
-// Returns the deny reason (a string), { ask: reason }, or null to allow.
+// Returns the deny reason (a string), { ask: reason }, { allow: reason } (only a go's verified pinned shape), or null (no
+// decision: Claude Code's own permission rules apply).
 export function guard(input, env = {}, ctx = null) {
   const op = isOperator(input, env);
   const tool = input?.tool_name, ti = input?.tool_input ?? {};
@@ -2052,10 +2057,12 @@ export function guard(input, env = {}, ctx = null) {
   };
   const d = out.findings.find((f) => f.cls === "destructive");
   if (d) return outwardReason("DENY", withCommit(d), input);
-  if (go && goState(input, env)) {
+  // The go (its session's main thread, any permission mode): a verified pinned shape is allowed outright. A failed check denies
+  // in bypassPermissions (nobody answers a prompt); in a mode that prompts the call is classified as without a go.
+  if (goState(input, env)) {
     const a = goAction(cmds, cwd, input, getCtx, env);
-    if (a?.allow) return null;
-    if (typeof a === "string") return a;
+    if (typeof a?.allow === "string") return a;
+    if (go && typeof a === "string") return a;
   }
   if (op || /\bgit\b/.test(ti.command)) {
     const r = checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
@@ -2079,8 +2086,9 @@ export function hookMain(raw, env, fn = guard) {
     else if (!isOperator(input, env)) reason = t === "Bash" ? unreadableDecision(input, env) : null;
     else reason = `OPR-01: the orbit guard failed (${e.message}), so the operator's tool call is denied.`;
   }
-  const ask = reason !== null && typeof reason === "object";
-  const stdout = reason ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: ask ? "ask" : "deny", permissionDecisionReason: ask ? reason.ask : reason } }) + "\n" : "";
+  const obj = reason !== null && typeof reason === "object", allow = obj && typeof reason.allow === "string", ask = obj && !allow;
+  const decision = allow ? "allow" : ask ? "ask" : "deny";
+  const stdout = reason ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: decision, permissionDecisionReason: allow ? reason.allow : ask ? reason.ask : reason } }) + "\n" : "";
   return { code: 0, stdout, stderr: "" };
 }
 

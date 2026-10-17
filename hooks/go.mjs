@@ -1,7 +1,8 @@
 // The unattended go (Orbit 0.21.0): its state, and the evidence for the shared actions it allows (base push, release tag and release since 0.22.1, merged branch delete). Zero dependencies.
 // The owner opens a go with `/orbit:unattended on [dur]` (hooks/unattended.mjs, behind a permission prompt). The state file is
 // forgeable by any program the agent runs, so the go is intent only: safety rests on the evidence below, checked on GitHub and
-// in git for the exact object pushed. A go counts only for its own session's main thread under bypassPermissions, at most 24 h.
+// in git for the exact object pushed. A go counts only for its own session's main thread, at most 24 h, in any permission mode
+// (0.22.2): the guard then answers its verified pinned shapes with "allow", so no mode prompts for them.
 import { readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
@@ -13,22 +14,27 @@ export const stateDir = (env) => (typeof env?.HOME === "string" && isAbsolute(en
 export const validSession = (sid) => typeof sid === "string" && SID.test(sid);
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 
-// The session is unattended: a valid go file for its session_id and the bypassPermissions mode, any thread. Then every
-// shared action is denied (nobody answers a prompt), a subagent's too.
-export function goSession(input, env, now = Date.now()) {
+// A valid go file for the input's session_id: its own session, opened, unexpired, at most 24 h. Any permission mode.
+function goFile(input, env, now) {
   const sid = input?.session_id, dir = stateDir(env);
-  if (!validSession(sid) || !dir || input.permission_mode !== "bypassPermissions") return null;
+  if (!validSession(sid) || !dir) return null;
   const s = readJson(join(dir, `go-${sid}.json`));
   if (!s || s.session_id !== sid || !Number.isFinite(s.opened) || !Number.isFinite(s.until)) return null;
   if (s.opened > now || s.until <= now || s.until - s.opened > GO_MAX_MS) return null;
   return { opened: s.opened, until: s.until };
 }
 
-// The go itself, which allows its actions: the unattended session's main thread only (no agent_id). Any missing or
-// unexpected field means no go (the attended behaviour).
+// The session is unattended: a valid go file and the bypassPermissions mode, any thread. Then every other shared action is
+// denied (nobody answers a prompt), a subagent's too. In a mode that prompts they still ask, as attended.
+export function goSession(input, env, now = Date.now()) {
+  return input?.permission_mode === "bypassPermissions" ? goFile(input, env, now) : null;
+}
+
+// The go itself, which allows its verified pinned shapes in every permission mode: the session's main thread only (no
+// agent_id). Any missing or unexpected field means no go (the attended behaviour).
 export function goState(input, env, now = Date.now()) {
   if (!input || (input.agent_id !== undefined && input.agent_id !== null)) return null;
-  return goSession(input, env, now);
+  return goFile(input, env, now);
 }
 
 // DEC-08's trailer rule: the key's line in the last paragraph, with every Co-Authored-By line.

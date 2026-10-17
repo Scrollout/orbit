@@ -1,9 +1,10 @@
 # Changelog
 
 ## 0.22.2
-Plugin-guideline compliance batch (rules 1.15.22, command `decide` 1.7.8, skill `peer` 1.1.2; scenario pin and manifest updated); guard behaviour unchanged.
+Plugin-guideline compliance batch, and the unattended go in every permission mode (rules 1.15.23, command `decide` 1.7.8, command `unattended` 1.1.5, skill `peer` 1.1.2; scenario pin and manifest updated).
+- **Unattended go in every mode** (`hooks/go.mjs`, `hooks/guard.mjs`, `hooks/unattended.mjs`): the go no longer needs `bypassPermissions`; for its session's main thread the guard answers the verified pinned base push, tag push, `gh release create` and merged-branch delete with the hook's `allow`, so `/orbit:unattended on` removes their prompts in any mode. Nothing else is ever allowed; other shared actions and failed checks keep their mode's ask or deny.
 - **Paths**: the plugin's own scripts and templates are referenced as `${CLAUDE_PLUGIN_ROOT}/...` in `agents/operator.md`, `agents/reviewer.md`, `skills/peer/SKILL.md` and `commands/decide.md`.
-- **Hooks** (`hooks/hooks.json`): a short `description`; the PreToolUse matcher names the guarded tools (Bash, the edit and read tools, `mcp__.*`, the Cron, ScheduleWakeup, RemoteTrigger, SendMessage, PushNotification and Skill tools) instead of loose `.*X.*` patterns, and drops `SlashCommand`.
+- **Hooks** (`hooks/hooks.json`): a short `description`; the PreToolUse matcher drops the stale `SlashCommand` and keeps its `.*X.*` patterns, so renamed or new scheduler and message tools stay guarded.
 - **Manifest** (`.claude-plugin/plugin.json`): short description, `homepage`, `repository`, `keywords`. README: `onFailure` hooks need Claude Code 2.1.295 or later.
 - **Models** (`refs/decide/team-tracks.md`): by the importance of the fact: low Haiku (read-only find or quote lookups, never writes a file), medium Sonnet, high (drives a decision or a security call) Opus.
 - **Makefile**: `make help` prints an aligned name column with one short line per target; the detail moved to `ci/README.md`. `make bump` refuses a `V` or `RULES` that is not `X.Y.Z`.

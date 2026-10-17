@@ -1,9 +1,9 @@
 {
-  "description": "Guards Bash, file, MCP, scheduler and message tool calls (hooks/guard.mjs): denies operator-session writes (OPR-01), merge messages without the review trailer (DEC-08) and destructive git/GitHub actions, and asks the owner on shared ones; also validates OKF docs after edits, records pushes in the session ledger and hands the operator its file at session start. A guard timeout or crash blocks the call (onFailure: block). Detail: docs/threat-model.md and README.",
+  "description": "Guards Bash, file, MCP, scheduler and message tool calls (hooks/guard.mjs): denies operator-session writes (OPR-01), merge messages without the review trailer (DEC-08) and destructive git/GitHub actions, and asks the owner on shared ones (under an unattended go it allows only the go's verified pinned release steps); also validates OKF docs after edits, records pushes in the session ledger and hands the operator its file at session start. A guard timeout or crash blocks the call (onFailure: block). Detail: docs/threat-model.md and README.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob|mcp__.*|CronCreate|CronDelete|CronList|ScheduleWakeup|RemoteTrigger|SendMessage|PushNotification|Skill",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Read|Grep|Glob|mcp__.*|.*Cron.*|.*Schedule.*|.*Wakeup.*|.*Trigger.*|.*Loop.*|.*Message.*|.*Send.*|.*Notif.*|.*Skill.*",
         "hooks": [
           {
             "type": "command",

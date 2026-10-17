@@ -27,8 +27,8 @@ export function unattended(args, env, now = Date.now()) {
   const goFile = join(dir, `go-${sid}.json`);
   if (sub === "off" && arg === undefined) { rmSync(goFile, { force: true }); return say("off. The go for this session is closed."); }
   if (sub === "status" && arg === undefined) {
-    const g = goState({ session_id: sid, permission_mode: "bypassPermissions" }, env, now);
-    return say(g ? `open until ${at(g.until)} for this session (it counts only in bypassPermissions mode, in the main thread).` : "no go is open for this session.");
+    const g = goState({ session_id: sid }, env, now);
+    return say(g ? `open until ${at(g.until)} for this session (it counts in any permission mode, in the main thread only).` : "no go is open for this session.");
   }
   if (sub === "on" && extra.length === 0) {
     const ms = duration(arg);
@@ -37,7 +37,7 @@ export function unattended(args, env, now = Date.now()) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
     writeFileSync(goFile, JSON.stringify({ session_id: sid, opened: now, until }), { mode: 0o600 });
-    return say(`go open until ${at(until)} for this session. It counts only in bypassPermissions mode, in the main thread; it allows only the pinned base push of a verified merge and the delete of a merged topic branch. Close it with /orbit:unattended off.`);
+    return say(`go open until ${at(until)} for this session. It counts in any permission mode, in the main thread only; without a prompt it allows only, for a verified merge, the pinned base push, the pinned tag push and gh release create, and the delete of a merged topic branch. Close it with /orbit:unattended off.`);
   }
   return say(USAGE);
 }
