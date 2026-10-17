@@ -8,9 +8,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { FAIL, guard, realCtx } from "../hooks/guard.mjs";
 import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
-import { onPrompt } from "../hooks/unattended.mjs";
+import { onPrompt, parentTerminal } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
 import { plan } from "./tracker.mjs";
 
@@ -736,4 +737,92 @@ test("#29: a brace word holding {- or ,-, or a leading bracket set with + or -, 
     const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
     for (const c of ["git push origin feat", "git push -u origin feat", "git push origin HEAD:refs/heads/feat", "git push origin '{-f,x}'", "git push origin \"{-f,x}\"", "git push origin \\{-f,x\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
   });
+});
+
+// #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2] }; devs: path -> { char, uid }.
+function fakeProc(procs, devs) {
+  const no = () => { throw new Error("ENOENT"); };
+  return {
+    readlinkSync: (p) => { const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d)$/.exec(p) ?? []; return procs[pid]?.fd[fd] ?? no(); },
+    readFileSync: (p) => { const pid = /^\/proc\/(\d+)\/stat$/.exec(p)?.[1]; return procs[pid] ? `${pid} (a) b) S ${procs[pid].ppid} 1 1 0 -1` : no(); },
+    statSync: (p) => (devs[p] ? { isCharacterDevice: () => devs[p].char, uid: devs[p].uid } : no()),
+  };
+}
+
+test("#30: parentTerminal takes the first parent's own pts or tty; pipes, files, /dev/null, other users and deep or looping chains give none", () => {
+  const devs = { "/dev/pts/3": { char: true, uid: 7 }, "/dev/pts/4": { char: true, uid: 7 }, "/dev/pts/9": { char: true, uid: 0 }, "/dev/null": { char: true, uid: 7 }, "/home/u/f": { char: false, uid: 7 }, "/dev/tty2": { char: true, uid: 7 } };
+  const chain = { 40: { ppid: 30, fd: ["pipe:[5]", "/dev/null", "/home/u/f"] }, 30: { ppid: 20, fd: ["socket:[6]", "/dev/pts/9", "/dev/ptmx"] }, 20: { ppid: 10, fd: ["/dev/null", "/dev/pts/3"] }, 10: { ppid: 1, fd: ["/dev/pts/4"] } };
+  assert.equal(parentTerminal(fakeProc(chain, devs), 40, 7), "/dev/pts/3", "the nearest parent with a terminal of this user");
+  assert.equal(parentTerminal(fakeProc({ 5: { ppid: 1, fd: ["/dev/tty2"] } }, devs), 5, 7), "/dev/tty2");
+  assert.equal(parentTerminal(fakeProc({ 5: { ppid: 1, fd: ["/dev/pts/3"] } }, { "/dev/pts/3": { char: false, uid: 7 } }), 5, 7), null, "not a character device");
+  assert.equal(parentTerminal(fakeProc({ 40: chain[40], 30: { ...chain[30], ppid: 1 } }, devs), 40, 7), null, "pipe, file, /dev/null, socket, ptmx, another user's pts");
+  const deep = { 50: { ppid: 49, fd: [] }, 49: { ppid: 48, fd: [] }, 48: { ppid: 47, fd: [] }, 47: { ppid: 46, fd: [] }, 46: { ppid: 1, fd: ["/dev/pts/3"] } };
+  assert.equal(parentTerminal(fakeProc(deep, devs), 50, 7), null, "at most 4 parents");
+  assert.equal(parentTerminal(fakeProc({ 8: { ppid: 8, fd: ["pipe:[1]"] } }, devs), 8, 7), null, "a loop ends");
+  assert.equal(parentTerminal(fakeProc({}, devs), 8, 7), null, "no /proc (macOS)");
+});
+
+// #30: Claude Code runs the hook with no controlling terminal (new session, stdio piped), so /dev/tty fails. A real pty plays the
+// owner's terminal: an orphaned "Claude Code" (no outer terminal in its parent chain) holds it as stdio and controlling terminal and
+// starts the hook in a new session with piped stdio, as Claude Code does. Mode "none": the same without any terminal.
+const PTY_HARNESS = String.raw`
+import os, sys, pty, fcntl, termios, subprocess, time, select
+mode, root, home, inp, out = sys.argv[1:6]
+master, slave = pty.openpty()
+if os.fork() == 0:
+    os.setsid()
+    mid = os.getpid()
+    if os.fork(): os._exit(0)
+    while os.getppid() == mid: time.sleep(0.01)
+    os.setsid()
+    if mode == "pty":
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        for fd in (0, 1, 2): os.dup2(slave, fd)
+    else:
+        os.dup2(os.open("/dev/null", os.O_RDWR), 0)
+        r, w = os.pipe(); os.dup2(w, 1)
+        os.dup2(os.open(out + ".file", os.O_WRONLY | os.O_CREAT, 0o600), 2)
+    os.close(master); os.close(slave)
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=root, HOME=home)
+    p = subprocess.run(["sh", "-c", 'sh "$CLAUDE_PLUGIN_ROOT/hooks/unattended.sh"'], input=open(inp, "rb").read(), capture_output=True, env=env, start_new_session=True)
+    open(out + ".stdout", "wb").write(p.stdout); open(out + ".stderr", "wb").write(p.stderr)
+    open(out + ".done", "w").close()
+    os._exit(0)
+os.close(slave)
+got, end = b"", time.time() + 20
+while time.time() < end:
+    if select.select([master], [], [], 0.2)[0]:
+        try: d = os.read(master, 4096)
+        except OSError: break  # no process holds the pty any more
+        got += d
+    elif os.path.exists(out + ".done"): break
+while not os.path.exists(out + ".done") and time.time() < end: time.sleep(0.05)
+open(out + ".tty", "wb").write(got)
+`;
+const ptySkip = process.platform !== "linux" || !existsSync("/proc/self/fd") ? "needs Linux /proc"
+  : spawnSync("python3", ["-c", "import pty, termios"]).status !== 0 ? "needs python3 with pty and termios" : false;
+
+test("#30: a real pty: the code reaches the terminal of the hook's parent, never the hook's output; confirm opens the go; no terminal, no code", { skip: ptySkip }, () => {
+  for (const mode of ["pty", "none"]) {
+    const h = home(), out = join(h, "run"), inp = join(h, "in.json");
+    try {
+      writeFileSync(inp, JSON.stringify(prompt("/orbit:unattended on 12h", { cwd: h, transcript_path: join(h, "t.jsonl") })));
+      const r = spawnSync("python3", ["-c", PTY_HARNESS, mode, repo, h, inp, out], { encoding: "utf8", timeout: 30_000 });
+      assert.equal(r.status, 0, r.stderr);
+      const tty = readFileSync(`${out}.tty`, "utf8"), stdout = readFileSync(`${out}.stdout`, "utf8"), stderr = readFileSync(`${out}.stderr`, "utf8");
+      const reason = JSON.parse(stdout).reason;
+      const code = /code: ([A-Z2-9]{4}-[A-Z2-9]{4})/.exec(tty)?.[1];
+      if (mode === "none") {
+        assert.equal(code, undefined, "no terminal anywhere: no code");
+        assert.match(reason, /cannot reach your terminal/);
+        assert.deepEqual(files(h), [], "nothing pending");
+        continue;
+      }
+      assert.ok(code, `the code is on the pty: ${JSON.stringify(tty)} / reason: ${reason}`);
+      assert.ok(!stdout.includes(code) && !stderr.includes(code) && !reason.includes(code), "the code is never in the hook's output");
+      assert.match(reason, /one-time code is on your terminal/);
+      onPrompt(prompt(`/orbit:unattended confirm ${code}`), { HOME: h });
+      assert.ok(goState({ session_id: SID, permission_mode: "bypassPermissions" }, { HOME: h }), "confirm with the pty code opens the go");
+    } finally { rmSync(h, { recursive: true, force: true }); }
+  }
 });
