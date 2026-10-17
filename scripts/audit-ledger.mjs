@@ -3,7 +3,7 @@
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
 //   triage{topic,sec,door,prod,track,files?,tdd?,trigger?,why?,decision_topic?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
-//                                              trigger: asked | unasked (unasked needs why), required from rules 1.12.0; files: the changed paths, re-recorded after every coder run (DEC-02);
+//                                              trigger: asked | unasked (unasked needs why), required from rules 1.12.1; files: the changed paths, re-recorded after every coder run (DEC-02);
 //                                              every triage starts a new segment (the call order restarts); decision_topic: a plan step decided elsewhere, that topic's security and tech lead calls count at merge_built
 //   agent_start{role,model,topic,phase?,fix_scope?,files?,extra?,cap_reason?,outside_cap?,resumed?,worker?,reason?}   phase: design | build | fix | ci-fix | delivery (fix and ci-fix record files)
 //                                              extra: research | missing-fact | rebuttal | hypotheses | research-answer | missing-fact-answer (once per topic each; an answer only after its research or missing-fact; rebuttal only on a door=yes triage); files: a fix coder's changed paths, checked against fix_scope
@@ -12,7 +12,7 @@
 //   handoff{topic,from,to}                     from and to: decide | intent | operator; at most one handoff per direction per topic
 //   ci_run{branch?,sha,workflow?,state|conclusion}   branch (= topic) makes that topic's reviewers delivery reviewers by default; without it the run counts for no topic. green = state green or conclusion success
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
-//   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.0)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
+//   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.1)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
@@ -25,7 +25,7 @@
 // DEC-21 applies to a review when the last coder run (or, without one, the review) is stamped with rules 1.7.0 or later; DEC-22's
 // coverage when the coder_report before the review is. A rules version going backwards in the ledger is a LEDGER violation.
 // The loop-cap checks (re-triage, order, minimums, unknown role, extras, handoff, track vs triage, incident Opus, owner_go, trigger, catchup_sha, fix files) apply only to events stamped
-// with rules 1.12.0 or later; an older ledger audits as before.
+// with rules 1.12.1 or later; an older ledger audits as before.
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { semverExec } from "./rx.mjs";
 import { existsSync, readFileSync } from "node:fs";
@@ -59,11 +59,12 @@ const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };
 const verCmp = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 const tddRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 7, 0]) >= 0; };
-const newRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 12, 0]) >= 0; };   // the loop-cap checks: an event stamped below 1.12.0 audits as before
+const newRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 12, 1]) >= 0; };   // the loop-cap checks: an event stamped below 1.12.1 audits as before
 const ROLES = [...T.roles, "coder", "re-reviewer"], EXTRAS = ["research", "missing-fact", "rebuttal", "hypotheses", "research-answer", "missing-fact-answer"], ANSWERS = { "research-answer": "research", "missing-fact-answer": "missing-fact" };
 const RANK = { analyst: 0, engineer: 1, reviewer: 2, security: 3, techlead: 4 };   // design-call order; incident: security first
 const INTENT_PHASES = ["questions", "draft", "checked", "approved", "written"], PARTIES = ["decide", "intent", "operator"];
 const decisionTopic = dict(), made = dict(), extras = dict(), maxRank = dict(), lastFix = dict(), coderLine = dict(), triageFilesLine = dict(), handoffs = dict(), intentSeen = dict();
+const gated = dict();      // topics with an event stamped rules 1.12.1 or later
 const maxRules = dict();   // per tdd-on topic
 let maxRulesAll = null;    // ledger-wide, with the profile's tdd yes or auto
 const tddOn = new Set();   // topics whose triage recorded tdd: true
@@ -138,6 +139,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (newRules(e)) delete maxRank[e.topic];   // every triage starts a new segment: the call order restarts, the minimums stay topic-wide
       if ("decision_topic" in e) {
         if (newRules(e) && (typeof e.decision_topic !== "string" || !e.decision_topic)) v("LEDGER", n, "triage decision_topic must be the topic name of the decision's calls");
+        else if (newRules(e) && (e.decision_topic === e.topic || !triage[e.decision_topic])) v("LEDGER", n, `triage decision_topic ${JSON.stringify(e.decision_topic)} must name a different topic with a triage earlier in the ledger (its calls are not counted)`);
         else decisionTopic[e.topic] = e.decision_topic;
       }
       triage[e.topic] = eff;
@@ -175,9 +177,10 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         bs(e.topic).evidence = null; bs(e.topic).report = null; bs(e.topic).coderEvent = e;   // DEC-21: each coder run needs its own report
         if (nw && e.phase === "ci-fix") {
           const b = bs(e.topic);
-          if (!b.ciRed) v("DEC-14", n, `ci-fix coder run on ${e.topic} with no failed ci_run before it (a review finding is phase fix)`);
-          b.ciRed = false;
+          if (!b.ciRed) v("DEC-14", n, `ci-fix coder run on ${e.topic} with no failed ci_run as the latest run of the branch (a review finding is phase fix; a cancelled run is not a failure)`);
+          else if (b.headSha && b.redSha !== b.headSha) v("DEC-14", n, `ci-fix coder run on ${e.topic}: the failed run is on ${short(b.redSha)}, the branch head is ${short(b.headSha)}`);
         }
+        bs(e.topic).ciRed = false;   // every coder run answers the red run before it
         if (e.phase === "fix") {
           const b = bs(e.topic);
           if (nw && b.reRan && !b.go) v("DEC-14", n, `a further fix round on ${e.topic} after the re-reviewer ran needs an owner_go event (still open after one fix round: stop and show the owner both positions)`);
@@ -216,7 +219,11 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     }
     case "ci_run": {
       if (e.branch) sawCi.add(e.branch);
-      if (e.branch && isRed(e)) bs(e.branch).ciRed = true;
+      if (e.branch) {   // only a failure is red for ci-fix, and only while it is the branch's latest run
+        const b = bs(e.branch);
+        b.ciRed = e.state === "red" || e.conclusion === "failure";
+        b.redSha = b.headSha = e.sha;
+      }
       ((ci[e.sha] ??= {})[e.workflow ?? "default"] = isGreen(e) ? "green" : isRed(e) ? "red" : "pending");
       break;
     }
@@ -275,7 +282,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     }
     case "push": {
       if (/^release\//.test(norm(e.ref)) && e.chained === false && e.by === profile.base_pusher) linePushes.add(e.sha);
-      if (norm(e.ref) !== base) break;
+      if (norm(e.ref) !== base) { if (e.sha) bs(norm(e.ref)).headSha = e.sha; break; }
       if (e.chained !== false) v(["DEC-06", "OPR-03"], n, `base ${base} pushed chained after another command`);
       if (e.by !== profile.base_pusher) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
       if (!merges[e.sha]) v(["DEC-06", "OPR-03"], n, `base ${base} pushed at ${short(e.sha)} with no merge_built for that sha before it`);
@@ -373,6 +380,9 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   // rules versions: with the profile's tdd yes or auto, never backwards anywhere in the ledger; otherwise only on tdd-on
   // topics (a ledger without tdd audits as before). Mixed versions on a tdd-on topic warn.
   const topic = e.topic ?? e.branch, rv = semParts(e.rule_version?.rules);
+  // the 1.12.1 gate cannot be bypassed: once a topic has an event at 1.12.1 or later, a later event on it needs a rules stamp that is not older
+  if (topic !== undefined && newRules(e)) gated[topic] = true;
+  else if (topic !== undefined && gated[topic]) v("LEDGER", n, `event on ${topic} ${rv ? `stamped with rules ${rv.join(".")}` : "with no rules stamp"} after rules 1.12.1 on the same topic; the loop-cap checks cannot be turned off by an older stamp`);
   if (rv && ["yes", "auto"].includes(profile.tdd)) {
     if (maxRulesAll && verCmp(rv, maxRulesAll) < 0) v("LEDGER", n, `rules version goes backwards: ${rv.join(".")} after ${maxRulesAll.join(".")}`);
     else maxRulesAll = rv;
