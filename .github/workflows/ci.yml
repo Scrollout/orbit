@@ -3,9 +3,8 @@
 name: ci
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['**']
-  pull_request:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

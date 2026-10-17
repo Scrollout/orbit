@@ -1,6 +1,6 @@
 # CI for the Orbit repo
 
-**TL;DR:** `make ci` runs vet, quality and security inside a pinned toolbox image (host needs git, make, docker) and prints a Markdown report; GitHub Actions runs the same as parallel jobs (one toolbox image build; the job `ci` is the required check) once per push to a PR branch, and publishes it as the job summary. Everything lives under `ci/`, plus the root `Makefile` and `.github/workflows/ci.yml`; no plugin file is touched or needed by CI.
+**TL;DR:** `make ci` runs vet, quality and security inside a pinned toolbox image (host needs git, make, docker) and prints a Markdown report; GitHub Actions runs the same as parallel jobs (one toolbox image build; the job `ci` is the required check) once per push, and publishes it as the job summary. Everything lives under `ci/`, plus the root `Makefile` and `.github/workflows/ci.yml`; no plugin file is touched or needed by CI.
 
 ## Targets
 | Target | Does |
