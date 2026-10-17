@@ -6,7 +6,7 @@ tags: [constitution, process]
 status: draft
 generated: { by: process:orbit-okf-init, at: {{TIMESTAMP}} }
 ---
-**TL;DR:** Don't assume, build the minimum, touch only what you must, define success and loop until verified; read wide in subagents; one worktree per session.
+**TL;DR:** Don't assume, build the minimum, touch only what you must, define success and loop until verified (every loop has a stated cap; at the cap, stop and report); read wide in subagents; one worktree per session.
 
 ## 1. Think before coding
 - State assumptions explicitly; if uncertain, ask rather than guess.

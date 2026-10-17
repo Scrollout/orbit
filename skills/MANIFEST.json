@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.4.4",
-      "hash": "dc4fe511be23bbcc4fe4541d272a782d20322cd30555f8980d259869122db130",
+      "version": "1.5.0",
+      "hash": "7df692057a5114476e7c6d01329ff61367b9992790ff4f7b46eb91a92e51d385",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -20,8 +20,8 @@
       ]
     },
     "skills/intent/SKILL.md": {
-      "version": "1.0.1",
-      "hash": "3ddd51d6e22ab7e1430270cb187747da53e3aa34b8bb9894e31ab5dcfc8eb10e",
+      "version": "1.1.0",
+      "hash": "f7cbb6009c6ed974021caf9e490c960bf803224228c4f6d8c36d46902f6b5773",
       "files": [
         "skills/intent/SKILL.md"
       ]
@@ -34,8 +34,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.5.3",
-      "hash": "3aeb2ea6b6150fc15c130e80863a428a659bc637577d467ea9b4a18e50741515",
+      "version": "1.6.0",
+      "hash": "1f86f44c24c97fab2a7ed86f5b0589faafb21351c1f91611fd469cc03d986378",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -46,15 +46,15 @@
       ]
     },
     "skills/peer/SKILL.md": {
-      "version": "1.1.0",
-      "hash": "60dba6916d6f7d6d3e43e482033a5305b8cf7740273fb6752f679022ee44698b",
+      "version": "1.1.1",
+      "hash": "801030539dfff937eeecd53080381231a6bc4734807d737d81d71e354cef5162",
       "files": [
         "skills/peer/SKILL.md"
       ]
     },
     "rules/rules.json": {
-      "version": "1.10.1",
-      "hash": "14d6becbf94633b6c84af8f870d1de85ac4e5e46a76aefc6dbfefa2758e1d8a1",
+      "version": "1.10.2",
+      "hash": "23f1e3f7a9e4f1ca913ca8c989521924ae9f441963725b6f50d91231be41e33e",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",

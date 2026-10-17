@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.0
+- `/decide` starts when needed (`/decide` 1.5.0): its description now names the triggers (a design, decision-record or roadmap question; a trade-off between real options; a bug or finding with more than one plausible fix; a change touching a security path, a one-way door or shared state; a review finding) and the exclusions (a small change with all triage lines no, a worker or subagent executing a brief, a multi-session goal, which is `/intent`); started unasked, it says in one line why the question qualifies. The `peer` skill (1.1.1) and the `coder` agent (rules 1.10.2) report such a question to the operator or PM instead of running `/decide`.
+- Parallel fan-out inside `/decide`: the analysts, engineers and design reviewers of steps 3 to 5 start in one message; security and the tech lead stay sequential; caps unchanged.
+- Bounded loops: the README states that critics loop a fixed number of times, then escalate (a script as the critic, one fix round, one Contest rebuttal).
+- `/intent` also starts when needed (`intent` 1.1.0): unasked, it says in one line why the goal is too big for one session; `/decide` triage hands a build that clearly exceeds one worker session to `/intent`; the operator idle checklist sends an issue too big for one worker to `/intent` before dispatch (`operator` 1.6.0).
+- The `/decide` and `/intent` handoff is capped at one each way; `/intent` accepts what `/decide` or the operator hands over as too big for one worker. The principles templates (not versioned) say every loop has a stated cap, and at the cap you stop and report.
+- Versions bumped: `/decide` 1.5.0, intent 1.1.0, operator 1.6.0, peer 1.1.1, rules 1.10.2; scenario pin and manifest updated.
+
 ## 0.18.1
 - README reworded to one reviewer agent (a coder and a reviewer), closes #5.
 

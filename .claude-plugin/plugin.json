@@ -1,6 +1,6 @@
 {
   "name": "orbit",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "description": "Personal team workflow: six role agents, a /decide PM command, an operator agent, skill and SessionStart handoff hook that keep a team of worker subagents (or peer sessions) in constant progress across compactions, no manual clear or compact, an intent skill that plans a big goal as an approved OKF milestone of small units (AI-DLC's Inception step) with a checker script, and OKF docs automation. A PreToolUse guard enforces the operator's no-write rule (OPR-01) and the merge-commit review trailer (DEC-08). Coders show each proof test failing, then passing, and reviewers check it fails without the change (DEC-21, DEC-22, checked by a script). A drift guard (numbered rule ids, versioned skills, triage script, session ledger and audit) keeps skills and sessions from drifting; long skills are a short rule core plus refs. Project-specific facts live in a project profile (.agents/project.md).",
   "icon": "./assets/logo.svg",
   "author": {
