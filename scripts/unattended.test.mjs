@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { FAIL, guard, parseShell, realCtx } from "../hooks/guard.mjs";
-import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
+import { EVIDENCE_MS, goForm, goState } from "../hooks/go.mjs";
 import { unattended } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
 import { plan } from "./tracker.mjs";
@@ -206,13 +206,13 @@ const ctx = (over = {}) => ({
 });
 const MAIN = { session_id: SID, cwd: "/r/merge", permission_mode: "bypassPermissions" };
 const bash = (command, who = MAIN) => ({ ...who, tool_name: "Bash", tool_input: { command } });
-const PINNED = `git push origin ${M}:refs/heads/main`;
+const PINNED = `git push origin ${M}^{object}:refs/heads/main`;
 
 test("the one test, part 2: under a hand-written go, the pinned sha with full evidence is allowed; every spelling or fact that lacks it is denied", () => {
   withGo((env) => {
     assert.equal(guard(bash(PINNED), env, ctx()), null, "full evidence: allowed");
-    assert.equal(guard(bash(`git -C /r/merge push origin ${M}:refs/heads/main`), env, ctx()), null, "git -C from the merge worktree");
-    assert.equal(guard(bash(`git -C /r/merge push origin ${M}:refs/heads/main`, { ...MAIN, agent_type: "orbit:operator" }), env, ctx()), null, "the operator main thread");
+    assert.equal(guard(bash(`git -C /r/merge push origin ${M}^{object}:refs/heads/main`), env, ctx()), null, "git -C from the merge worktree");
+    assert.equal(guard(bash(`git -C /r/merge push origin ${M}^{object}:refs/heads/main`, { ...MAIN, agent_type: "orbit:operator" }), env, ctx()), null, "the operator main thread");
     const deny = (label, command, over = {}, who = MAIN) => {
       const r = guard(bash(command, who), env, ctx(over));
       assert.equal(kind(r), "deny", `${label}: ${JSON.stringify(r)}`);
@@ -243,13 +243,13 @@ test("the one test, part 2: under a hand-written go, the pinned sha with full ev
     deny("ls-remote times out", PINNED, { git: { [`ls-remote origin refs/heads/main`]: FAIL } });
     deny("not a GitHub origin", PINNED, { git: { "remote get-url --all origin": "https://example.com/o/r.git", "remote get-url --push --all origin": "https://example.com/o/r.git" } });
     deny("from a subagent", PINNED, {}, { ...MAIN, agent_id: "a1", agent_type: "orbit:coder" });
-    deny("the target is not origin/HEAD", `git push origin ${M}:refs/heads/main`, { ctx: { originHead: () => "develop" } });
+    deny("the target is not origin/HEAD", PINNED, { ctx: { originHead: () => "develop" } });
     for (const c of ["git push origin HEAD:main", `git push origin ${M}:main`, `git push origin ${M.slice(0, 12)}:refs/heads/main`, `git push origin ${M}:refs/heads/main && echo ok`,
       `FOO=1 git push origin ${M}:refs/heads/main`, `git push -u origin ${M}:refs/heads/main`, `git push origin +${M}:refs/heads/main`, `sh -c 'git push origin ${M}:refs/heads/main'`,
       `git push upstream ${M}:refs/heads/main`, "git push origin main", `/usr/bin/git push origin ${M}:refs/heads/main`]) {
       deny(c, c);
     }
-    assert.match(guard(bash("git push origin HEAD:main"), env, ctx()), /unattended base push[\s\S]*<merge sha>:refs\/heads\/main/, "HEAD:main is denied with the pinned form to run");
+    assert.match(guard(bash("git push origin HEAD:main"), env, ctx()), /unattended base push[\s\S]*<merge sha>\^\{object\}:refs\/heads\/main/, "HEAD:main is denied with the pinned form to run");
   });
 });
 
@@ -885,7 +885,7 @@ const LOCAL = { "rev-parse --verify -q HEAD^{commit}": M, "rev-parse --verify -q
   [`rev-parse --verify -q ${M}^{commit}`]: M, [`rev-parse --verify -q ${TAGOBJ}^{commit}`]: M };
 const LIGHT = { "ls-remote origin refs/tags/v1.2.3": `${M}\trefs/tags/v1.2.3`, remote: "origin" };
 const ANNOT = { "ls-remote origin refs/tags/v1.2.3": `${TAGOBJ}\trefs/tags/v1.2.3\n${M}\trefs/tags/v1.2.3^{}`, remote: "origin" };
-const PTAG = `git push origin ${TAGOBJ}:refs/tags/v1.2.3`;
+const PTAG = `git push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`;
 // The stub's refKind knows v1.2.x as tags, like a repo that has them.
 const ok41 = (git = {}) => ({ git: { ...LOCAL, ...LIGHT, ...git }, ctx: { refKind: (d, n) => (/^v\d/.test(n) ? { tag: true, branch: false, remote: true } : { tag: false, branch: true, remote: true }) } });
 
@@ -893,12 +893,12 @@ test("#41 a: under the go, the base push runs only pinned; <base>, HEAD:<base> a
   withGo((env) => {
     // git re-resolves a ref at push time (a background job can move it), so the go allows only the sha it checked.
     for (const [c, pin] of [["git push origin main", PINNED], ["git push origin HEAD:main", PINNED], ["git push origin main:main", PINNED],
-      ["git -C /r/merge push origin HEAD:main", `git -C /r/merge push origin ${M}:refs/heads/main`]]) {
+      ["git -C /r/merge push origin HEAD:main", `git -C /r/merge push origin ${M}^{object}:refs/heads/main`]]) {
       const r = guard(bash(c), env, ctx(ok41()));
       assert.equal(kind(r), "deny", c);
       assert.ok(r.includes(pin), r);
     }
-    assert.match(guard(bash("git push origin main"), env, ctx(ok41({ "rev-parse --verify -q refs/heads/main^{commit}": undefined }))), /git push origin <merge sha>:refs\/heads\/main/, "unresolvable ref");
+    assert.match(guard(bash("git push origin main"), env, ctx(ok41({ "rev-parse --verify -q refs/heads/main^{commit}": undefined }))), /git push origin <merge sha>\^\{object\}:refs\/heads\/main/, "unresolvable ref");
     assert.equal(guard(bash(PINNED), env, ctx(ok41())), null, "the pinned form with its evidence");
     assert.equal(guard(bash(PINNED), env, ctx(ok41({ "config --get-all push.recurseSubmodules": "no", "config --bool --get submodule.recurse": "false" }))), null, "submodules off");
     const deny = (label, c, over) => assert.equal(kind(guard(bash(c), env, ctx(over))), "deny", label);
@@ -919,9 +919,9 @@ test("#41 a: under the go, the base push runs only pinned; <base>, HEAD:<base> a
 test("#41 b: under the go, the tag push runs only pinned (<tag object>:refs/tags/vX.Y.Z) when it peels to the verified merge; any other shape needs the owner", () => {
   withGo((env) => {
     for (const git of [{}, PUSHED]) {
-      for (const c of [PTAG, `git push origin ${M}:refs/tags/v1.2.3`, `git -C /r/merge push origin ${TAGOBJ}:refs/tags/v1.2.3`]) assert.equal(guard(bash(c), env, ctx(ok41(git))), null, c);
+      for (const c of [PTAG, `git push origin ${M}^{object}:refs/tags/v1.2.3`, `git -C /r/merge push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`]) assert.equal(guard(bash(c), env, ctx(ok41(git))), null, c);
     }
-    for (const [c, pin] of [["git push origin v1.2.3", PTAG], ["git push origin refs/tags/v1.2.3", PTAG], ["git -C /r/merge push origin v1.2.3", `git -C /r/merge push origin ${TAGOBJ}:refs/tags/v1.2.3`]]) {
+    for (const [c, pin] of [["git push origin v1.2.3", PTAG], ["git push origin refs/tags/v1.2.3", PTAG], ["git -C /r/merge push origin v1.2.3", `git -C /r/merge push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`]]) {
       const r = guard(bash(c), env, ctx(ok41(PUSHED)));
       assert.equal(kind(r), "deny", c);
       assert.ok(r.includes(pin), r);
@@ -1026,5 +1026,84 @@ test("#41 capture: the go's pinned pushes are class go with the sha they sent; a
       const e = outwardEvents(ev(c), () => ctx(ok41()), env);
       assert.ok(e.every((x) => !x.argv.includes("class=go")), `${c}: ${JSON.stringify(e)}`);
     }
+  });
+});
+
+// ---------- #41 review 5: the pushed object is the checked object ----------
+// git reads a bare 40-hex push source as a ref name first (refs/heads/<sha>, refs/tags/<sha>, ...), so the go pins `<sha>^{object}`
+// (a ref name cannot hold `^`); and the evidence reads the real objects (no replace refs, no grafts), like the push sends them.
+const realGit = (cwd, ...a) => spawnSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "advice.objectNameWarning=false", ...a],
+  { encoding: "utf8", env: { PATH: process.env.PATH, HOME: cwd, GIT_CONFIG_NOSYSTEM: "1" } });
+function realRepo(fn) {
+  const d = realpathSync(mkdtempSync(join(tmpdir(), "orbit-pin-"))), w = join(d, "w"), r = join(d, "r.git");
+  try {
+    for (const a of [["init", "-q", "--bare", r], ["init", "-q", "-b", "main", w]]) assert.equal(realGit(d, ...a).status, 0);
+    const sha = (rev) => realGit(w, "rev-parse", rev).stdout.trim();
+    for (const m of ["A", "E"]) assert.equal(realGit(w, "commit", "-q", "--allow-empty", "-m", m).status, 0);
+    assert.equal(realGit(w, "remote", "add", "origin", r).status, 0);
+    fn({ d, w, r, sha, A: sha("HEAD~1"), E: sha("HEAD") });
+  } finally { rmSync(d, { recursive: true, force: true }); }
+}
+
+test("#41 review 5: every pinned push the go accepts sends exactly the object it checked, even with a ref named like the sha", () => {
+  realRepo(({ w, r, sha, A, E }) => {
+    assert.equal(realGit(w, "tag", "-a", "-m", "t", "v1.2.3", A).status, 0);
+    const T = sha("v1.2.3");
+    for (const [ns, n] of [["heads", A], ["tags", T]]) assert.equal(realGit(w, "update-ref", `refs/${ns}/${n}`, E).status, 0);
+    let accepted = 0;
+    for (const [spec, dst] of [[`${A}:refs/heads/main`, "refs/heads/main"], [`${A}^{object}:refs/heads/main`, "refs/heads/main"],
+      [`${T}:refs/tags/v1.2.3`, "refs/tags/v1.2.3"], [`${T}^{object}:refs/tags/v1.2.3`, "refs/tags/v1.2.3"]]) {
+      const g = goForm(parseShell(`git push origin ${spec}`));
+      if (!g?.sha) continue;
+      accepted++;
+      realGit(r, "update-ref", "-d", dst);
+      const p = realGit(w, "push", "-q", "origin", spec);
+      assert.equal(p.status, 0, `${spec}: ${p.stderr}`);
+      assert.equal(realGit(r, "rev-parse", dst).stdout.trim(), g.sha, `${spec}: git pushed another object than the go checked`);
+    }
+    assert.equal(accepted, 2, "the go accepts the two ^{object} forms");
+    assert.equal(realGit(r, "cat-file", "-t", "refs/tags/v1.2.3").stdout.trim(), "tag", "an annotated tag object is pushed as itself");
+  });
+});
+
+test("#41 review 5: under the go, a bare <sha>: push and every other source spelling are denied; the deny names the ^{object} form", () => {
+  withGo((env) => {
+    const PIN = `git push origin ${M}^{object}:refs/heads/main`, TPIN = `git push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`;
+    assert.equal(guard(bash(PIN), env, ctx(ok41())), null, "the ^{object} base push");
+    assert.equal(guard(bash(TPIN), env, ctx(ok41(PUSHED))), null, "the ^{object} tag push");
+    for (const [c, pin, git] of [[`git push origin ${M}:refs/heads/main`, PIN, {}], [`git push origin ${TAGOBJ}:refs/tags/v1.2.3`, TPIN, PUSHED],
+      [`git -C /r/merge push origin ${M}:refs/heads/main`, `git -C /r/merge push origin ${M}^{object}:refs/heads/main`, {}]]) {
+      const res = guard(bash(c), env, ctx(ok41(git)));
+      assert.equal(kind(res), "deny", c);
+      assert.ok(res.includes(pin), res);
+    }
+    for (const src of [`${M}^{}`, `${M}^{commit}`, `${M}~0`, `${M}^0`, `${M}@{0}`, `${M}^{object}^{object}`, `${M.toUpperCase()}^{object}`, `${M}^{object}~0`, `${M.slice(0, 39)}^{object}`]) {
+      for (const dst of ["refs/heads/main", "refs/tags/v1.2.3"]) {
+        const c = `git push origin ${src}:${dst}`;
+        assert.equal(kind(guard(bash(c), env, ctx(ok41(PUSHED)))), "deny", c);
+      }
+    }
+    // An invalid destination is no go form (git refuses the refspec itself).
+    for (const c of [`git push origin ${M}^{object}:refs/heads/main:x`, `git push origin ${M}^{object}:refs/heads/main^{object}`]) assert.equal(goForm(parseShell(c)), null, c);
+    for (const c of [`git push origin ${M}^{object}:main`,
+      `git push origin ${M}^{object}:refs/heads/main ${M}^{object}:refs/heads/x`, `git push origin '${M}^{object}':refs/heads/main extra`,
+      `git -C ~/merge push origin ${M}^{object}:refs/heads/main`, `git -C /r/m* push origin ${M}^{object}:refs/heads/main`, `git -C /r/{merge,x} push origin ${M}^{object}:refs/heads/main`,
+      `git -C /r/merg? push origin ${M}^{object}:refs/heads/main`, `git -C /r/[m]erge push origin ${M}^{object}:refs/heads/main`]) {
+      assert.equal(kind(guard(bash(c), env, ctx(ok41()))), "deny", c);
+    }
+  });
+});
+
+test("#41 review 5: the go's evidence reads the real objects: a replace ref or a graft cannot show it another commit than git pushes", () => {
+  realRepo(({ w, sha, A }) => {
+    assert.equal(realGit(w, "checkout", "-q", "--orphan", "side").status, 0);
+    assert.equal(realGit(w, "commit", "-q", "--allow-empty", "-m", "X").status, 0);
+    const X = sha("HEAD");
+    const ev = realCtx(w, {}).evidence();
+    assert.equal(realGit(w, "replace", A, X).status, 0);
+    assert.equal(ev.git(w, "log", "-1", "--format=%s", A).out, "A", "a replace ref");
+    assert.equal(realGit(w, "replace", "-d", A).status, 0);
+    writeFileSync(join(w, ".git/info/grafts"), `${A} ${X}\n`);
+    assert.ok(!ev.git(w, "rev-list", "--parents", "-n", "1", A).out.includes(X), "a graft");
   });
 });

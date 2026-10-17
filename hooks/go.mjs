@@ -40,11 +40,13 @@ export function trailerOk(msg, key) {
 }
 
 // The go's command shapes, exactly, alone in the call (Anything else, another spelling, an option, a variable, is not a go action):
-// - base: `git [-C <dir>] push origin <40-hex>:refs/heads/<branch>` ({ sha });
-// - tag: `git [-C <dir>] push origin <40-hex>:refs/tags/<vX.Y.Z>` ({ sha }: the tag object, or the commit of a lightweight tag; #41);
-//   pinned only: git re-resolves a ref at push time, so the go allows exactly the object it checked. The ref forms `<branch>`,
-//   `HEAD:<branch>`, `<branch>:<branch>` ({ src }) and `vX.Y.Z`, `refs/tags/vX.Y.Z` ({ ref: true }) are read only to deny them
-//   with the pinned command to run instead;
+// - base: `git [-C <dir>] push origin <40-hex>^{object}:refs/heads/<branch>` ({ sha });
+// - tag: `git [-C <dir>] push origin <40-hex>^{object}:refs/tags/<vX.Y.Z>` ({ sha }: the tag object, or the commit of a lightweight tag; #41);
+//   pinned only: git re-resolves a ref at push time, so the go allows exactly the object it checked. `^{object}` makes it one:
+//   git reads a bare 40-hex source as a ref name first (refs/heads/<sha>, refs/tags/<sha>, ...), and a ref name cannot hold `^`.
+//   The bare `<40-hex>:` ({ bare }) and the ref forms `<branch>`, `HEAD:<branch>`, `<branch>:<branch>` ({ src }) and `vX.Y.Z`,
+//   `refs/tags/vX.Y.Z` ({ ref: true }) are read only to deny them with the pinned command to run instead;
+//   `-C <dir>` with a glob or a leading `~` is no go form (the shell would expand it, the guard would not);
 // - delete: `git [-C <dir>] push origin --delete <branch>`;
 // - release: `gh release create <vX.Y.Z>` with only -R/--repo, -t/--title, -n/--notes, --verify-tag, --latest, --target (all
 //   literal; the guard checks repo, target and the tag). No -F/--notes-file: gh would read any path (/proc/self/environ, /dev/stdin).
@@ -57,16 +59,14 @@ export function goForm(cmds) {
   if (w[0] === "gh") return releaseForm(w);
   let i = 1, dir = null;
   if (w[0] !== "git") return null;
-  if (w[1] === "-C") { if (!w[2]) return null; dir = w[2]; i = 3; }
+  if (w[1] === "-C") { if (!w[2] || w[2].startsWith("~") || /[*?[{]/.test(w[2])) return null; dir = w[2]; i = 3; }
   if (w[i] !== "push" || w[i + 1] !== "origin") return null;
   const rest = w.slice(i + 2), name = (b) => /^\w[\w./-]*$/.test(b) && !b.includes("..") && !b.startsWith("refs/") && !b.endsWith(".lock");
-  if (rest.length === 1 && /^[0-9a-f]{40}:refs\/heads\//.test(rest[0])) {
-    const dst = rest[0].slice(52);
-    return name(dst) ? { kind: "base", dir, sha: rest[0].slice(0, 40), dst } : null;
-  }
-  if (rest.length === 1 && /^[0-9a-f]{40}:refs\/tags\//.test(rest[0])) {
-    const tag = rest[0].slice(51);
-    return SEMVER_TAG.test(tag) ? { kind: "tag", dir, sha: rest[0].slice(0, 40), tag } : null;
+  const pin = rest.length === 1 && /^([0-9a-f]{40})(\^\{object\})?:refs\/(heads|tags)\/(.*)$/.exec(rest[0]);
+  if (pin) {
+    const [, sha, obj, ns, ref] = pin, p = obj ? { sha } : { bare: sha };
+    if (ns === "heads") return name(ref) ? { kind: "base", dir, ...p, dst: ref } : null;
+    return SEMVER_TAG.test(ref) ? { kind: "tag", dir, ...p, tag: ref } : null;
   }
   if (rest.length === 2 && rest[0] === "--delete" && name(rest[1])) return { kind: "delete", dir, name: rest[1] };
   if (rest.length !== 1) return null;

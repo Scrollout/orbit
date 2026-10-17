@@ -515,11 +515,12 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
       const call = (cmd, args) => {
         const left = end - Date.now();
         if (left < 50) return FAIL;
-        const r = spawnSync(cmd, args, { encoding: "utf8", timeout: left, killSignal: "SIGKILL", detached: true, maxBuffer: 64 << 20 });
+        const r = spawnSync(cmd, args, { encoding: "utf8", timeout: left, killSignal: "SIGKILL", detached: true, maxBuffer: 64 << 20, env: { ...process.env, GIT_GRAFT_FILE: "/dev/null" } });
         if (r.pid) { try { process.kill(-r.pid, "SIGKILL"); } catch { /* the group is gone */ } }
         return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
       };
-      return { git: (d, ...a) => call("git", ["-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
+      // The push sends the real objects: the evidence reads them too, past replace refs and grafts (GIT_GRAFT_FILE; #41 review 5).
+      return { git: (d, ...a) => call("git", ["--no-replace-objects", "-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
     },
     commit(dir, rev) {
       if (rev.startsWith("-") || !/^[\w./@{}^~-]+$/.test(rev)) return null;
@@ -1628,7 +1629,7 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
 function sharedDecision(f, input, multi, go = null) {
   if (go) {
     const base = f.sub === "push" && f.what === "push to protected branch" && f.dst ? safe(f.dst) : null;
-    return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only its verified release steps and merged branch deletes)", do: base ? `push the verified merge as git push origin <40-hex sha>:refs/heads/${base}` : "leave it for the owner" });
+    return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only its verified release steps and merged branch deletes)", do: base ? `push the verified merge as git push origin <40-hex sha>^{object}:refs/heads/${base}` : "leave it for the owner" });
   }
   if (multi) return outwardReason("DENY", f, input, { note: "not alone in its call", do: "run it alone in its own call" });
   if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
@@ -1951,8 +1952,9 @@ function goAction(cmds, cwd, input, getCtx, env) {
   const c = getCtx(), base = dir ? c.originHead(dir) : FAIL, floor = c.profile(null);
   // A ref-form push to a branch other than the base is no go action: it is classified as usual (a topic push).
   if (g.kind === "base" && g.src !== undefined && (base === FAIL || !base || g.dst !== base)) return null;
-  const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha ? g.sha.slice(0, 12) : safe(g.src)}` : g.kind === "delete" ? `git push --delete → origin/${safe(g.name)}`
-    : g.kind === "tag" ? `git push → origin tag ${g.tag}${g.sha ? ` at ${g.sha.slice(0, 12)}` : ""}` : `gh release create ${g.tag}`;
+  const pinned = g.sha ?? g.bare;
+  const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${pinned ? pinned.slice(0, 12) : safe(g.src)}` : g.kind === "delete" ? `git push --delete → origin/${safe(g.name)}`
+    : g.kind === "tag" ? `git push → origin tag ${g.tag}${pinned ? ` at ${pinned.slice(0, 12)}` : ""}` : `gh release create ${g.tag}`;
   const what = { base: "unattended base push", delete: "unattended branch delete", tag: "unattended tag push", release: "unattended release" }[g.kind];
   const no = (why, run) => outwardReason("DENY", { what, action }, input, { note: why, do: run ? `run the pinned form instead: ${run}` : "leave it for the owner" });
   if (!dir) return no("the directory is unknown");
@@ -1968,12 +1970,13 @@ function goAction(cmds, cwd, input, getCtx, env) {
     const verified = (sha, pushed) => baseEvidence(ev, dir, sha, base, key, floor.checks ?? [], pushed);
     if (g.kind === "base" || g.kind === "tag") {
       if (!g.sha) {
-        // A ref form: name the object it would send today, pinned (git would resolve the ref again at push time).
-        const t = g.kind === "tag" && ev.git(dir, "rev-parse", "--verify", "-q", `refs/tags/${g.tag}`);
-        const o = g.kind === "tag" ? (t?.code === 0 ? t.out : null) : localCommit(ev, dir, g.src === "HEAD" ? "HEAD" : `refs/heads/${g.src}`);
+        // A ref form: name the object it would send today, pinned (git would resolve the ref again at push time). A bare sha
+        // names itself: git would read it as a ref name first.
+        const t = !g.bare && g.kind === "tag" && ev.git(dir, "rev-parse", "--verify", "-q", `refs/tags/${g.tag}`);
+        const o = g.bare ?? (g.kind === "tag" ? (t?.code === 0 ? t.out : null) : localCommit(ev, dir, g.src === "HEAD" ? "HEAD" : `refs/heads/${g.src}`));
         const pin = o && /^[0-9a-f]{40}$/.test(o) ? o : g.kind === "tag" ? "<tag object sha>" : "<merge sha>";
-        const run = `git ${g.dir === null ? "" : `-C ${safe(g.dir)} `}push origin ${pin}:refs/${g.kind === "tag" ? `tags/${g.tag}` : `heads/${base}`}`;
-        return no("the go pushes only a pinned sha, which git cannot re-resolve", run);
+        const run = `git ${g.dir === null ? "" : `-C ${safe(g.dir)} `}push origin ${pin}^{object}:refs/${g.kind === "tag" ? `tags/${g.tag}` : `heads/${base}`}`;
+        return no(g.bare ? "git reads a bare sha as a ref name first; the go pushes only <sha>^{object}" : "the go pushes only a pinned object, which git cannot re-resolve", run);
       }
       const cfg = pushConfigEvidence(ev, dir);
       if (cfg) return no(cfg);

@@ -109,7 +109,7 @@ export function outwardEvents(event, getCtx, env = {}) {
   const g = goForm(cmds);
   if (g && goState(event, env)) {
     const dir = g.dir === null ? cwd : resolve(cwd, g.dir);
-    // Only a pinned push is the go's (a ref form was denied, so if it ran it was not by the go); its sha is what was pushed.
+    // Only a pinned <sha>^{object} push is the go's (a ref form or a bare sha was denied, so if it ran it was not by the go); its sha is what was pushed.
     if ((g.kind !== "base" && g.kind !== "tag") || g.sha) {
       const sub = { base: "push", delete: "push --delete", tag: "push tag", release: "release create" }[g.kind], sha = g.sha;
       const ref = g.kind === "base" ? `origin/${safe(g.dst)}` : g.kind === "delete" ? `origin/${safe(g.name)}` : g.tag;
