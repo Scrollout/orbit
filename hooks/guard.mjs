@@ -1678,24 +1678,36 @@ const stateDeny = (what, action, input) => outwardReason("DENY", { what, action 
 // A command names it (#38) when its text does, when a word (after the guard's expansion) does or resolves to it, when a glob
 // word can match it, when node, nodejs, bun or deno (also through xargs) has a glob word whose last segment can match
 // unattended.mjs, when a find whose -name or -path can match it (or that has none) runs one of them by -exec or into xargs,
-// or when the command inside sh -c, bash -c or eval does. A name held in a variable, a program the model writes first or
+// or when the command inside sh -c, bash -c or eval does, or when a text the guard cannot parse has unatt or such a glob next to a runtime. A name held in a variable, a program the model writes first or
 // another interpreter is not seen: the go is intent, the evidence gates carry the safety there.
 const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "hooks", "unattended.mjs"));
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
 const goGlob = (e) => (braces(e) ?? [null]).some((a) => a === null || segMatch(a.split("/").pop(), basename(GO_SCRIPT)));
 const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+// A text the guard cannot parse: it names the go when, quotes and backslashes removed, it has "unatt" or a glob that can match
+// the script, next to a runtime word.
+const RUNTIME_WORD = /(?<![\w.-])(node|nodejs|bun|deno)(?![\w.-])/;
+function unparsedGo(text) {
+  const t = text.replace(/\$'|['"\\]/g, "");
+  return RUNTIME_WORD.test(t) && (t.includes("unatt") || (t.match(/[^\s;|&()<>]*[*?[{][^\s;|&()<>]*/g) ?? []).some(goGlob));
+}
+const FIND_OPS = new Set(["-o", "-or", "!", "-not", "-prune"]);
 function namesGo(cmds, text, cwd, env) {
   if (text.includes("unattended.mjs")) return true;
   const runs = (c) => { const r = resolveCmd(c.words); return RUNTIMES.has(r?.name) && r; };
   return cmds.some((c) => {
     const r = resolveCmd(c.words);
     if (r && "inner" in r && r.inner !== null) {
-      try { if (namesGo(parseShell(r.inner, env), r.inner, cwd, env)) return true; } catch { /* the guard's inner parse handles it */ }
+      try { if (namesGo(parseShell(r.inner, env), r.inner, cwd, env)) return true; } catch { if (unparsedGo(r.inner)) return true; }
     }
     if (r?.name === "find") {
       const a = r.args.map((x) => x.lit);
-      const pats = a.flatMap((x, i) => (/^-i?(name|path|wholename|regex)$/.test(x ?? "") ? [[x, a[i + 1]]] : []));
-      const exec = a.some((x, i) => FIND_EXEC.has(x) && RUNTIMES.has(basename(a[i + 1] ?? "")));
+      const pats = a.some((x) => FIND_OPS.has(x)) ? [] : a.flatMap((x, i) => (/^-i?(name|path|wholename|regex)$/.test(x ?? "") ? [[x, a[i + 1]]] : []));
+      const exec = a.some((x, i) => {
+        if (!FIND_EXEC.has(x)) return false;
+        const end = a.findIndex((y, j) => j > i && (y === ";" || y === "+"));
+        return RUNTIMES.has(resolveCmd(r.args.slice(i + 1, end < 0 ? undefined : end))?.name);
+      });
       const can = !pats.length || pats.some(([o, p]) => !/name$/.test(o) || p == null || segMatch(o === "-iname" ? p.toLowerCase() : p, "unattended.mjs"));
       if (can && (exec || cmds.some((d) => runs(d)?.xargs))) return true;
     }
@@ -1719,8 +1731,9 @@ function goCommand(cmds, text, input, cwd, env) {
       return { ask: outwardReason("ASK", { what: `open an unattended go of ${ms / 60_000} minutes for this session`, action: `/orbit:unattended on${w[3] ? ` ${w[3]}` : ""}` }, input, { do: "approve only if you typed /orbit:unattended on" }) };
     }
   }
-  return stateDeny("a command naming the unattended go's script, or a glob or spelling that can match it", "only the exact /orbit:unattended command runs it", input);
+  return goDeny(input);
 }
+const goDeny = (input) => stateDeny("a command naming the unattended go's script, or a glob or spelling that can match it", "only the exact /orbit:unattended command runs it", input);
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
 // An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
@@ -1947,6 +1960,7 @@ export function guard(input, env = {}, ctx = null) {
   let cmds;
   try { cmds = parseShell(ti.command, env); } catch (e) {
     if (ti.command.includes("unattended.mjs")) return goCommand([], ti.command, input);
+    if (unparsedGo(ti.command)) return goDeny(input);
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
