@@ -5,12 +5,12 @@
 
 # Orbit
 
-Version: 0.18.1 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.19.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
 - **A team, not a single assistant**: an explorer, a designer, a tech lead, a security officer, a coder and a reviewer each do one job, so every change is thought through, built, then checked by someone fresh.
-- **Decisions made the way good teams make them**: `/decide` sizes the process to the question. A small fix just gets done; anything touching security or hard-to-undo choices gets proposals, a security review and a sign-off, with a written record of why.
+- **Decisions made the way good teams make them**: `/decide` sizes the process to the question and starts on its own when a question needs it. A small fix just gets done; anything touching security or hard-to-undo choices gets proposals, a security review and a sign-off, with a written record of why. Critics loop a fixed number of times, then escalate: prefer a script as the critic (proof-check, intent-plan, audit-ledger), one LLM fix round (DEC-14), one Contest rebuttal (DEC-13); never loop until a critic is satisfied.
 - **Parallel work without session upkeep**: one operator coordinates and never edits; every chore runs in a fresh worker subagent on its own branch (or in a peer session you can watch), work stays in flight, the operator resumes on its own after a compaction or restart, and nothing reaches the shared branch without passing its checks.
 - **Lower cost**: cheaper models do the reading and routine building, and the strongest models are kept for judgment. Sessions message each other only when a decision is needed.
 - **Big goals planned before they are built**: the `intent` skill (AI-DLC's Inception step) asks one round of questions, writes a milestone plan of small units with proofs as an OKF doc, checks it with a script, and waits for one approval before any issue or build.
@@ -30,7 +30,7 @@ Then, in Claude Code:
 /plugin marketplace add ~/orbit
 /plugin install orbit@scrollout
 ```
-Agents appear as `orbit:<name>`, the command as `/orbit:decide`.
+Agents appear as `orbit:<name>`, the command as `/orbit:decide`. The model starts `/orbit:decide` and the `intent` skill by itself when a question or goal needs them (it says why in one line), never inside a worker or subagent executing a brief; you can still type either.
 
 **Update** to a new [release](https://github.com/Scrollout/orbit/releases):
 ```
@@ -141,7 +141,7 @@ Optional docs automation for projects that keep docs as an [Open Knowledge Forma
 
 ## Intent
 The `intent` skill borrows one step from AWS's AI-DLC, Inception: a goal becomes small, approved units before anything is built. The rest of AI-DLC (mob rituals, 33 stages, an operations phase, gates at every stage) is not adopted: `/decide` and the operator already size the process to the risk.
-- Triggers on its own when the owner states a goal that needs several sessions or branches (or run `/orbit:intent`); a goal that fits one session goes straight to `/decide`.
+- Triggers on its own when the owner states a goal that needs several sessions or branches (or run `/orbit:intent`); a goal that fits one session goes straight to `/decide`, and `/decide` hands a build that clearly exceeds one session back to `intent`.
 - One question round, then a plan doc `roadmap/m<n>.md` in the OKF bundle: intent, exit tests, steps (`Step | Builds | Files | Proof | Depends | Hint`), carried issues. It is `stable` and `verified` by the owner once approved.
 - `node ~/orbit/scripts/intent-plan.mjs --root . --plan <file|->` checks it before approval (zero dependencies, no model): the OKF per-doc rules (`scripts/okf-lib.mjs`, shared with validate-okf), the plan rules, sec=yes forced from the profile's `security_paths`, dispatch waves with no two steps touching the same paths, and the steps that go to `/decide` first. Exit 0 ok, 1 profile gap (`security_paths` only), 2 plan gap. Tests: `scripts/intent-plan.test.mjs`.
 - Agents reused, none added: an optional light review by `designer` (reviewer role, on request), `/decide` only for a one-way-door goal, and the usual `/decide` per unit when it is built.

@@ -1,12 +1,14 @@
 ---
 name: intent
-description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
-version: 1.0.1
+description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue unless /decide or the operator hands it over as too big for one worker, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
+version: 1.1.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. A field marked TODO is a gap: say so, never invent. The plan's units are then built through the usual flow: `/orbit:decide` per unit, or the operator's dispatch.
 
+If the owner did not ask for it, say in one line why the goal is too big for one session, then run the flow (the approval gate in step 7 still applies).
+
 ## 1. Size gate
-If the goal fits one worker session (about 1,000 changed lines or less, one branch), say so and hand it to `/orbit:decide`. Stop here.
+If the goal fits one worker session (about 1,000 changed lines or less, one branch), say so and hand it to `/orbit:decide`, unless it came from `/decide` already (at most one handoff each way: then say so and stop). Stop here.
 
 ## 2. Where the plan goes
 - With an OKF bundle (profile "OKF docs", default `docs/okf`): `<bundle>/roadmap/m<n>.md`, the next free milestone number. If the milestone already exists with the placeholder plan (the scaffold's M1), replace that doc and keep its status line; never write a sibling.

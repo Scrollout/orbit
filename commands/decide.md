@@ -1,13 +1,15 @@
 ---
-description: Act as project manager and run a decision the way a team does - triage, discovery, proposals, design review, sign-off, decision record, delivery - with only the people the question needs
+description: Act as PM and run a decision like a team - triage, discovery, proposals, design review, sign-off, record, delivery - with only the people the question needs. Use it unasked for a design, decision-record or roadmap question; a trade-off between real options; a bug or finding with several plausible fixes; a change touching a security path, a one-way door or shared state; or a review finding against the spec or design. Not for a small change whose triage lines are all no, not inside a worker or subagent executing a brief (it reports instead), not for a multi-session goal (/intent).
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.4.4
+version: 1.5.0
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
 Question: $ARGUMENTS
 
-Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scripts/audit-ledger.mjs`); `hook` = a hook or git check can enforce it; `judgment` = the PM's own call. The prose in the steps and refs below explains each rule; the ids are stable, so reviews and audits cite them.
+Started unasked, say in one line why the question qualifies, then run the flow.
+
+Tags: `script` = checked by an orbit script; `hook` = a hook or git check can enforce it; `judgment` = the PM's own call. The prose in the steps and refs below explains each rule; the ids are stable, so reviews and audits cite them.
 
 ## Rules
 - DEC-01 `script`: no review before the branch's first green CI run; a fresh `reviewer` starts only on a pushed head SHA whose triggered runs are all green.
@@ -34,7 +36,7 @@ Tags: `script` = checked by an orbit script (`scripts/decide-triage.mjs`, `scrip
 - DEC-22 `script`: when tdd is on, reviewers revert only the production part of the diff in a scratch worktree, run each non-exempt test of the coder's report alone with the profile's targeted-test command, and write `PROOF CHECK <test> -- fails|passes|not checked: <reason>|exempt`; a pass is a CONFIRMED finding (proof does not prove) and blocks the merge until a later `fails` of that test.
 
 ## Ledger
-Keep the session ledger so the audit can replay it: append an event at each point below with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> key=value key:=json` (the file is the profile's `ledger_path`, default `.agents/ledger.jsonl`; keep it untracked). Kinds: `triage` (after step 2, and again when it is re-run), `agent_start` (every agent call), `ci_run`, `review_start`, `merge_built`, `issue_close`, `coder_report`, `proof_check` (the operator skill appends the last six when it runs delivery); `push` is appended by the plugin's capture hook, by hand only for a push it cannot see (the owner's). Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/audit-ledger.mjs"` after the track is chosen, after each review round, after the merge build and before you report a merge; a violation is fixed or stated, never ignored. Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md` (load when you append).
+Keep the session ledger so the audit can replay it: append an event at each point below with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> key=value key:=json` (the profile's `ledger_path`). Kinds: `triage` (after step 2, and again when it is re-run), `agent_start` (every agent call), `ci_run`, `review_start`, `merge_built`, `issue_close`, `coder_report`, `proof_check` (the last six: the operator skill, in delivery). Run the audit (`scripts/audit-ledger.mjs`) after the track is chosen, each review round, the merge build and before you report a merge; fix or state a violation. Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md` (load when you append).
 
 ## Flow
 Load the ref for a step when you reach it; the ref holds detail only, the rules above hold the constraints.
@@ -45,8 +47,9 @@ Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` when naming calls, choos
    - Security paths: would it change the behaviour of a path the profile lists as security-sensitive? yes/no, which. A wording, comment, formatting or ordering change is no; a change to what a verifier accepts or caches is yes. A security matter with no listed path yet (a new secret, principal, grant, or what a verifier accepts or caches, in a new place) is "yes, no path yet". Re-check against `git diff --name-only <base>...<branch>` before review; a branch that touches one is a yes from then on.
    - One-way door (persistent data, migrations, API contract, security boundary, money or destructive operations, plus the profile's additions)? yes/no, why.
    - Touches the profile's production-like environment (money, destructive or cross-tenant operations), or state shared across tenants (a process-wide cache counts)? yes/no, why. Skip if the profile defines none.
+   A build that will exceed one worker session (about 1,000 changed lines, several branches) goes to `/orbit:intent`, not one step; at most one handoff each way.
 2. **Track.** The cheapest that is safe; say which. Compute it with `scripts/decide-triage.mjs`: load `${CLAUDE_PLUGIN_ROOT}/refs/decide/team-tracks.md` for the command, the caps and the table.
-3. to 7. **Discovery, proposal, design review, research, sign-off.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/discovery-signoff.md` before step 3 and follow it through step 7; it covers the brief and hypotheses, engineer focuses, reviewers, the security officer, the one research round, the tech lead's sign-off, the missing-fact round and the Contest escalation.
+3. to 7. **Discovery, proposal, design review, research, sign-off.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/discovery-signoff.md` before step 3 and follow it through step 7; it also holds the parallel fan-out.
 8. **Decision record.** Always. Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/record.md` for the table shape and the lines after it.
-9. **Act.** Update the docs with the decision (a decision record when it is new, in the profile's format and location), write the failing test or check first, and implement. Delegate a decided build step with a clear spec to `coder` on a new worktree branch (the profile's convention), passing the conditions and the `proof` test; commit there only. With an operator session, every write (docs, decision record, failing test, implementation) goes to a worker; the PM writes nothing in the repo. Merge as step 10 says, the base pushed by whoever the profile's "who pushes the base" names; deploy stays with the owner unless the profile says otherwise.
+9. **Act.** Update the docs with the decision (a decision record when it is new, in the profile's format and location), write the failing test or check first, and implement. Delegate a decided build step with a clear spec to `coder` on a new worktree branch (the profile's convention), passing the conditions and the `proof` test; commit there only. With an operator session, every write (docs, decision record, failing test, implementation) goes to a worker; the PM writes nothing in the repo. Merge as step 10 says; deploy is the owner's unless the profile says otherwise.
 10. **Delivery.** Load `${CLAUDE_PLUGIN_ROOT}/refs/decide/delivery.md` when delivering a build: step split, models, caps, CI test policy, review, issues, findings, merge build, fix round (the `reviewer` brief starts `Mode: fix-round`).

@@ -1,7 +1,7 @@
 ---
 name: operator
 description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.5.3
+version: 1.6.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
@@ -54,7 +54,7 @@ The operator runs a team of agents in parallel (workers, reviewers, `/decide` ag
   1. Workers at "ready to push": check path filters (Push queue), send the GO.
   2. Red runs: an issue, then the owning worker (or a fresh fix worker) fixes it at its root cause.
   3. Green branches: review and fix round, then a merge worker (Merge protocol).
-  4. Dispatch the next issues, current milestone first, in parallel up to the profile's max parallel workers; tasks share no files.
+  4. An issue too big for one worker goes to `/orbit:intent` before dispatch. Dispatch the next issues, current milestone first, in parallel up to the profile's max parallel workers; tasks share no files.
   5. All workers busy: triage new issues, prepare the next briefs, run `/decide` on queued questions.
 - Heartbeat: while work is in flight, keep a wake-up armed: a background CI watch per run (Push queue). Background workers wake the operator when they finish, so a self-paced loop is only a long fallback, not a poll.
 - Resume: after a compaction or restart, re-read `.agents/operator.md`, refresh state (ListAgents, `gh run list`, `git fetch`) and continue the checklist without being told.
