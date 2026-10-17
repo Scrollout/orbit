@@ -66,3 +66,12 @@ test("oversize: a cut never lands inside a details block", () => {
     assert.ok(count(md, /<details>/g) < 10);
   }
 });
+
+test("a backslash before a pipe in a check name stays in one table cell", () => {
+  const rec = { check: "a\\|b", target: "vet", status: "pass", duration_s: 1, tool: "t", version: "1", findings: 0, excerpts: [] };
+  const row = render([rec], 1000000, ["vet"]).split("\n").find((l) => l.includes("a\\"));
+  assert.ok(row, "row rendered");
+  // split on pipes not preceded by an odd run of backslashes: 6 cells between 7 delimiters
+  const cells = row.split(/(?<!(?<!\\)(?:\\\\)*\\)\|/);
+  assert.equal(cells.length, 8, row);
+});
