@@ -1,11 +1,12 @@
 // UserPromptSubmit hook: `/orbit:unattended on [dur] | confirm <code> | off | status`. Zero dependencies.
 // The prompt hook fires the same way for a typed prompt, a subagent's hand-back, a scheduled prompt and a cross-session message,
 // with no field naming the source, so `on` opens nothing: it writes a one-time code to the owner's terminal (/dev/tty, never the
-// block reason, which may reach the transcript) and stores only its hash for 2 minutes. `confirm <code>` with that code opens the
+// block reason, which may reach the transcript; when the hook has no controlling terminal, the terminal of the Claude Code that ran it, #30) and stores only its hash for 2 minutes. `confirm <code>` with that code opens the
 // go for this session; one wrong confirm clears the pending code. `off` and `status` are accepted from any source (they only close
 // or show). Every handled prompt is blocked, so the model never sees it. Without a terminal no code is issued: no go.
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { isatty } from "node:tty";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { GO_MAX_MS, PENDING_MS, goState, stateDir, validSession } from "./go.mjs";
@@ -24,9 +25,40 @@ function duration(arg) {
   return Number(m[1]) * (m[2] === "h" ? 3600_000 : 60_000);
 }
 
+// Claude Code starts hooks without a controlling terminal, so /dev/tty fails (#30). Linux: the first of fd 0-2 of the hook's
+// nearest parents (Claude Code) that links to /dev/pts/N or /dev/ttyN is opened through /proc/<pid>/fd/<n> itself, and that open
+// fd must be a terminal (character device, isatty) of this user whose own link is still /dev/pts/N or /dev/ttyN. Never a pipe,
+// file, socket or /dev/null, never the hook's own stdio (the agent can read those). Returns the open fd; elsewhere (no /proc) or
+// none found: null, no code.
+const TTY = /^\/dev\/(pts\/\d+|tty\d+)$/;
+export function parentTerminal(fs = { readlinkSync, readFileSync, openSync, fstatSync, closeSync, isatty }, pid = process.ppid, uid = process.getuid?.()) {
+  for (let i = 0; i < 4 && pid > 1; i++) {
+    for (const n of [0, 1, 2]) {
+      const p = `/proc/${pid}/fd/${n}`;
+      let fd = null;
+      try {
+        if (!TTY.test(fs.readlinkSync(p))) continue;
+        fd = fs.openSync(p, constants.O_WRONLY | constants.O_NOCTTY);
+        const s = fs.fstatSync(fd);
+        if (s.isCharacterDevice() && s.uid === uid && fs.isatty(fd) && TTY.test(fs.readlinkSync(`/proc/self/fd/${fd}`))) return fd;
+      } catch { /* gone or not ours */ }
+      if (fd !== null) try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+    try { pid = Number(/\) \S+ (\d+)[^)]*$/.exec(fs.readFileSync(`/proc/${pid}/stat`, "utf8"))?.[1]); } catch { return null; }
+  }
+  return null;
+}
+
+function writeFd(fd, text) {
+  try { if (!isatty(fd)) return false; writeSync(fd, text); return true; } catch { return false; } finally { try { closeSync(fd); } catch { /* closing a terminal that went away */ } }
+}
+
 function writeTty(text) {
-  let fd;
-  try { fd = openSync("/dev/tty", "w"); writeSync(fd, text); return true; } catch { return false; } finally { if (fd !== undefined) try { closeSync(fd); } catch { /* closing a terminal that went away */ } }
+  let fd = null;
+  try { fd = openSync("/dev/tty", constants.O_WRONLY | constants.O_NOCTTY); } catch { /* no controlling terminal */ }
+  if (fd !== null && writeFd(fd, text)) return true;
+  fd = parentTerminal();
+  return fd !== null && writeFd(fd, text);
 }
 
 function save(dir, name, data) {

@@ -83,7 +83,7 @@ function list(p, depth, close) {
       const op = m[2];
       if (op === "<<" || op === "<<-") {
         if (w.lit === null) throw new ParseError("dynamic heredoc delimiter");
-        pending.push({ cmd, delim: w.lit, strip: op === "<<-" });
+        pending.push({ cmd, delim: w.lit, strip: op === "<<-", quoted: /['"\\]/.test(w.raw), depth });
       } else if (WRITE_OPS.has(op) && !(op === ">&" && /^(\d+|-)$/.test(w.lit ?? ""))) cmd.redirs.push({ op, target: w });
       continue;
     }
@@ -130,35 +130,91 @@ function heredocs(p, pending) {
       body.push(line);
     }
     h.cmd.heredoc = body.length ? body.join("\n") + "\n" : "";
+    if (!h.quoted) bodySubs(p, h.cmd.heredoc, h.depth);
+  }
+}
+
+// An unquoted here-doc body: its command substitutions ($(...) and `...`, also inside ${...} and $((...))) are parsed as
+// commands (#36); one it cannot parse is a parse error. Bash removes every backslash-newline first.
+function bodySubs(p, t, depth) {
+  t = t.replace(/\\[\s\S]/g, (m) => (m === "\\\n" ? "" : m));
+  for (let j = 0; j < t.length; j++) {
+    if (t[j] === "\\") { j++; continue; }
+    if (t[j] === "`") {
+      let k = j + 1, inner = "";
+      for (; k < t.length && t[k] !== "`"; k++) { if (t[k] === "\\" && k + 1 < t.length) k++; inner += t[k]; }
+      if (k >= t.length) throw new ParseError("unclosed ` in a heredoc");
+      list({ s: inner, i: 0, cmds: p.cmds, env: p.env, f: p.f }, depth + 1, null);
+      j = k;
+    } else if (t.startsWith("$(", j)) {
+      // $(...) or $((...)), read as in a word (#37).
+      const q = { s: t, i: j, cmds: p.cmds, env: p.env, f: p.f };
+      word(q, depth, true);
+      j = q.i - 1;
+    }
   }
 }
 
 // A word: `lit` is its text when fully static (else null), `exp` its text with $VAR, ${VAR} and ~ expanded from the
 // environment (null when anything else is dynamic), `subs` the [from, to) ranges of the commands it substitutes.
-function word(p, depth) {
+function word(p, depth, one = false) {   // one: only the $ expansion at p.i (a here-doc body)
   const s = p.s, start = p.i, subs = [], names = [];
-  let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0;
+  let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0, glob = false, ext = false, plainAt = -1, nested = false;
+  const plain = new Set();
   const add = (t) => { lit += t; exp += t; litChars += t.length; };
+  const cont = (i) => { while (s.startsWith("\\\n", i)) i += 2; return i; };   // past the backslash-newlines bash removes (#36)
   const sub = () => { const from = p.cmds.length; list(p, depth + 1, ")"); subs.push([from, p.cmds.length]); dyn = unexp = true; };
   const dollar = () => {
-    if (s.startsWith("$((", p.i)) {
-      let n = 0;
-      for (; p.i < s.length; p.i++) { if (s[p.i] === "(") n++; else if (s[p.i] === ")" && --n === 0) break; }
-      if (p.i >= s.length) throw new ParseError("unclosed $((");
-      p.i++; dyn = unexp = true; return;
+    // A substitution inside $((...)) or ${...} is parsed as any other (#36); the word is then not only that substitution.
+    const inner = () => {
+      if (s[p.i] === "$" && s[cont(p.i + 1)] === "(") { dollar(); nested = true; return true; }
+      if (s[p.i] === "`") { backtick(); nested = true; return true; }
+      if (s[p.i] === "\\") p.i++;
+      return false;
+    };
+    const a = cont(p.i + 1);
+    if (s[a] === "(" && s[cont(a + 1)] === "(") {
+      // Arithmetic only when its matching close is )) (backslash-newlines removed), as bash reads it; else it is $( and a
+      // subshell (#37): what the arithmetic reading parsed is dropped and the body parsed as commands. Bash skips quoted
+      // text while matching and then expands the body as in double quotes, so a $(...) or `...` even in '...' runs: with a
+      // quote in the body the guard keeps what both readings parse, arithmetic and subshell.
+      const from = p.cmds.length, ns = subs.length, nn = nested, cx = p.f.complex;
+      let n = 0, quoted = false, end = -1;
+      for (p.i = a; p.i < s.length; p.i++) {
+        if (inner()) p.i--;
+        else if (s[p.i] === "'" || s[p.i] === '"' || s.startsWith("$'", p.i)) {
+          const ansi = s[p.i] === "$";   // $'...': a backslash escapes the next character, \' included
+          if (ansi) p.i++;
+          const qc = s[p.i];
+          quoted = true;
+          for (p.i++; p.i < s.length && s[p.i] !== qc; p.i++) if ((qc === '"' || ansi || s[p.i] !== "\\") && inner()) p.i--;
+          if (p.i >= s.length) throw new ParseError("unclosed quote in $((");
+        }
+        else if (s[p.i] === "(") n++;
+        else if (s[p.i] === ")" && --n === 0) { end = p.i + 1; break; }
+        else if (s[p.i] === ")" && n === 1) { if (s[cont(p.i + 1)] !== ")") break; p.i = cont(p.i + 1) - 1; }
+      }
+      if (end < 0 && p.i >= s.length) throw new ParseError("unclosed $((");
+      if (end >= 0 && !quoted) { p.i = end; dyn = unexp = true; return; }
+      if (!quoted) { p.cmds.length = from; subs.length = ns; nested = nn; p.f.complex = cx; }
+      p.i = a + 1; sub();
+      // Both readings must close at the same place, or text between the two closes is parsed by neither: deny.
+      if (end >= 0 && p.i !== end) throw new ParseError("$(( closes differently as arithmetic and as a subshell");
+      return;
     }
-    if (s[p.i + 1] === "(") { p.i += 2; sub(); return; }
+    if (s[a] === "(") { p.i = a + 1; sub(); return; }
     let name = null;
-    if (s[p.i + 1] === "{") {
-      const e = s.indexOf("}", p.i);
-      if (e < 0) throw new ParseError("unclosed ${");
-      const inner = s.slice(p.i + 2, e);
+    if (s[a] === "{") {
+      const b = a + 1;
+      for (p.i = b; p.i < s.length && s[p.i] !== "}"; p.i++) if (inner()) p.i--;
+      if (p.i >= s.length) throw new ParseError("unclosed ${");
+      const e = p.i;
       p.i = e + 1;
-      if (/^[A-Za-z_]\w*$/.test(inner)) name = inner; else { dyn = unexp = true; return; }
+      if (/^[A-Za-z_]\w*$/.test(s.slice(b, e))) name = s.slice(b, e); else { dyn = unexp = true; return; }
     } else {
-      const m = /^[A-Za-z_]\w*/.exec(s.slice(p.i + 1));
-      if (m) { name = m[0]; p.i += 1 + name.length; }
-      else if (/^[0-9@*#?$!-]/.test(s[p.i + 1] ?? "")) { p.i += 2; dyn = unexp = true; return; }
+      const m = /^[A-Za-z_]\w*/.exec(s.slice(a));
+      if (m) { name = m[0]; p.i = a + name.length; }
+      else if (/^[0-9@*#?$!-]/.test(s[a] ?? "")) { p.i = a + 1; dyn = unexp = true; return; }
       else { p.i++; add("$"); return; }
     }
     dyn = true; vars++; names.push(name);
@@ -167,29 +223,63 @@ function word(p, depth) {
   };
   const backtick = () => {
     let j = p.i + 1, inner = "";
-    for (; j < s.length && s[j] !== "`"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; inner += s[j]; } else inner += s[j]; }
+    for (; j < s.length && s[j] !== "`"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; if (s[j] !== "\n") inner += s[j]; } else inner += s[j]; }
     if (j >= s.length) throw new ParseError("unclosed `");
     const q = { s: inner, i: 0, cmds: p.cmds, env: p.env, f: p.f }, from = p.cmds.length;
     list(q, depth + 1, null);
     subs.push([from, p.cmds.length]); dyn = unexp = true; p.i = j + 1;
   };
+  if (one) { dollar(); return null; }
   while (p.i < s.length) {
     const c = s[p.i];
     if ((c === "<" || c === ">") && s[p.i + 1] === "(") { p.i += 2; sub(); continue; }
+    // An extglob group (+( @( !( ?( *( after an unquoted, unescaped character of the word) stays in the word, to its
+    // matching ), and makes the word unreadable (#25). One holding an expansion, a quote or an escape is not parsed: a
+    // parse error. ( after a quoted, escaped or expanded +@!?* is a bash syntax error: a parse error too.
+    if (c === "(" && p.i > start && "+@!?*".includes(s[p.i - 1])) {
+      if (plainAt !== p.i - 1) throw new ParseError("( after a quoted or expanded glob character");
+      let n = 0, j = p.i;
+      for (; j < s.length; j++) {
+        if ("$`'\"\\".includes(s[j])) throw new ParseError("extglob group with an expansion or a quote");
+        if (s[j] === "(") n++; else if (s[j] === ")" && --n === 0) break;
+      }
+      if (j >= s.length) throw new ParseError("unclosed extglob group");
+      add(s.slice(p.i, j + 1)); p.i = j + 1; dyn = unexp = glob = ext = true; continue;
+    }
     if (META.has(c)) break;
-    if (c === "\\") { if (s[p.i + 1] !== "\n") add(s[p.i + 1] ?? ""); p.i += 2; continue; }
+    if (c === "\\") { if (s[p.i + 1] !== "\n") add(s[p.i + 1] ?? "\\"); p.i += 2; continue; }
     if (c === "'") {
       const e = s.indexOf("'", p.i + 1);
       if (e < 0) throw new ParseError("unclosed '");
       add(s.slice(p.i + 1, e)); p.i = e + 1; continue;
     }
-    if (c === "$" && s[p.i + 1] === "'") {
-      let j = p.i + 2, t = "";
-      const esc = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"', e: "\x1b", a: "\x07", "0": "\0" };
-      for (; j < s.length && s[j] !== "'"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; t += esc[s[j]] ?? "\\" + s[j]; } else t += s[j]; }
-      if (j >= s.length) throw new ParseError("unclosed $'");
-      add(t); p.i = j + 1; continue;
+    // $\<newline>'..' and $\<newline>".." are $'..' and $".." to bash (#37).
+    if (c === "$" && s[cont(p.i + 1)] === "'") {
+      // The end as bash's lexer finds it: a backslash escapes the next character, a quote too.
+      const q = cont(p.i + 1);
+      let e = q + 1, t = "";
+      while (e < s.length && s[e] !== "'") e += s[e] === "\\" ? 2 : 1;
+      if (e >= s.length) throw new ParseError("unclosed $'");
+      const b = s.slice(q + 1, e);
+      // Every ANSI-C escape decoded as bash does (#31, #33): an unknown one (\z, \x without a digit) and a closing \c stay as
+      // written; \c\\ is one control character; a NUL ends the segment. A value beyond ASCII is a raw byte or depends on the
+      // locale: the word is unreadable.
+      const esc = { a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
+      for (let j = 0; j < b.length; j++) {
+        if (b[j] !== "\\" || j + 1 >= b.length) { t += b[j]; continue; }
+        const m = /^(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|c(.))/s.exec(b.slice(j + 1, j + 10));
+        if (!m) { j++; t += esc[b[j]] ?? "\\" + b[j]; continue; }
+        j += m[0].length;
+        if (m[5] === "\\" && b[j + 1] === "\\") j++;
+        let n;
+        if (m[5] === undefined) { n = parseInt(m[1] ?? m[2] ?? m[3] ?? m[4], m[1] ? 8 : 16); if (m[1] || m[2]) n &= 255; }
+        else n = m[5] === "?" ? 0x7f : m[5].charCodeAt(0) > 0x7f ? 0x80 : m[5].toUpperCase().charCodeAt(0) & 31;
+        if (n > 0x7f) dyn = unexp = true; else t += String.fromCharCode(n);
+      }
+      add(t.split("\0")[0]); p.i = e + 1; continue;
     }
+    // A locale string $"..." is a double-quoted string to bash: the $ is dropped (#32).
+    if (c === "$" && s[cont(p.i + 1)] === '"') { p.i = cont(p.i + 1); continue; }
     if (c === '"') {
       p.i++;
       while (p.i < s.length && s[p.i] !== '"') {
@@ -204,15 +294,45 @@ function word(p, depth) {
     }
     if (c === "$") { dollar(); continue; }
     if (c === "`") { backtick(); continue; }
-    if (c === "~" && p.i === start && (p.i + 1 >= s.length || s[p.i + 1] === "/" || META.has(s[p.i + 1]))) {
-      lit += "~"; litChars++; p.i++;
-      if (p.env.HOME === undefined) unexp = true; else exp += p.env.HOME;
-      continue;
+    // A tilde prefix: at the word's start, or after the first = or an unquoted : of an assignment-shaped word (bash expands
+    // those in arguments too; after an escaped-looking \: it is unreadable). ~user, ~+ and ~- make the word unreadable; a quoted
+    // character after ~ leaves it literal.
+    const pre = c === "~" && /^[A-Za-z_]\w*\+?=/.test(s.slice(start, p.i)) ? s.slice(start, p.i) : null;
+    if (pre?.endsWith("\\:")) dyn = unexp = true;
+    if (c === "~" && (p.i === start || /^[A-Za-z_]\w*\+?=$/.test(pre ?? "") || /[^\\]:$/.test(pre ?? ""))) {
+      const n = s[p.i + 1];
+      if (n === undefined || n === "/" || META.has(n) || (n === ":" && p.i > start)) {
+        lit += "~"; litChars++; p.i++;
+        if (p.env.HOME === undefined) unexp = true; else exp += p.env.HOME;
+        continue;
+      }
+      if (!"'\"\\$`".includes(n)) dyn = unexp = true;
     }
-    add(c); p.i++;
+    if (c === "*" || c === "?" || c === "[") glob = true;
+    plain.add(p.i);
+    add(c); plainAt = p.i++;
   }
   if (p.i === start) return null;
-  return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 ? subs[0] : null };
+  // A brace expansion ({a,b}, {a..b}) counts with the glob characters (#28), only where bash expands one (#35).
+  glob ||= expandsBraces(s, start, p.i, plain);
+  // glob: an unquoted *, ?, [, a brace expansion or an extglob group; ext: an extglob group.
+  return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), glob, ext, subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 && !nested ? subs[0] : null };
+}
+
+// Whether s[start, end) brace-expands: an unquoted { with its matching } and an unquoted , or .. at its top level (#35);
+// plain holds the positions of the unquoted, unescaped characters. {}, {a} and x{a,b stay literal, as in bash.
+function expandsBraces(s, start, end, plain) {
+  for (let i = start; i < end; i++) {
+    if (s[i] !== "{" || !plain.has(i)) continue;
+    let n = 0, top = false;
+    for (let j = i; j < end; j++) {
+      if (!plain.has(j)) continue;
+      if (s[j] === "{") n++;
+      else if (s[j] === "}" && --n === 0) { if (top) return true; break; }
+      else if (n === 1 && (s[j] === "," || (s[j] === "." && s[j + 1] === "." && plain.has(j + 1)))) top = true;
+    }
+  }
+  return false;
 }
 
 // ---------- command resolution ----------
@@ -421,6 +541,8 @@ function gitSplit(args, cwd, op) {
   let i = 0, dir = cwd, config = false, redirect = false;
   while (i < args.length) {
     const a = args[i].lit;
+    // A glob or brace word among the global options, their values or as the subcommand may expand to any subcommand (#34).
+    if (args[i].glob || (["-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace"].includes(a) && args[i + 1]?.glob)) return { bad: "a glob or brace word", glob: true };
     if (a === null) return { bad: "a dynamic git option" };
     if (a === "-C") {
       const d = args[i + 1]?.exp;
@@ -1021,6 +1143,9 @@ const short = (s) => (s === "@" ? "HEAD" : /^(heads|tags)\//.test(s) ? `refs/${s
 function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   let force = false, del = false, wide = false, other = false, unknown = false;
   const pos = [];
+  // A word with an unquoted glob character, { or extglob group may expand to any option or refspec (-f, +main, main); a push
+  // never needs one, so it is denied in every mode (#27, #28, #29).
+  const glob = rest.some((w) => w.glob);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;
     if (a === null) { pos.push(null); continue; }
@@ -1050,6 +1175,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   const flag = force ? " --force" : del ? " --delete" : "";
   const f = (cls, what, dst, more = {}) => add({ cls, what, sub: "push", action: `git push${flag} → ${rs}/${safe(dst ?? "?")}`, refs: [`${rs}/${safe(dst ?? "?")}`], dst, cmd, dir, ...more });
   const dstOf = (s) => (s == null ? null : s.includes(":") ? s.slice(s.indexOf(":") + 1) : s.replace(/^\+/, ""));
+  if (glob) return f("destructive", "push with a glob or brace word", null);
   if (force || specs.some((s) => s?.startsWith("+"))) return f("destructive", "force push", dstOf(specs.find((s) => s !== "") ?? null));
   const dels = (del ? specs : specs.filter((s) => s !== null && s.startsWith(":")).map((s) => s.slice(1))).map((s) => (s === null ? s : short(s)));
   if (del || dels.length) {
@@ -1152,6 +1278,7 @@ const REMOTE_WRITES = new Set(["add", "set-url", "set-head", "set-branches", "re
 function gitOut(r, st, getCtx, add, depth, loose = false) {
   const g = gitSplit(r.args, st.cwd, false);
   gitConfigOut(r.args, add);
+  if (g.glob) return add({ cls: "destructive", what: "git with a glob or brace word before or as the subcommand", sub: "git", action: "git", refs: [], cmd: null });
   if (g.bad) return add({ cls: "shared", what: "git with an option it cannot read", sub: "git", action: "git", refs: [], cmd: null });
   if (!g.sub) { if (r.xargs) add({ cls: "shared", what: "git with arguments it cannot read", sub: "git", action: "git", refs: [], cmd: null }); return; }
   const sub = g.sub, rest = g.rest, shared = (what) => add({ cls: "shared", what, sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
@@ -1546,7 +1673,11 @@ const noteFile = (rel) => {
 const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
-const hasGlob = (s) => /[*?[{]/.test(s);
+// An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
+const hasGlob = (s) => /[*?[{]|[+@!]\(/.test(s);
+const EXTGLOB = /[+@!?*]\(/;
+// A line that may change glob matching (shopt, BASHOPTS): its every glob is shared (#25). No set option widens matching.
+const GLOB_OPTS = /shopt|BASHOPTS/;
 // A pattern with its {a,b} alternatives expanded (at most 64; null beyond: the caller takes the stricter answer).
 // A group with no comma, or with no closing }, is literal, as in bash; the next group still expands.
 function braces(s, n = 0, from = 0) {
@@ -1569,7 +1700,7 @@ function braces(s, n = 0, from = 0) {
 // equivalence or collating form), and brace groups with a comma, no ~ and no {a..b} sequence (a group with no comma and
 // no .. is literal). Any other form is shared: bash may expand it to a path the matcher does not see.
 function globExact(s) {
-  if (s.includes("~") || /\[[:=.]/.test(s)) return false;
+  if (s.includes("~") || /\[[:=.]/.test(s) || EXTGLOB.test(s)) return false;
   for (let i = s.indexOf("{"); i >= 0; i = s.indexOf("{", i + 1)) {
     let depth = 0, j = i, comma = false;
     for (; j < s.length; j++) {
@@ -1588,9 +1719,10 @@ function segMatch(p, s, i = 0, k = 0) {
     if (k >= s.length) return false;
     if (p[i] === "?") continue;
     if (p[i] === "[") {
-      const end = p.indexOf("]", i + 2);
+      // A ] right after [ or [! / [^ is a set character, as in bash (#25).
+      const neg = p[i + 1] === "!" || p[i + 1] === "^", end = p.indexOf("]", i + (neg ? 3 : 2));
       if (end > 0) {
-        const neg = p[i + 1] === "!" || p[i + 1] === "^", set = p.slice(neg ? i + 2 : i + 1, end);
+        const set = p.slice(neg ? i + 2 : i + 1, end);
         let hit = false;
         for (let c = 0; c < set.length; c++) {
           if (set[c + 1] === "-" && c + 2 < set.length) { if (s[k] >= set[c] && s[k] <= set[c + 2]) hit = true; c += 2; } else if (s[k] === set[c]) hit = true;
@@ -1632,9 +1764,15 @@ function claudeWrite(cmds, st, dirs) {
   const names = [...new Set([...dirs, ...[st.env?.HOME && join(st.env.HOME, ".claude"), st.env?.CLAUDE_CONFIG_DIR].filter((d) => typeof d === "string" && isAbsolute(d))])];
   const hit = (w, base = st.cwd) => {
     const e = expOf(w, st);
+    // A word with an extglob group cannot be resolved: it names ~/.claude in its text, else it is shared (#25).
+    if (w.ext) {
+      if (w.raw.includes(".claude")) return w.raw;
+      st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      return null;
+    }
     if (e != null && hasGlob(e)) {
       if (globUnder(e, base, names) || w.raw.includes(".claude")) return w.raw;
-      if (!globExact(e)) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      if (!globExact(e) || st.globOpts) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
       return null;
     }
     if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
@@ -1647,6 +1785,8 @@ function claudeWrite(cmds, st, dirs) {
     assigns(cmd, r, st);
     const text = [...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join(" ");
     if (!r) continue;
+    // A shopt (or a program it cannot tell) may change glob matching for the rest of the line (#25).
+    if (r.dynamic || r.name === "shopt") st.globOpts = true;
     if (r.dynamic) { if (text.includes(".claude")) return text; continue; }
     if (r.name === "cd" || r.name === "pushd") {
       const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
@@ -1668,7 +1808,7 @@ function claudeWrite(cmds, st, dirs) {
     if (r.xargs && (targets.length || r.name in WRITERS) && text.includes(".claude")) return r.name;
     for (const t of targets) { const h = hit(t); if (h) return h; }
     // Every cp operand with a glob counts (#22); ln checks all its operands below.
-    if (r.name === "cp") for (const t of positionals(r.args, WRITERS.cp.opts)) { if (t.exp != null && hasGlob(t.exp)) { const h = hit(t); if (h) return h; } }
+    if (r.name === "cp") for (const t of positionals(r.args, WRITERS.cp.opts)) { if (t.ext || (t.exp != null && hasGlob(t.exp))) { const h = hit(t); if (h) return h; } }
     // A link to a ~/.claude path (ln in any mode, cp -s or -l) is a way to write it later: every operand counts.
     if (r.name === "ln" || (r.name === "cp" && r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit)))) {
       const pos = positionals(r.args, WRITERS[r.name].opts);
@@ -1774,7 +1914,7 @@ export function guard(input, env = {}, ctx = null) {
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
   const links = [];
-  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links }, dirs);
+  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links, globOpts: GLOB_OPTS.test(ti.command) }, dirs);
   if (w) return stateDeny("write to ~/.claude", safe(w), input);
   const go = goSession(input, env);
   const out = classifyOutward(cmds, ti.command, cwd, env, getCtx);

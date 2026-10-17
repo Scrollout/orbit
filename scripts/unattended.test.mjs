@@ -8,9 +8,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FAIL, guard, realCtx } from "../hooks/guard.mjs";
+import { spawnSync } from "node:child_process";
+import { FAIL, guard, parseShell, realCtx } from "../hooks/guard.mjs";
 import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
-import { onPrompt } from "../hooks/unattended.mjs";
+import { onPrompt, parentTerminal } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
 import { plan } from "./tracker.mjs";
 
@@ -625,4 +626,316 @@ test("#24 row 2: any gh call under xargs, find -exec, fd -x or parallel is share
     }
     attendedAsk(env, ["xargs -a a.txt gh issue", "xargs -I{} -a a.txt gh pr {} 1", "find . -exec gh pr view {} \\;", "find . -execdir gh issue view {} \\;", "fd -x gh issue view", "fd -X gh pr view", "parallel gh pr view ::: 1"]);
   });
+});
+
+// ---------- Orbit #25: guard residuals accepted at 0.21.0 ----------
+test("#25 row 1: a line with shopt shares every glob operand", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of [
+        "shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json", "bash -c 'shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json'",
+        "eval 'shopt -s nocaseglob'; echo x > ~/.CLAUD?/settings.json", "sh''opt -s nocaseglob; cp x ~/.CLAUD?/settings.json",
+        "BASHOPTS=nocaseglob bash -c 'cp x ~/.CLAUD?/settings.json'", "x=shopt; $x -s nocaseglob; cp x ~/.CLAUD?/settings.json",
+      ]) assert.notEqual(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      for (const c of ["rm *.log", "cp x ~/.CLAUD?/settings.json"]) assert.equal(guard(bash(c, { ...who, cwd: c === "rm *.log" ? repo : h }), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
+
+test("#25 row 2: an extglob form is a glob the matcher does not model (shared)", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ["cp x ~/.@(claude)/settings.json", "echo x > ~/.+(c)laude/settings.json", "ln -sf x ~/.!(x)laude/settings.json", "cp x ~/.?(c)laude/settings.json", "cp x ~/.*(c)laude/settings.json", "echo x > \"a+(b)\""]) assert.notEqual(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      for (const c of ["echo \"a+(b)\"", "echo x > a+b", "echo x > \"a?b\""]) assert.equal(guard(bash(c, { ...who, cwd: repo }), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
+
+test("#25 row 3: ] first in a negated set is a set character, as in bash", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ["echo x > ~/.[!]x]laude/settings.json", "echo x > ~/.[^]x]laude/settings.json"]) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+      // [!]c] excludes c; [!]laude has no closing ] after the set, so it is literal: neither names ~/.claude.
+      for (const c of ["echo x > ~/.[!]c]laude/settings.json", "echo x > ~/.[!]laude/settings.json"]) assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
+
+// ---------- Orbit #25 send-back and #27: extglob groups, set, glob refspecs ----------
+test("#25 fix 1: an extglob group holding a substitution, a backtick or a quote is unreadable, never silent", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ["shopt -s extglob\necho @($(echo x > ~/.claude/settings.json))", "shopt -s extglob\nx=@($(rm -rf ~/.claude))", "echo @(\"x\"$(echo x > ~/.claude/s))"]) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+    }
+    attendedAsk(env, ["shopt -s extglob\necho @($(git push --force origin main))", "echo +(a|`git push -f`) ok", "shopt -s extglob\necho @($(gh release delete v1))", "shopt -s extglob\necho @($(gh pr merge 1))", "echo @('x'|git push origin main)"]);
+  });
+});
+
+// #29: a git push word with an unquoted glob character, { or extglob group may expand to any option or refspec; a push never
+// needs one, so it is denied in every mode (0.21.1 changed the ask for m?in, {main,feat} and @(main) to a deny).
+const denyEvery = (env, cmds) => {
+  for (const m of ["default", "bypassPermissions", "dontAsk", undefined]) {
+    const who = { ...MAIN, ...(m ? { permission_mode: m } : {}) };
+    for (const c of cmds) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+  }
+};
+
+test("#25 fix 2: a push target holding an extglob group is a glob word: denied in every mode (#29)", () => {
+  withGo((env) => denyEvery(env, ["git push origin @(main)", "git push origin HEAD:@(main)", "git push origin +(main)"]));
+});
+
+test("#25 fix 5: an escaped, quoted or expanded glob character before ( is no extglob group (fails closed)", () => {
+  withGo((env) => attendedAsk(env, ["echo \\*(git push origin main)", "echo $?(git push origin main)", "echo '*'(git push origin main)"]));
+});
+
+test("#25 fix 3: set (any -o/+o or short flags) does not share globs; shopt still does", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: repo, permission_mode: m };
+      for (const c of ["set -euo pipefail; rm *.log", "set -o posix; rm *.log", "set +o noglob; rm *.log"]) assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      assert.notEqual(guard(bash("shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json", { ...who, cwd: h }), env, ctx()), null, `${m}: shopt`);
+    }
+  });
+});
+
+test("#27/#28/#29: any unquoted glob or brace word in git push is denied in every mode; quoted or escaped ones stay names", () => {
+  withGo((env, h) => {
+    denyEvery(env, [
+      "git push origin m?in", "git push origin ma[i]n", "git push origin HEAD:m?in", "git push origin ma*", "git push origin -- m?in",
+      "git push origin {main,feat}", "git push origin {main..main}", "git push origin HEAD:{main,x}", "git push origin -- {main,x}",
+      "git push origin +ma?n", "git push origin +feat*", "git push origin +HEAD:{feat,x}", "git push origin -- +feat*", "git push -f* origin feat",
+      "git push -{f,} origin feat", "git push --force-with-lease={a,b} origin feat", "git push --force-with-lease=feat:{abc} origin feat", "git push origin {+feat,x}",
+      "git push origin {-f,feat}", "git push origin {feat,-f}", "git push origin {,-f}", "git push origin {x,{y,-f}}", "git push origin {--force,feat}",
+      "git push origin {\\-f,x}", "git push origin {x,\\-f}", "git push origin {x,\"-f\"}", "git push origin -- {-f,x}", "git -C /r/merge push origin {x,-f}",
+      "git push origin [+]main", "git push origin [-]f",
+      "git push origin {,}-f feat", "git push origin {,}+main", "git push origin {x,{,}-f}", "git push origin {x,$'\\x2df'}", "git push origin []+]main",
+      "git push origin [!a]main", "git push origin [[:punct:]]main", "git push origin ?main", "git push origin --delete ma?n", "git push -o {a,b} origin feat",
+    ]);
+    const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
+    for (const c of ["git push origin feat", "git push -u origin feat", "git push origin HEAD:refs/heads/feat", "git push origin '{-f,x}'", "git push origin \"{-f,x}\"", "git push origin \\{-f,x\\}", "git push origin 'x{y}'", "git push origin x\\{y\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
+    // Braces outside git push keep their result.
+    for (const c of ["echo {a,b}", "find . -name '*.go' -exec gofmt -l {} +", "mkdir -p x/{a,b}", "git log --format=%H -n1 HEAD@{1}"]) assert.equal(guard(bash(c, { ...MAIN, cwd: h, permission_mode: "default" }), env, ctx()), null, `stays silent: ${c}`);
+  });
+});
+
+test("#31: $'...' decodes every ANSI-C escape as bash does, so a force option or +refspec spelled with escapes is denied", () => {
+  withGo((env) => {
+    denyEvery(env, ["git push origin $'\\x2df'", "git push origin $'-f'", "git push origin $'\\053main'", "git push $'\\055\\055force' origin feat", "git push origin $'\\u002bmain'", "git push origin $'\\U0000002Bmain'", "git push origin $'\\0'-f"]);
+    const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
+    assert.equal(guard(bash("git push origin $'feat'", { ...MAIN, permission_mode: "default" }), env, branch), null, "a plain $'feat' stays silent");
+  });
+});
+
+test("#32: a locale string $\"...\" drops its $, so a force option, +refspec or protected write spelled with it is denied", () => {
+  withGo((env, h) => {
+    denyEvery(env, ['git push origin $"+main"', 'git push $"-f" origin feat', 'git push origin $"--force" feat']);
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ['echo x > "$HOME/.claude/settings.json"', 'echo x > $"$HOME/.claude/settings.json"']) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+    }
+    assert.equal(parseShell('$"-f"x"$"')[0].words[0].lit, "-fx$");
+  });
+});
+
+test("#33: $'...' forms bash accepts are decoded or only that word is unreadable; a destructive push in the line is still denied", () => {
+  withGo((env) => denyEvery(env, ["git push origin +main; echo $'\\c\\\\'", "git push origin +main; echo $'a\\c'", "git push origin +main; echo $'\\U110000'", "echo $'\\c'; git push -f origin feat"]));
+  const lit = (w) => parseShell(`echo ${w}`)[0].words[1].lit;
+  assert.equal(lit("$'\\c\\\\'"), "\x1c");
+  assert.equal(lit("$'\\c\\\\x'"), "\x1cx");
+  assert.equal(lit("$'a\\c'"), "a\\c");
+  assert.equal(lit("$'\\U110000'"), null);
+});
+
+test("#34: a glob or brace word among git's global options or as the subcommand is denied in every mode", () => {
+  withGo((env) => {
+    denyEvery(env, ["git -C {.,push} origin +main", "git {-C,.} push --force origin feat", "git -C . pu{s,}h origin +main", "git -C . p[u]sh origin +main",
+      "git -c {x.y=z,push} origin +main", "git --git-dir {.git,push} origin +main", "git -[C] . push origin +main", "git p?sh origin +main"]);
+    const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
+    for (const c of ["git -C /r push origin feat", "git -c x=y push origin feat"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
+  });
+});
+
+test("#35: only a word bash brace-expands is a brace word: {} placeholders after git -C stay allowed; {a,b}, {1..3}, {,} stay denied", () => {
+  withGo((env, h) => {
+    denyEvery(env, ["git -C {a,b} status", "git -C {1..3} status", "git -C . {,}status", "git -C {{a,b} status"]);
+    for (const m of ["default", "bypassPermissions"]) {
+      for (const c of ["ls -d */ | xargs -I{} git -C {} status", "find . -maxdepth 1 -type d -exec git -C {} status ';'", "git -C {a} status", "git -C x{a,b status"]) {
+        assert.equal(guard(bash(c, { ...MAIN, cwd: h, permission_mode: m }), env, ctx()), null, `${m}: ${c}`);
+      }
+    }
+  });
+});
+
+test("#36: a command substitution inside an unquoted here-doc, ${...} or $((...)) is checked as a bare one; a quoted here-doc stays inert", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const s of ["git push -f origin feat", "echo x > ~/.claude/settings.json"]) {
+        const bare = kind(guard(bash(`echo $(${s})`, who), env, ctx()));
+        assert.notEqual(bare, "allow", `${m}: bare ${s}`);
+        for (const c of [`cat <<EOF\nmsg $(${s})\nEOF`, `cat <<-EOF\n\t\`${s}\`\n\tEOF`, `echo \${x:-$(${s})}`, `echo "\${x:-$(${s})}"`, `echo \${x:-\`${s}\`}`, `echo $((1 + $(${s})))`, `echo $((\`${s}\`))`]) {
+          assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${c}`);
+        }
+        assert.equal(guard(bash(`cat <<'EOF'\n$(${s})\nEOF`, who), env, ctx()), null, `${m}: quoted here-doc ${s}`);
+      }
+      for (const c of ["cat <<EOF\nFix the parser\n\nCo-Authored-By: X <x@example.com>\nEOF", "cat <<EOF\nhome $HOME, ${x:-y}, $((1+2))\nEOF", "echo ${x:-y} $((1+2)) ${#x}"]) {
+        assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${c}`);
+      }
+      for (const c of ["cat <<EOF\n$(git push -f origin feat (\nEOF", "echo ${x:-$(git push -f origin feat (}", "echo $(( $(git push -f origin feat ( ))"]) assert.notEqual(kind(guard(bash(c, who), env, ctx())), "allow", `${m}: unparsable ${c}`);
+    }
+  });
+});
+
+test("#36: a backslash-newline is removed before parsing, in a here-doc body, ${...}, double quotes and backticks", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const s of ["git push -f origin feat", "echo x > ~/.claude/settings.json"]) {
+        const bare = kind(guard(bash(`echo $(${s})`, who), env, ctx())), cs = s.replace(" ", " \\\n");
+        assert.notEqual(bare, "allow", `${m}: bare ${s}`);
+        for (const c of [`cat <<EOF\n$\\\n(${s})\nEOF`, `echo "\${x:-$\\\n(${s})}"`, `echo \${x:-$\\\n(${s})}`, `echo "$\\\n(${s})"`, `echo $((1 + $\\\n(${s})))`,
+          `echo \`${cs}\``, `cat <<EOF\n\`${cs}\`\nEOF`, `echo "\`${cs}\`"`]) {
+          assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${JSON.stringify(c)}`);
+        }
+        assert.equal(guard(bash(`cat <<'EOF'\n$\\\n(${s})\nEOF`, who), env, ctx()), null, `${m}: quoted here-doc ${s}`);
+      }
+      for (const c of ["cat <<EOF\nFix the parser\n\nCo-Authored-By: X <x@example.com>\nEOF", "cat <<EOF\nFix the parser, \\\nand the docs\nEOF", "cat <<EOF\nhome $\\\nHOME\nEOF"]) {
+        assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${JSON.stringify(c)}`);
+      }
+    }
+  });
+});
+
+test("#37: $(( ... ) ) without a closing )) is $( and a subshell; $\\<newline>'..' and $\\<newline>\"..\" are $'..' and $\"..\"", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const s of ["git push -f origin feat", "echo x > ~/.claude/settings.json"]) {
+        const bare = kind(guard(bash(`echo $(${s})`, who), env, ctx()));
+        assert.notEqual(bare, "allow", `${m}: bare ${s}`);
+        for (const c of [`echo $((${s}) )`, `echo $(\\\n(${s}) )`, `echo $\\\n((${s}) )`, `echo "$((${s}) )"`, `cat <<EOF\n$((${s}) )\nEOF`,
+          `echo $(( $((${s}) ) ))`, `echo \${x:-$((${s}) )}`, `echo $((echo "))"; ${s}) )`, `echo $((echo ')'; ${s}) )`,
+          // a quote in $(( does not drop the arithmetic reading: bash expands '$(...)' in it and runs it
+          `echo $(( '$(${s})' ))`, `cat <<EOF\n$(( '$(${s})' ))\nEOF`, `echo $(( x '$(${s})' ))`, `echo "$(( '$(${s})' ))"`]) {
+          assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${JSON.stringify(c)}`);
+        }
+        // $'\'' in $(( is one quoted quote; where the arithmetic and subshell closes differ, nothing between is skipped
+        const c = `echo $(( $'\\'' ))\n${s}\necho ' ))`;
+        assert.notEqual(kind(guard(bash(c, who), env, ctx())), "allow", `${m}: ${JSON.stringify(c)}`);
+      }
+      const force = kind(guard(bash("git push origin -f feat", who), env, ctx()));
+      assert.notEqual(force, "allow", `${m}: bare -f`);
+      for (const c of ["git push origin $\\\n'-f' feat", 'git push origin $\\\n"-f" feat', "git push origin $\\\n'\\x2d'f feat"]) {
+        assert.equal(kind(guard(bash(c, who), env, ctx())), force, `${m}: ${JSON.stringify(c)}`);
+      }
+      for (const c of ["echo $((1+2))", "echo $(( $(date +%s) - 1 ))", "echo $(((1+2)*3))", "echo $(( (1+2) ))", "echo $(\\\n(1+2)\\\n)", "cat <<EOF\n$((1+2))'s\nEOF", "git push origin $\\\n'feat'",
+        'echo $(( "1" + 2 ))', "echo $(( '1' ))", 'git log -n $(( "$n" * 2 ))', 'echo $(( "1" > 2 ))']) {
+        assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${JSON.stringify(c)}`);
+      }
+    }
+  });
+});
+
+// #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2], opens?: [target0, ...] } (opens: what opening the fd
+// yields, when it changed after the readlink); devs: path -> { char, uid }. parentTerminal returns an open fd: pt maps it back.
+function fakeProc(procs, devs) {
+  const no = () => { throw new Error("ENOENT"); };
+  const open = [], dev = (fd) => devs[open[fd - 100]] ?? no();
+  return {
+    readlinkSync: (p) => {
+      const [, pid, fd] = /^\/proc\/(\d+|self)\/fd\/(\d+)$/.exec(p) ?? [];
+      return pid === "self" ? open[fd - 100] ?? no() : procs[pid]?.fd[fd] ?? no();
+    },
+    readFileSync: (p) => { const pid = /^\/proc\/(\d+)\/stat$/.exec(p)?.[1]; return procs[pid] ? `${pid} (a) b) S ${procs[pid].ppid} 1 1 0 -1` : no(); },
+    openSync: (p) => { const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d)$/.exec(p) ?? []; const t = procs[pid]?.opens?.[fd] ?? procs[pid]?.fd[fd] ?? no(); return open.push(t) + 99; },
+    fstatSync: (fd) => { const d = dev(fd); return { isCharacterDevice: () => d.char, uid: d.uid }; },
+    isatty: (fd) => dev(fd).char,
+    closeSync: () => {},
+    open,
+  };
+}
+const pt = (procs, devs, pid, uid) => { const f = fakeProc(procs, devs), fd = parentTerminal(f, pid, uid); return fd === null ? null : f.open[fd - 100]; };
+
+test("#30: parentTerminal opens the first parent's own pts or tty; pipes, files, /dev/null, other users, swapped fds and deep or looping chains give none", () => {
+  const devs = { "/dev/pts/3": { char: true, uid: 7 }, "/dev/pts/4": { char: true, uid: 7 }, "/dev/pts/9": { char: true, uid: 0 }, "/dev/null": { char: true, uid: 7 }, "/home/u/f": { char: false, uid: 7 }, "/dev/tty2": { char: true, uid: 7 } };
+  const chain = { 40: { ppid: 30, fd: ["pipe:[5]", "/dev/null", "/home/u/f"] }, 30: { ppid: 20, fd: ["socket:[6]", "/dev/pts/9", "/dev/ptmx"] }, 20: { ppid: 10, fd: ["/dev/null", "/dev/pts/3"] }, 10: { ppid: 1, fd: ["/dev/pts/4"] } };
+  assert.equal(pt(chain, devs, 40, 7), "/dev/pts/3", "the nearest parent with a terminal of this user");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/tty2"] } }, devs, 5, 7), "/dev/tty2");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"] } }, { "/dev/pts/3": { char: false, uid: 7 } }, 5, 7), null, "not a character device");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"], opens: ["/home/u/f"] } }, devs, 5, 7), null, "the fd changed to a file after the readlink: the opened fd is checked");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"], opens: ["/dev/null"] } }, devs, 5, 7), null, "the fd changed to /dev/null after the readlink");
+  assert.equal(pt({ 40: chain[40], 30: { ...chain[30], ppid: 1 } }, devs, 40, 7), null, "pipe, file, /dev/null, socket, ptmx, another user's pts");
+  const deep = { 50: { ppid: 49, fd: [] }, 49: { ppid: 48, fd: [] }, 48: { ppid: 47, fd: [] }, 47: { ppid: 46, fd: [] }, 46: { ppid: 1, fd: ["/dev/pts/3"] } };
+  assert.equal(pt(deep, devs, 50, 7), null, "at most 4 parents");
+  assert.equal(pt({ 8: { ppid: 8, fd: ["pipe:[1]"] } }, devs, 8, 7), null, "a loop ends");
+  assert.equal(pt({}, devs, 8, 7), null, "no /proc (macOS)");
+});
+
+// #30: Claude Code runs the hook with no controlling terminal (new session, stdio piped), so /dev/tty fails. A real pty plays the
+// owner's terminal: an orphaned "Claude Code" (no outer terminal in its parent chain) holds it as stdio and controlling terminal and
+// starts the hook in a new session with piped stdio, as Claude Code does. Mode "none": the same without any terminal.
+const PTY_HARNESS = String.raw`
+import os, sys, pty, fcntl, termios, subprocess, time, select
+mode, root, home, inp, out = sys.argv[1:6]
+master, slave = pty.openpty()
+if os.fork() == 0:
+    os.setsid()
+    mid = os.getpid()
+    if os.fork(): os._exit(0)
+    while os.getppid() == mid: time.sleep(0.01)
+    os.setsid()
+    if mode == "pty":
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+        for fd in (0, 1, 2): os.dup2(slave, fd)
+    else:
+        os.dup2(os.open("/dev/null", os.O_RDWR), 0)
+        r, w = os.pipe(); os.dup2(w, 1)
+        os.dup2(os.open(out + ".file", os.O_WRONLY | os.O_CREAT, 0o600), 2)
+    os.close(master); os.close(slave)
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=root, HOME=home)
+    p = subprocess.run(["sh", "-c", 'sh "$CLAUDE_PLUGIN_ROOT/hooks/unattended.sh"'], input=open(inp, "rb").read(), capture_output=True, env=env, start_new_session=True)
+    open(out + ".stdout", "wb").write(p.stdout); open(out + ".stderr", "wb").write(p.stderr)
+    open(out + ".done", "w").close()
+    os._exit(0)
+os.close(slave)
+got, end = b"", time.time() + 20
+while time.time() < end:
+    if select.select([master], [], [], 0.2)[0]:
+        try: d = os.read(master, 4096)
+        except OSError: break  # no process holds the pty any more
+        got += d
+    elif os.path.exists(out + ".done"): break
+while not os.path.exists(out + ".done") and time.time() < end: time.sleep(0.05)
+open(out + ".tty", "wb").write(got)
+`;
+const ptySkip = process.platform !== "linux" || !existsSync("/proc/self/fd") ? "needs Linux /proc"
+  : spawnSync("python3", ["-c", "import pty, termios"]).status !== 0 ? "needs python3 with pty and termios" : false;
+
+test("#30: a real pty: the code reaches the terminal of the hook's parent, never the hook's output; confirm opens the go; no terminal, no code", { skip: ptySkip }, () => {
+  for (const mode of ["pty", "none"]) {
+    const h = home(), out = join(h, "run"), inp = join(h, "in.json");
+    try {
+      writeFileSync(inp, JSON.stringify(prompt("/orbit:unattended on 12h", { cwd: h, transcript_path: join(h, "t.jsonl") })));
+      const r = spawnSync("python3", ["-c", PTY_HARNESS, mode, repo, h, inp, out], { encoding: "utf8", timeout: 30_000 });
+      assert.equal(r.status, 0, r.stderr);
+      const tty = readFileSync(`${out}.tty`, "utf8"), stdout = readFileSync(`${out}.stdout`, "utf8"), stderr = readFileSync(`${out}.stderr`, "utf8");
+      const reason = JSON.parse(stdout).reason;
+      const code = /code: ([A-Z2-9]{4}-[A-Z2-9]{4})/.exec(tty)?.[1];
+      if (mode === "none") {
+        assert.equal(code, undefined, "no terminal anywhere: no code");
+        assert.match(reason, /cannot reach your terminal/);
+        assert.deepEqual(files(h), [], "nothing pending");
+        continue;
+      }
+      assert.ok(code, `the code is on the pty: ${JSON.stringify(tty)} / reason: ${reason}`);
+      assert.ok(!stdout.includes(code) && !stderr.includes(code) && !reason.includes(code), "the code is never in the hook's output");
+      assert.match(reason, /one-time code is on your terminal/);
+      onPrompt(prompt(`/orbit:unattended confirm ${code}`), { HOME: h });
+      assert.ok(goState({ session_id: SID, permission_mode: "bypassPermissions" }, { HOME: h }), "confirm with the pty code opens the go");
+    } finally { rmSync(h, { recursive: true, force: true }); }
+  }
 });

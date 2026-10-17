@@ -15,7 +15,10 @@ fixture warning '{ "name": "fx", "version": "1.0.0", "description": "fixture", "
 fixture error '{ "name": "fx", "version": "1.0.0"'
 rc=0
 sh "$script" "$d/clean" || { echo "plugin-validate.test.sh:1 the clean fixture failed"; rc=1; }
-sh "$script" "$d/warning" && { echo "plugin-validate.test.sh:1 a planted unknown warning passed"; rc=1; }
+# 2.1.288 prints the planted field as a warning ("Unknown field 'frobnicate'"), not an error: the count path must name it.
+w=$(sh "$script" "$d/warning" 2>&1) && { echo "plugin-validate.test.sh:1 a planted unknown warning passed"; rc=1; }
+printf '%s\n' "$w" | grep -q -E '^plugin-validate \.claude-plugin/plugin\.json: 2 warning\(s\), 1 of them the known' ||
+  { echo "plugin-validate.test.sh:1 the planted warning did not fail the Found N warning count"; rc=1; }
 sh "$script" "$d/error" && { echo "plugin-validate.test.sh:1 a plugin.json error passed"; rc=1; }
 # A warning printed in another form (no "Found N warning" line) fails too: a stub claude prints one. The toolbox's /tmp
 # is noexec, so the stub lives in ci/out (writable, ignored by git).
