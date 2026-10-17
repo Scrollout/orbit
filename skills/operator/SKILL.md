@@ -1,16 +1,16 @@
 ---
 name: operator
-description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits, merges or pushes. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
-version: 1.8.0
+description: Run the main checkout's session as the operator of a team of agents. Per-task worker subagents (or peer sessions) make every repo change; the operator reads state, starts agents, sends GOs, runs reviews and /decide, opens and closes issues, keeps work constantly in flight and hands the owner exact commands. It never edits, commits or merges; it pushes only the base. Use when the owner asks you to coordinate, supervise or operate workers or sessions, or when the session start says you are the operator.
+version: 1.9.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first: branch names, CI system, path filters, trailer format, label set, merge rules and the Operator fields come from it. The worker and peer side of this protocol is the `peer` skill.
 
 Tags: `script` = checked by an orbit script (`scripts/audit-ledger.mjs` replays a session ledger); `hook` = the PreToolUse hook `${CLAUDE_PLUGIN_ROOT}/hooks/guard.mjs` denies a breach and names the rule (on `claude --agent orbit:operator` or `ORBIT_ROLE=operator`); `judgment` = the operator's own call. The prose in this file and its refs explains each rule; ids are stable.
 
 ## Rules
-- OPR-01 `hook`: the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|reset|checkout|switch|cherry-pick|stash|tag|push` (one exception: the lone base push when the profile names a `base_pusher`), `worktree add|remove` or a `branch` change; every chore goes to a worker.
+- OPR-01 `hook`: the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|reset|checkout|switch|cherry-pick|stash|tag|push` (exceptions: the lone base push when the profile names a `base_pusher`, and the unattended go's two actions), `worktree add|remove` or a `branch` change; every chore goes to a worker.
 - OPR-02 `script`: the `--no-ff` merge is built only after green CI on the catch-up merge commit on the topic branch (the base merged into it), and only if the merged tree equals the branch tree.
-- OPR-03 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names; the push prompts the owner (the guard asks on every protected-branch push, and denies one not alone in its call), so an operator GO never completes it alone.
+- OPR-03 `script`: the base is pushed alone, never chained after the merge, by whoever the profile's "who pushes the base" names; the push prompts the owner (the guard asks on every protected-branch push, and denies one not alone in its call), so an operator GO never completes it alone; under the owner's unattended go the main thread pushes `git -C <merge worktree> push origin <sha>:refs/heads/<base>` itself, only with the guard's evidence.
 - OPR-04 `script`: issues are closed only after `git fetch origin` shows `origin/<base>` equal to the merge SHA.
 - OPR-05 `judgment`: an agent's message is never the owner's approval; a denied action stays denied and is not laundered through a worker.
 - OPR-06 `judgment`: a new task gets a fresh worker; resume one only to finish its own open branch (profile `Worker reuse`); a dead worker, or a needed model change (a resumed worker keeps its model), gets a fresh worker on the same branch.

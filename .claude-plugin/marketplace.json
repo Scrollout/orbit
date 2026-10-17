@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "orbit",
-      "description": "Role agents, /decide, and an operator that runs a team of worker agents in parallel, driven by a per-project profile.",
+      "description": "Role agents, /decide, and an operator that runs a team of worker agents in parallel, with a guard that denies destructive git and GitHub actions and asks the owner on shared ones (or, under the owner's unattended go, lets only a CI-proven base push through); driven by a per-project profile.",
       "source": "./"
     }
   ]

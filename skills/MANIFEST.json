@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.7.3",
-      "hash": "2675c81a0df18c045ed78d58d8985aed5379378138d0a46cadc6dc086ffd40d0",
+      "version": "1.7.4",
+      "hash": "5b5a257bd80d5dae5a7903e2a2a756a5678ef4154c429122bd0eece567fa4664",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -17,6 +17,13 @@
       "hash": "42241a1e639e148c559602c7185261f0f547762b0b7194f14dc811dda22fc07d",
       "files": [
         "commands/okf-init.md"
+      ]
+    },
+    "commands/unattended.md": {
+      "version": "1.0.0",
+      "hash": "324241009570f307ad963d68e33bffb6176d65901dd97d78b42c3d4bfa035084",
+      "files": [
+        "commands/unattended.md"
       ]
     },
     "skills/intent/SKILL.md": {
@@ -34,8 +41,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.8.0",
-      "hash": "698db6901233b90ea54a78e602ebfb6f6a81a2392247d5c4571dedae55dfe8bf",
+      "version": "1.9.0",
+      "hash": "f6914938fc97b4f335c5960958b9bc32c9275c21300b13ee82d866c60c6a058a",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -53,8 +60,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.13.2",
-      "hash": "f78ebee16812542edad8bb6ece3b8abe597755e2f6443acb0ddcea0551f5d41f",
+      "version": "1.14.0",
+      "hash": "ee29d27a1099058448dd22f98a049fc2790a630fa6b4644317533c7d8edf11e1",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -82,12 +89,15 @@
         "scripts/validate-okf.mjs",
         "hooks/capture.mjs",
         "hooks/capture.sh",
+        "hooks/go.mjs",
         "hooks/guard.mjs",
         "hooks/guard.sh",
         "hooks/hooks.json",
         "hooks/okf-check.sh",
         "hooks/okf-hook.mjs",
         "hooks/operator-context.sh",
+        "hooks/unattended.mjs",
+        "hooks/unattended.sh",
         "agents/architect.md",
         "agents/coder.md",
         "agents/designer.md",
@@ -167,9 +177,15 @@
         "scenarios/dec-14-ci-fix-after-rereview-ok/expect.json",
         "scenarios/dec-14-ci-fix-after-rereview-ok/ledger.jsonl",
         "scenarios/dec-14-ci-fix-after-rereview-ok/scenario.json",
+        "scenarios/dec-14-ci-fix-other-workflow-green-same-sha/expect.json",
+        "scenarios/dec-14-ci-fix-other-workflow-green-same-sha/ledger.jsonl",
+        "scenarios/dec-14-ci-fix-other-workflow-green-same-sha/scenario.json",
         "scenarios/dec-14-ci-fix-red-not-on-head/expect.json",
         "scenarios/dec-14-ci-fix-red-not-on-head/ledger.jsonl",
         "scenarios/dec-14-ci-fix-red-not-on-head/scenario.json",
+        "scenarios/dec-14-ci-fix-short-sha-push/expect.json",
+        "scenarios/dec-14-ci-fix-short-sha-push/ledger.jsonl",
+        "scenarios/dec-14-ci-fix-short-sha-push/scenario.json",
         "scenarios/dec-14-ci-fix-stale-red/expect.json",
         "scenarios/dec-14-ci-fix-stale-red/ledger.jsonl",
         "scenarios/dec-14-ci-fix-stale-red/scenario.json",

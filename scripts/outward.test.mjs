@@ -409,3 +409,105 @@ test("realCtx: aliases from .git/config, tags, the current branch, origin/HEAD a
     assert.equal(kind(guard({ cwd: d, permission_mode: "default", tool_name: "Bash", tool_input: { command: "git push origin HEAD:my-topic" } }, {}, spent)), "ask", "the stricter class");
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
+
+// Fix round 2 (re-review of aa0ae93, Orbit #11) and the gh classes of Orbit #9: each failing input gets its class.
+const FR2_DESTRUCTIVE = [
+  "find . -maxdepth 0 -exec sh -c 'git push -f origin HEAD:main' \\;",   // R6: git text inside an argument, forcing
+  "unbuffer sh -c 'git push --force origin HEAD:main'",
+  "parallel ::: 'git push --delete origin main'",
+  "find . -name test -exec git push -f origin HEAD:main \\;",            // N1: a data program name among the arguments
+  "find . -name cat -exec git push -f origin HEAD:main \\;",
+  "find . -name file -exec git push -f origin HEAD:main \\;",
+  "find . -name head -exec git push -f origin HEAD:main \\;",
+  "git send-pack --force-with-lease origin main",                        // N5
+  "git send-pack --force-if-includes origin main",
+  "gh api -X POST repos/o/r/transfer -f new_owner=x",                    // N4
+  "gh repo sync --force",
+  "gh repo sync o/r --force",
+  "gh repo deploy-key delete 5",
+  "gh secret delete TOKEN",                                              // #9
+  "gh variable delete X",
+  "gh ruleset delete 3",
+  "gh run delete 5",
+  "gh api -X POST repos/o/r/statuses/abc -f state=success",              // statuses and check runs: denied in every mode
+  "gh api repos/o/r/check-runs -f name=ci -f head_sha=abc",
+  "gh api -X PATCH repos/o/r/check-runs/7 -f conclusion=success",
+  "gh api graphql -f query='mutation { createCheckRun(input:{name:\"ci\"}) { clientMutationId } }'",
+];
+const FR2_SHARED = [
+  "parallel ::: 'git push origin HEAD:main'",                            // R6
+  "find . -maxdepth 0 -exec sh -c 'git push origin HEAD:main' \\;",
+  "unbuffer sh -c 'git push origin HEAD:main'",
+  "git fetch --upload-pack='git push -f origin HEAD:main; :' .",         // N2
+  "git ls-remote --upload-pack=x origin",
+  "git ls-remote -u x origin",
+  "git clone -u x https://example.com/r.git",
+  "git grep -O 'x' foo",
+  "git grep -nOecho foo",
+  "git grep --open-files=vi foo",
+  "git archive --exec=x --remote=origin HEAD",
+  "git fetch --upload-p=x origin",
+  "git pull --upload-pack=x origin main",
+  "GIT_SSH_COMMAND='sh -c \"git push -f origin HEAD:main\"; :' git fetch origin", // N3
+  "GIT_SSH=x git fetch",
+  "GIT_ASKPASS=x git fetch",
+  "GIT_EDITOR=vim git commit",
+  "GIT_SEQUENCE_EDITOR=x git rebase -i HEAD~2",
+  "GIT_EXTERNAL_DIFF=x git diff",
+  "GIT_PAGER=x git log",
+  "GIT_EXEC_PATH=/tmp/x git status",
+  "env GIT_SSH_COMMAND=x git fetch",
+  "gh api -X PUT repos/o/r/collaborators/x",                             // N4
+  "gh api -X POST repos/o/r/keys -f key=x",
+  "gh api -X POST repos/o/r/hooks -f name=web",
+  "gh api -X POST repos/o/r/pulls/4/reviews -f event=APPROVE",
+  "gh api -X PUT repos/o/r/actions/permissions -f enabled=false",
+  "gh repo deploy-key add k.pub",
+  "gh repo sync",
+  "gh pr review 4 --approve",                                            // #9
+  "gh pr review --approve",
+  "gh pr review 4 -a",
+  "gh secret set TOKEN",
+  "gh variable set X --body y",
+  "gh ruleset frob 1",
+  "gh repo edit --description x",
+];
+const FR2_LOCAL = [
+  "GIT_PAGER=cat git log", "GIT_EDITOR=true git commit -m x", "GIT_SEQUENCE_EDITOR=: git rebase -i HEAD~2",
+  "gh api repos/o/r/issues/3/comments -f body=hi", "gh api -X PATCH repos/o/r/pulls/4 -f title=x", "gh api repos/o/r/pulls/4/comments -f body=x",
+  "gh api repos/o/r/pulls -f title=x -f head=a -f base=main", "gh api -X POST repos/o/r/issues -f title=x",
+  "gh pr review 4 --comment -b x", "gh pr review 4 --request-changes -b x", "gh secret list", "gh variable list", "gh ruleset list", "gh ruleset view 1",
+  "gh run view 5", "git fetch origin", "git clone https://example.com/r.git", "git grep -n x", "git ls-remote origin",
+  "find . -name '*.md' -exec grep -l 'git push' {} +", "find . -name git", "grep -rn 'git push -f' .", "echo git push --force", "make test",
+];
+
+test("fix round 2: each failing input of the re-review and the #9 gh classes gets its class", () => {
+  const wrong = [];
+  const want = (cmd, who, mode, k, c) => { const got = kind(call(cmd, SESSIONS[who], mode, c)); if (got !== k && !(k === "not allow" && got !== "allow")) wrong.push(`${who} ${mode} ${cmd}: ${got}, want ${k}`); };
+  for (const name of ["peer", "subagent"]) {
+    for (const cmd of FR2_DESTRUCTIVE) for (const mode of ["default", "bypassPermissions", "dontAsk"]) want(cmd, name, mode, "deny");
+    for (const cmd of FR2_SHARED) { want(cmd, name, "default", "ask"); want(cmd, name, "dontAsk", "deny"); }
+    for (const cmd of FR2_LOCAL) for (const mode of MODES) want(cmd, name, mode, "allow");
+  }
+  want("export GIT_SSH_COMMAND=x; git fetch", "peer", "default", "not allow");
+  for (const cmd of [...FR2_DESTRUCTIVE, ...FR2_SHARED]) want(cmd, "operator", "default", "not allow");
+  assert.deepEqual(wrong, []);
+});
+
+test("fix round 2: a secret or variable value never reaches the reason", () => {
+  for (const c of ["gh secret set TOKEN --body hunter2", "gh variable set X --body hunter2", "gh secret set TOKEN -b hunter2"]) {
+    const r = call(c, SESSIONS.peer, "default");
+    const text = typeof r === "string" ? r : r?.ask;
+    assert.ok(text && !text.includes("hunter2"), `${c}\n${text}`);
+  }
+});
+
+test("H6: the commit subject in a reason drops control and format characters and is capped at 72 characters", () => {
+  const subject = "\u202eevil\u0007 " + "ab ".repeat(40);
+  const r = call("git push origin HEAD:main", SESSIONS.subagent, "default", ctx({ commit: () => ({ sha: "1a2b3c4", subject }) }));
+  const row = r.ask.split("\n").find((l) => l.startsWith("commit"));
+  const shown = row.slice(row.indexOf("\"") + 1, row.lastIndexOf("\""));
+  assert.equal(shown.length, 72, row);
+  assert.ok(!/[\p{Cc}\p{Cf}]/u.test(shown), row);
+  assert.ok(shown.startsWith("evil ab"), row);
+});

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -475,4 +475,28 @@ test("a newline inside the argument of node --eval= or env -S is still a scripte
   deniedOp("node $'--print=1\\n'");
   deniedOp("env $'-Ssh -c \"touch f\"\\n'");
   deniedOp("env $'--split-string=touch f\\n'");
+});
+
+// Orbit #8: the review_trailer floor (and the base push grant) come from the main checkout; a worktree profile only tightens.
+test("realCtx: a worktree profile cannot drop the main checkout's review_trailer or grant base_pusher; it can add a trailer", async () => {
+  const { realCtx } = await import("../hooks/guard.mjs");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-wt-")));
+  const g = (...a) => spawnSync("git", ["-C", join(root, "main"), "-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { encoding: "utf8" });
+  const write = (dir, lines) => { mkdirSync(join(dir, ".agents"), { recursive: true }); writeFileSync(join(dir, ".agents/project.md"), "```yaml orbit-profile\n" + lines + "\n```\n"); };
+  try {
+    mkdirSync(join(root, "main"));
+    g("init", "-q", "-b", "main"); g("commit", "-q", "--allow-empty", "-m", "c"); g("worktree", "add", "-q", "-b", "topic", join(root, "wt"));
+    write(join(root, "main"), "base_branch: main\nreview_trailer: Reviewed-by\nbase_pusher: owner");
+    write(join(root, "wt"), "base_branch: topic\nreview_trailer: none\nbase_pusher: agent\nprotected_branches: [staging]");
+    const p = realCtx(join(root, "wt"), {}).profile(join(root, "wt"));
+    assert.equal(p.trailer, "Reviewed-by", "the worktree cannot drop the trailer");
+    assert.equal(p.base, "main", "nor move the base that exempts catch-up merges");
+    assert.equal(p.pusher, "owner", "nor grant the base push");
+    assert.ok(p.protected.includes("staging") && p.protected.includes("topic"), "it can only add protected branches");
+    write(join(root, "main"), "base_branch: main\nreview_trailer: none\nbase_pusher: owner");
+    write(join(root, "wt"), "base_branch: main\nreview_trailer: Signed-off-by\nbase_pusher: agent");
+    const q = realCtx(join(root, "wt"), {}).profile(join(root, "wt"));
+    assert.equal(q.trailer, "Signed-off-by", "a worktree profile may add a trailer");
+    assert.equal(q.pusher, "owner");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

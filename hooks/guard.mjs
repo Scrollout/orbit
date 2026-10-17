@@ -12,10 +12,11 @@
 // permission mode prompts and are denied elsewhere or when not alone in their call (see "outward actions" below).
 // A guardrail against slips, not a sandbox: it does not model every way a program can write a file.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
+import { EVIDENCE_MS, anyPending, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
 const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -305,20 +306,36 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
   return {
     roots,
     operatorFiles: [...new Set([main, ...(project ? [project] : [])].map((r) => join(r, ".agents/operator.md")))],
+    // The main checkout's profile (else the project dir's) sets the floor: the review trailer, the base that exempts
+    // catch-up merges and the base push grant. A worktree's own profile only tightens: it may add a trailer when the
+    // floor has none, and protected branches (its base among them); it never drops or moves the trailer, or grants a push.
     profile(dir) {
       const key = dir ?? "";
       if (!profiles.has(key)) {
-        let data = null;
-        for (const r of [dir && git(dir, "rev-parse", "--show-toplevel"), main, project].filter(Boolean)) {
-          const f = join(r, ".agents/project.md");
-          if (existsSync(f)) { data = parseProfileText(readFileSync(f, "utf8")); if (data) break; }
+        const read = (r) => {
+          const f = r && join(r, ".agents/project.md");
+          const data = f && existsSync(f) ? parseProfileText(readFileSync(f, "utf8")) : null;
+          return data && {
+            base: todo(data.base_branch) ? null : data.base_branch,
+            pusher: ["agent", "owner"].includes(data.base_pusher) ? data.base_pusher : null,
+            trailer: todo(data.review_trailer) || data.review_trailer === "none" ? null : data.review_trailer,
+            protected: (Array.isArray(data.protected_branches) ? data.protected_branches : []).filter((b) => !todo(b)),
+          };
+        };
+        const floor = read(main) ?? (project && project !== main ? read(project) : null);
+        const own = dir && git(dir, "rev-parse", "--show-toplevel");
+        const wt = own && real(resolve(own)) !== main && real(resolve(own)) !== project ? read(own) : null;
+        let p = floor ?? null;
+        if (wt) {
+          const trailer = floor?.trailer ?? wt.trailer;
+          p = {
+            base: floor?.trailer ? floor.base : (floor?.base ?? wt.base),
+            pusher: floor?.pusher ?? null,
+            trailer,
+            protected: [...new Set([...(floor?.protected ?? []), ...wt.protected, ...(wt.base ? [wt.base] : [])])],
+          };
         }
-        profiles.set(key, data && {
-          base: todo(data.base_branch) ? null : data.base_branch,
-          pusher: ["agent", "owner"].includes(data.base_pusher) ? data.base_pusher : null,
-          trailer: todo(data.review_trailer) || data.review_trailer === "none" ? null : data.review_trailer,
-          protected: (Array.isArray(data.protected_branches) ? data.protected_branches : []).filter((b) => !todo(b)),
-        });
+        profiles.set(key, p);
       }
       return profiles.get(key);
     },
@@ -350,6 +367,17 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
       const r = run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD");
       if (r === FAIL) return FAIL;
       return r.code === 0 && r.out.startsWith("origin/") ? r.out.slice(7) : null;
+    },
+    // The unattended go's evidence calls (git in that repo, gh api): one deadline of 6 s, inside the hook's budget.
+    evidence() {
+      const end = Math.min(Date.now() + EVIDENCE_MS, deadline);
+      const call = (cmd, args) => {
+        const left = end - Date.now();
+        if (left < 50) return FAIL;
+        const r = spawnSync(cmd, args, { encoding: "utf8", timeout: left, maxBuffer: 64 << 20 });
+        return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
+      };
+      return { git: (d, ...a) => call("git", ["-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
     },
     commit(dir, rev) {
       if (rev.startsWith("-") || !/^[\w./@{}^~-]+$/.test(rev)) return null;
@@ -659,13 +687,6 @@ function writeTargets(name, args) {
 }
 
 // ---------- DEC-08 ----------
-function trailerOk(msg, key) {
-  const paras = msg.replace(/\r\n/g, "\n").trim().split(/\n[ \t]*\n/);
-  const last = paras.pop().split("\n"), lc = key.toLowerCase();
-  const has = (lines, k) => lines.some((l) => l.toLowerCase().startsWith(`${k}:`) && l.slice(k.length + 1).trim());
-  return has(last, lc) && !paras.some((p) => has(p.split("\n"), "co-authored-by"));
-}
-
 // The literal text of a -m value: a static word, or "$(cat <<'EOF' ... EOF)".
 function messageOf(w, cmds) {
   if (!w) return null;
@@ -932,7 +953,8 @@ export function outwardReason(kind, f, input, extra = {}) {
   const rows = [`orbit · ${kind} · ${f.what}`];
   const row = (k, v) => rows.push(`${k.padEnd(9)}${v}`);
   row("action", f.action);
-  if (f.commit) row("commit", `${f.commit.sha} "${String(f.commit.subject).replace(/[\p{Cc}"]/gu, "").replace(TOKENISH_ALL, "<redacted>").slice(0, 60)}"`);
+  // The subject is agent text: control and format characters (bidi overrides, zero-width) dropped, capped at 72 characters.
+  if (f.commit) row("commit", `${f.commit.sha} "${[...String(f.commit.subject).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}"]/gu, "").replace(TOKENISH_ALL, "<redacted>")].slice(0, 72).join("")}"`);
   const by = sessionBy(input);
   if (by) row("by", by);
   if (extra.note) row("note", extra.note);
@@ -1040,9 +1062,37 @@ function gitConfigOut(args, add) {
   }
 }
 
-// A plumbing push that forces or deletes (or has an argument it cannot read).
-const forcedPlumbing = (lits) => lits.some((x) => x === null || /^[+:]/.test(x) || (/^-[^-]/.test(x) && /[fdD]/.test(x)) ||
-  (x.length > 3 && ["force", "mirror", "delete"].some((n) => `--${n}`.startsWith(x.split("=")[0]))));
+// A plumbing push that forces or deletes (or has an argument it cannot read); --force-with-lease and --force-if-includes force.
+const forcedPlumbing = (lits) => lits.some((x) => x === null || /^[+:]/.test(x) || (/^-[^-]/.test(x) && /[fdD]/.test(x)) || x.split("=")[0].startsWith("--force") ||
+  (x.length > 3 && ["force", "force-with-lease", "force-if-includes", "mirror", "delete"].some((n) => `--${n}`.startsWith(x.split("=")[0]))));
+
+// Built-ins with an option whose value git runs as a command (--upload-pack, --receive-pack, --exec, clone and ls-remote -u,
+// grep -O); a long option matches by unique prefix like git. An argument it cannot read there may be one of them.
+const CMD_OPT_SUBS = { fetch: "", pull: "", "fetch-pack": "", clone: "u", "ls-remote": "u", archive: "", grep: "O" };
+const CMD_LONG = ["--upload-pack", "--receive-pack", "--exec", "--open-files-in-pager"];
+function commandOption(sub, rest) {
+  if (!(sub in CMD_OPT_SUBS)) return false;
+  for (const w of rest) {
+    const a = w.lit;
+    if (a === null) return true;
+    if (a === "--") return false;
+    const n = a.split("=")[0];
+    if (n.startsWith("--") && n.length >= 5 && CMD_LONG.some((o) => o.startsWith(n))) return true;
+    if (/^-[^-]/.test(a) && [...CMD_OPT_SUBS[sub]].some((c) => a.includes(c))) return true;
+  }
+  return false;
+}
+// Variables whose value git runs as a command; a pager or editor of `cat`, `less`, `true` or `:` stays silent (like -c).
+const GIT_CMD_ENV = new Set(["GIT_SSH_COMMAND", "GIT_SSH", "GIT_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EXEC_PATH"]);
+const GIT_ENV_HARMLESS = new Set(["GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR"]);
+export function gitCmdEnv(w) {
+  const eq = w.raw.indexOf("=");
+  if (eq < 1) return false;
+  const name = w.raw.slice(0, eq).replace(/\+$/, "");
+  if (!GIT_CMD_ENV.has(name)) return false;
+  if (!GIT_ENV_HARMLESS.has(name) || w.lit === null) return true;
+  return !HARMLESS_CMD.has(w.lit.slice(w.lit.indexOf("=") + 1).trim());
+}
 
 // loose: a git word found among another program's arguments; an unknown subcommand there is no git call.
 function gitOut(r, st, getCtx, add, depth, loose = false) {
@@ -1052,6 +1102,7 @@ function gitOut(r, st, getCtx, add, depth, loose = false) {
   if (!g.sub) { if (r.xargs) add({ cls: "shared", what: "git with arguments it cannot read", sub: "git", action: "git", refs: [], cmd: null }); return; }
   const sub = g.sub, rest = g.rest, shared = (what) => add({ cls: "shared", what, sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
   const redirect = g.redirect || r.redirect || st.gitEnv;
+  if (r.cmdEnv || st.gitCmdEnv) shared("git running a command from the environment");
   if (sub === "push") return pushOut(rest, redirect ? null : g.dir, st.cwd, getCtx, add, r.xargs);
   if (GIT_PUSHERS.has(sub)) {
     if (!forcedPlumbing(rest.map((w) => w.lit))) return shared("low-level push");
@@ -1065,6 +1116,7 @@ function gitOut(r, st, getCtx, add, depth, loose = false) {
     return;
   }
   if ((sub === "submodule" || sub === "rebase" || sub === "bisect") && GITGH.test(rest.map((w) => w.raw).join(" "))) return shared("git running a command");
+  if (commandOption(sub, rest)) return shared("git running a command");
   if (GIT_BUILTINS.has(sub)) return;
   if (depth > 2 || !g.dir) return shared("unknown git subcommand");
   const a = getCtx().alias(g.dir, sub);
@@ -1096,7 +1148,28 @@ function ghOut(r, add, loose = false) {
   if (p0 === "repo" && (p1 === "delete" || p1 === "archive")) return f("destructive", `repo ${p1}`);
   if (p0 === "repo" && p1 === "edit") return [...p.flags].some((x) => /^--(visibility|archive)/.test(x)) ? f("destructive", "repo visibility or archive change") : f("shared", "repo settings edit");
   if (p0 === "repo" && p1 === "rename") return f("shared", "repo rename");
+  if (p0 === "repo" && p1 === "sync") return p.flags.has("--force") ? f("destructive", "forced fork sync") : f("shared", "fork sync");
+  if (p0 === "repo" && p1 === "deploy-key") {
+    const op = p.pos[2]?.lit;
+    if (op === "delete") return f("destructive", "deploy key delete");
+    if (op !== "list" && op !== "ls") return f("shared", "deploy key add");
+    return;
+  }
   if (p0 === "pr" && p1 === "merge") return f("shared", "pull request merge");
+  if (p0 === "pr" && p1 === "review" && [...p.flags].some((x) => x === "--approve" || (/^-[^-]/.test(x) && x.includes("a")))) return f("shared", "pull request approval");
+  // Secrets and variables: never a positional in the reason (a value may sit there).
+  if (p0 === "secret" || p0 === "variable") {
+    const g = (cls, what) => add({ cls, what, sub: `${p0} ${p1}`, action: `gh ${p0} ${safe(p1)}${where}`, refs: [], cmd: null });
+    if (p1 === "delete" || p1 === "remove") return g("destructive", `${p0} delete`);
+    if (p1 !== "list" && p1 !== "ls" && p1 !== "get") return g("shared", `${p0} write`);
+    return;
+  }
+  if (p0 === "ruleset") {
+    if (p1 === "delete") return f("destructive", "ruleset delete");
+    if (!["list", "ls", "view", "check"].includes(p1)) return f("shared", "ruleset change");
+    return;
+  }
+  if (p0 === "run" && p1 === "delete") return f("destructive", "run delete");
   if (p0 === "run" && (p1 === "cancel" || p1 === "rerun")) return f("shared", `run ${p1}`);
   if (p0 === "workflow" && p1 === "run") return f("shared", "workflow dispatch");
   if (p0 !== "api") return;
@@ -1108,6 +1181,7 @@ function ghOut(r, add, loose = false) {
   const body = p.fields.map((x) => x.lit ?? "").join("\n");
   if (ep === "graphql") {
     if (unread || !/\bmutation\b/.test(body)) return unread ? f("shared", "GraphQL mutation", "gh api graphql") : undefined;
+    if (/\b(createCheckRun|updateCheckRun|createCheckSuite)\b/.test(body)) return f("destructive", "GraphQL check run write", "gh api graphql");
     if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(body) || (/\bupdateRefs?\b/.test(body) && /\bforce\s*[:=]\s*true\b/.test(body))) return f("destructive", "GraphQL delete, archive or forced ref update", "gh api graphql");
     return f("shared", "GraphQL mutation", "gh api graphql");
   }
@@ -1118,13 +1192,28 @@ function ghOut(r, add, loose = false) {
     return f("shared", "repo settings write", `gh api ${safe(m)} ${epShow}`);
   }
   if (path !== null && m === "PATCH" && /(^|\/)git\/refs\//.test(path) && (unread || p.fields.some((x) => /^force=true$/i.test(x.lit)))) return f("destructive", "forced ref update (or a body it cannot read)", `gh api ${safe(m)} ${epShow}`);
+  // Under repos/{o}/{r}/: a transfer, a commit status or a check run is denied (a status is CI evidence); issues and pull
+  // requests (and their comments) stay silent; every other write (collaborators, keys, hooks, settings, ...) is shared.
+  if (path !== null && /^repos\/[^/]+\/[^/]+\/./.test(path)) {
+    const seg = path.split("/").slice(3).filter(Boolean), n = (x) => /^\d+$/.test(x ?? "");
+    const action = `gh api ${safe(m)} ${epShow}`;
+    if (seg[0] === "transfer") return f("destructive", "repo transfer", action);
+    if (seg.includes("statuses") || seg[0] === "check-runs" || seg[0] === "check-suites") return f("destructive", "commit status or check run write", action);
+    if (seg[0] === "issues") return;
+    if (seg[0] === "pulls" && (seg.length === 1 || (seg.length === 2 && n(seg[1])) || seg[1] === "comments" || (n(seg[1]) && seg[2] === "comments"))) return;
+    return f("shared", "repo write", action);
+  }
   if (ep === null || GH_OUT_ENDPOINT.test(ep)) return f("shared", `gh api ${safe(m)}`, `gh api ${safe(m)} ${epShow}`);
 }
 
 // Walks the commands like checkCmds (wrappers, sh -c, eval, cd) and adds a finding per outward action.
 // Programs that take git or gh as data (a pattern, a page, a package), never as a command to run.
 const DATA_PROGRAMS = new Set(("echo printf grep egrep fgrep rg ag ack man which whereis type help info apropos whatis tldr cat bat less more head tail " +
-  "wc sort uniq tr cut ls file stat basename dirname realpath readlink test [ printenv jq yq sed awk apt apt-get brew dnf yum pacman apk snap").split(" "));
+  "wc sort uniq tr cut ls file stat basename dirname realpath readlink test [ printenv jq yq sed awk apt apt-get dnf yum pacman apk snap").split(" "));
+// The options of find and fd that run a command (the next word is its program).
+const EXEC_OPTS = { find: ["-exec", "-execdir", "-ok", "-okdir"], fd: ["-x", "--exec", "-X", "--exec-batch"] };
+// git or gh text in one argument that shows a force or a delete (the fallback for a command string it does not parse).
+const showsForce = (t) => t.split(/[\s'"]+/).some((x) => /^-[^-]*[fdD]/.test(x) || /^--(force|delete|mirror|prune)/.test(x) || /^[+:]./.test(x) || x === "delete" || x === "DELETE" || x === "-XDELETE");
 // Programs that substitute or append arguments to the command they run.
 const SUBST_PROGRAMS = new Set(["find", "fd", "parallel"]);
 const GIT_SUBS = new Set([...GIT_BUILTINS, ...GIT_PUSHERS, ...GIT_RUNNERS, "push"]);
@@ -1144,15 +1233,42 @@ function outWalk(cmds, st, getCtx, add, text) {
   // Condition 1 on the text the guard cannot read: a dynamic or unparseable string, or the words and heredoc of a script runner.
   const unreadable = (t) => { if (GITGH.test(t) && COND1.test(t)) add({ cls: "shared", what: "a command the guard cannot read", sub: "unknown", action: "git or gh inside a script or shell it cannot read", refs: [], cmd: null }); };
   // Another program with a git or gh word among its arguments (find -exec, unbuffer, parallel, ...): that word on is the command.
+  // A data program is told by its own name only (a `-name test` among find's arguments is data, its -exec git is not); find and
+  // fd run only what follows their exec options, and nothing when every one of those is a data program.
+  // Git text inside one argument (`sh -c '...'`, `parallel ::: '...'`) falls back: shared, destructive when it shows a force or delete.
   const embedded = (r) => {
     if (DATA_PROGRAMS.has(r.name)) return false;
+    if (EXEC_OPTS[r.name]) {
+      const progs = r.args.flatMap((w, i) => (EXEC_OPTS[r.name].includes(w.lit) ? [r.args[i + 1]] : []));
+      if (progs.every((w) => w && w.lit !== null && DATA_PROGRAMS.has(basename(w.lit)))) return false;
+    }
+    let found = false;
     const k = r.args.findIndex((w) => w.lit !== null && isGitWord(w.lit));
-    if (k < 0 || r.args.slice(0, k).some((w) => w.lit !== null && DATA_PROGRAMS.has(basename(w.lit)))) return false;
-    let words = r.args.slice(k).map((w) => (w.lit === "{}" ? { ...w, lit: null, exp: null } : w));
-    const end = words.findIndex((w) => [";", "+", ":::", "::::", ":::+", "::::+"].includes(w.lit));   // find and parallel separators
-    if (end >= 0) words = words.slice(0, end);
-    gitGhOut({ name: basename(words[0].lit), args: words.slice(1), xargs: r.xargs || SUBST_PROGRAMS.has(r.name), redirect: r.redirect }, st, getCtx, add, true);
-    return true;
+    if (k >= 0) {
+      let words = r.args.slice(k).map((w) => (w.lit === "{}" ? { ...w, lit: null, exp: null } : w));
+      const end = words.findIndex((w) => [";", "+", ":::", "::::", ":::+", "::::+"].includes(w.lit));   // find and parallel separators
+      if (end >= 0) words = words.slice(0, end);
+      gitGhOut({ name: basename(words[0].lit), args: words.slice(1), xargs: r.xargs || SUBST_PROGRAMS.has(r.name), redirect: r.redirect, cmdEnv: r.cmdEnv }, st, getCtx, add, true);
+      found = true;
+    }
+    for (const w of r.args) {
+      const t = w.lit;
+      if (t === null || !/\s/.test(t) || !GITGH.test(t) || !COND1.test(t)) continue;
+      found = true;
+      add({ cls: showsForce(t) ? "destructive" : "shared", what: showsForce(t) ? "git or gh text that forces or deletes, inside an argument" : "git or gh text inside an argument", sub: "unknown", action: `git or gh run by ${safe(r.name)}`, refs: [], cmd: null });
+    }
+    return found;
+  };
+  // Keystrokes or a new Claude session sent to a terminal, a pane or a pty (they can answer a prompt): shared.
+  const steer = (cmd, r) => {
+    const devPts = (w) => typeof w?.exp === "string" && w.exp.startsWith("/dev/pts/");
+    const lits = r.args.map((w) => w.lit);
+    let what = null;
+    if (r.name === "claude" && !(lits.length && lits.every((a) => ["--version", "-v", "--help", "-h"].includes(a)))) what = "a new Claude session";
+    else if (r.name === "tmux" && lits.some((a) => a === "send-keys" || a === "send" || a === "paste-buffer" || a === "pasteb")) what = "keystrokes sent to a tmux pane";
+    else if (r.name === "screen" && lits.includes("-X") && lits.some((a) => a === "stuff" || a === "paste")) what = "keystrokes sent to a screen window";
+    else if (cmd.redirs.some((x) => devPts(x.target)) || (r.name === "tee" && r.args.some(devPts))) what = "a write to another terminal";
+    if (what) add({ cls: "shared", what, sub: r.name, action: safe(r.name), refs: [], cmd: null });
   };
   for (const cmd of cmds) {
     if (cmd.words.some((w) => /^GIT_CONFIG\w*=/.test(w.raw))) add({ cls: "shared", what: "git config from the environment", sub: "config", action: "GIT_CONFIG_* variables", refs: [], cmd: null });
@@ -1160,12 +1276,16 @@ function outWalk(cmds, st, getCtx, add, text) {
     assigns(cmd, r, st);
     const gitEnv = cmd.words.some((w) => GIT_ENV.test(w.raw));
     if (gitEnv && (!r || DECLARE.has(r.name))) st.gitEnv = true;
-    if (!r) continue;
+    const cmdEnv = cmd.words.some(gitCmdEnv);
+    if (cmdEnv && (!r || DECLARE.has(r.name))) st.gitCmdEnv = true;
+    if (!r) { if (cmd.redirs.some((x) => typeof x.target?.exp === "string" && x.target.exp.startsWith("/dev/pts/"))) add({ cls: "shared", what: "a write to another terminal", sub: "redirect", action: "redirect", refs: [], cmd: null }); continue; }
     if (r.dynamic) {
       if (/\b(push|tag|release|api|rerun|cancel|pr|repo|delete|config|auth|merge|workflow|alias)\b/.test(cmd.words.map((w) => w.raw).join(" "))) add({ cls: "shared", what: "a command whose program it cannot tell", sub: "unknown", action: "a program named by a variable", refs: [], cmd: null });
       continue;
     }
     if (gitEnv) r.redirect = true;
+    if (cmdEnv) r.cmdEnv = true;
+    steer(cmd, r);
     if (r.name === "cd" || r.name === "pushd") {
       const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
       const e = t ? expOf(t, st) : st.env.HOME;
@@ -1218,7 +1338,12 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
 }
 
 // The decision for a shared finding: deny when not alone or when the mode cannot prompt, else ask.
-function sharedDecision(f, input, multi) {
+// Under the go every shared action other than the go's own two waits for the owner.
+function sharedDecision(f, input, multi, go = null) {
+  if (go) {
+    const base = f.sub === "push" && f.what === "push to protected branch" && f.dst ? safe(f.dst) : null;
+    return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only two actions)", do: base ? `push the verified merge as git push origin <40-hex sha>:refs/heads/${base}` : "leave it for the owner" });
+  }
   if (multi) return outwardReason("DENY", f, input, { note: "not alone in its call", do: "run it alone in its own call" });
   if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
   return { ask: outwardReason("ASK", f, input) };
@@ -1238,10 +1363,102 @@ function mcpOut(tool, ti) {
 }
 
 // A parse error or guard error on git/gh text with an outward word: shared (condition 1).
-function unreadableDecision(input) {
+function unreadableDecision(input, env = {}) {
   const text = input?.tool_input?.command;
   if (typeof text !== "string" || !GITGH.test(text) || !COND1.test(text)) return null;
-  return sharedDecision({ cls: "shared", what: "a command the guard cannot read", action: "git or gh in a command it cannot parse", cmd: null }, input, false);
+  return sharedDecision({ cls: "shared", what: "a command the guard cannot read", action: "git or gh in a command it cannot parse", cmd: null }, input, false, goSession(input, env));
+}
+
+// ---------- the unattended go's own state, in every mode ----------
+// ~/.claude (and CLAUDE_CONFIG_DIR) holds Claude Code's settings, plugins and transcripts and Orbit's go state: no session
+// writes it (memory and plan notes excepted), and while a confirm code is pending no session reads it.
+const CORE_TOOLS = new Set(["Bash", ...EDIT_TOOLS, "Read", "Grep", "Glob", "Agent", "Task"]);
+const PENDING_TEXT = [".claude", "capture-pane", "hardcopy", "/proc/", "/dev/pts", "/dev/tty", "CLAUDE_CONFIG_DIR"];
+function claudeDirs(env) {
+  const d = [];
+  if (typeof env.HOME === "string" && isAbsolute(env.HOME)) d.push(real(join(env.HOME, ".claude")));
+  if (typeof env.CLAUDE_CONFIG_DIR === "string" && isAbsolute(env.CLAUDE_CONFIG_DIR)) d.push(real(env.CLAUDE_CONFIG_DIR));
+  return [...new Set(d)];
+}
+const noteFile = (rel) => {
+  const seg = rel.split(sep);
+  if (!rel.endsWith(".md") || seg.includes("..")) return false;
+  return (seg[0] === "projects" && seg[2] === "memory" && seg.length >= 4) || (seg[0] === "plans" && seg.length === 2);
+};
+const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
+
+// A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null.
+function claudeWrite(cmds, st, dirs) {
+  const hit = (w) => {
+    const e = expOf(w, st);
+    if (e == null || (!isAbsolute(e) && !st.cwd)) return w.raw.includes(".claude") ? w.raw : null;
+    const f = real(resolve(st.cwd ?? "/", e));
+    return dirs.some((d) => inside(d, f)) ? w.raw : null;
+  };
+  for (const cmd of cmds) {
+    for (const { target } of cmd.redirs) { const h = hit(target); if (h) return h; }
+    const r = resolveCmd(cmd.words);
+    assigns(cmd, r, st);
+    const text = [...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join(" ");
+    if (!r) continue;
+    if (r.dynamic) { if (text.includes(".claude")) return text; continue; }
+    if (r.name === "cd" || r.name === "pushd") {
+      const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
+      const e = t ? expOf(t, st) : st.env.HOME;
+      st.cwd = cmd.depth > 0 || st.complex || e == null || e === "-" ? null : isAbsolute(e) ? e : st.cwd && resolve(st.cwd, e);
+      continue;
+    }
+    if (r.name === "popd") { st.cwd = null; continue; }
+    if (r.opaque || r.scripter) { if (text.includes(".claude")) return r.name; continue; }
+    if ("inner" in r) {
+      if (r.inner === null) { if (text.includes(".claude")) return r.name; continue; }
+      let inner;
+      try { inner = parseShell(r.inner, st.env); } catch { if (r.inner.includes(".claude")) return r.name; continue; }
+      const h = claudeWrite(inner, r.name === "eval" ? st : { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp), complex: st.complex || inner.complex }, dirs);
+      if (h) return h;
+      continue;
+    }
+    const targets = writeTargets(r.name, r.args);
+    if (r.xargs && (targets.length || r.name in WRITERS) && text.includes(".claude")) return r.name;
+    for (const t of targets) { const h = hit(t); if (h) return h; }
+  }
+  return null;
+}
+
+// While a code is pending: a read of a ~/.claude path, the transcripts, a pane capture or a pty, by any tool.
+function pendingRead(tool, ti, cwd, dirs, env) {
+  const inDirs = (p) => typeof p === "string" && p && dirs.some((d) => inside(d, real(resolve(cwd ?? "/", p))));
+  if (tool === "Read" || tool === "NotebookRead") return inDirs(ti.file_path ?? ti.notebook_path) || (typeof ti.file_path === "string" && ti.file_path.includes(".claude"));
+  if (tool === "Grep" || tool === "Glob") return inDirs(ti.path ?? cwd ?? "/") || JSON.stringify(ti).includes(".claude");
+  if (tool !== "Bash") return false;
+  const text = typeof ti.command === "string" ? ti.command : "";
+  if (!text || PENDING_TEXT.some((x) => text.includes(x)) || inDirs(cwd)) return true;
+  let cmds;
+  try { cmds = parseShell(text, env); } catch { return true; }
+  return cmds.some((c) => [...c.words, ...c.redirs.map((x) => x.target)].some((w) => w.exp === null || (isAbsolute(w.exp) && inDirs(w.exp))));
+}
+
+// Under the go: the pinned base push and the literal delete of a merged topic branch. null: not one of them (classify as
+// usual); { allow: true }; or the deny reason naming the check that failed.
+function goAction(cmds, cwd, input, getCtx) {
+  const g = goForm(cmds);
+  if (!g) return null;
+  const dir = g.dir === null ? cwd : isAbsolute(g.dir) ? g.dir : cwd && resolve(cwd, g.dir);
+  const c = getCtx(), base = dir ? c.originHead(dir) : FAIL;
+  const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha.slice(0, 12)}` : `git push --delete → origin/${safe(g.name)}`;
+  const no = (why) => outwardReason("DENY", { what: g.kind === "base" ? "unattended base push" : "unattended branch delete", action }, input, { note: why, do: "leave it for the owner" });
+  if (!dir) return no("the directory is unknown");
+  if (base === FAIL || !base || !/^[\w./-]+$/.test(base)) return no("origin/HEAD cannot be read");
+  const p = c.profile(dir);
+  if (g.kind === "base") {
+    if (g.dst !== base) return no(`the go pushes only origin/HEAD's branch (${safe(base)})`);
+    const keys = ["Reviewed-by", ...(p?.trailer && !["co-authored-by", "signed-off-by"].includes(p.trailer.toLowerCase()) ? [p.trailer] : [])];
+    const why = baseEvidence(c.evidence(dir), dir, g.sha, base, keys);
+    return why ? no(why) : { allow: true };
+  }
+  if (FLOOR(g.name) || g.name === base || p?.base === g.name || (p?.protected ?? []).some((x) => x === g.name || (x.endsWith("*") && g.name.startsWith(x.slice(0, -1))))) return null;
+  const why = deleteEvidence(c.evidence(dir), dir, g.name, base);
+  return why ? no(why) : { allow: true };
 }
 
 // Returns the deny reason (a string), { ask: reason }, or null to allow.
@@ -1250,7 +1467,15 @@ export function guard(input, env = {}, ctx = null) {
   const tool = input?.tool_name, ti = input?.tool_input ?? {};
   const cwd = typeof input?.cwd === "string" && input.cwd ? resolve(input.cwd) : null;
   const getCtx = () => ctx ?? (ctx = realCtx(cwd ?? env.CLAUDE_PROJECT_DIR ?? process.cwd(), env));
+  const dirs = claudeDirs(env);
+  if (anyPending(env) && pendingRead(tool, ti, cwd, dirs, env)) return stateDeny("read while an unattended code is pending", `${safe(String(tool))} of a Claude Code file, a pane or a pty`, input);
+  if (typeof tool === "string" && !CORE_TOOLS.has(tool) && JSON.stringify(ti).toLowerCase().includes("orbit:unattended")) return stateDeny("a scheduled or sent /orbit:unattended", safe(tool), input);
   if (EDIT_TOOLS.includes(tool)) {
+    const fp = ti.file_path ?? ti.notebook_path;
+    if (typeof fp === "string" && fp) {
+      const abs = real(resolve(cwd ?? "/", fp)), d = dirs.find((x) => inside(x, abs));
+      if ((d && !noteFile(relative(d, abs))) || (!d && !isAbsolute(fp) && !cwd && fp.includes(".claude"))) return stateDeny("write to ~/.claude", `${safe(tool)} ${safe(fp)}`, input);
+    }
     if (!op) return null;
     const f = ti.file_path ?? ti.notebook_path;
     if (typeof f !== "string" || !f || (!isAbsolute(f) && !cwd)) return `OPR-01: the operator session does not edit a file it cannot locate; ${DELEGATE}.`;
@@ -1260,12 +1485,18 @@ export function guard(input, env = {}, ctx = null) {
   }
   if (typeof tool === "string" && tool.startsWith("mcp__")) {
     const f = mcpOut(tool, ti);
-    return !f ? null : f.cls === "destructive" ? outwardReason("DENY", f, input) : sharedDecision(f, input, false);
+    return !f ? null : f.cls === "destructive" ? outwardReason("DENY", f, input) : sharedDecision(f, input, false, goSession(input, env));
   }
   if (tool !== "Bash") return null;
   if (typeof ti.command !== "string") return op ? `OPR-01: the operator session does not run a Bash call without a command string; ${DELEGATE}.` : null;
   let cmds;
-  try { cmds = parseShell(ti.command, env); } catch (e) { return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input); }
+  try { cmds = parseShell(ti.command, env); } catch (e) {
+    if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
+    return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
+  }
+  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex }, dirs);
+  if (w) return stateDeny("write to ~/.claude", safe(w), input);
+  const go = goSession(input, env);
   const out = classifyOutward(cmds, ti.command, cwd, env, getCtx);
   const withCommit = (f) => {
     if (!f.rev || !f.dir) return f;
@@ -1274,12 +1505,17 @@ export function guard(input, env = {}, ctx = null) {
   };
   const d = out.findings.find((f) => f.cls === "destructive");
   if (d) return outwardReason("DENY", withCommit(d), input);
+  if (go && goState(input, env)) {
+    const a = goAction(cmds, cwd, input, getCtx);
+    if (a?.allow) return null;
+    if (typeof a === "string") return a;
+  }
   if (op || /\bgit\b/.test(ti.command)) {
     const r = checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
     if (r) return r;
   }
   const s = out.findings.find((f) => f.cls === "shared");
-  return s ? sharedDecision(withCommit(s), input, out.multi) : null;
+  return s ? sharedDecision(withCommit(s), input, out.multi, go) : null;
 }
 
 // The hook entry: raw stdin in, { code, stdout, stderr } out. Fails closed only for the operator.
@@ -1291,7 +1527,9 @@ export function hookMain(raw, env, fn = guard) {
   }
   let reason;
   try { reason = fn(input, env); } catch (e) {
-    if (!isOperator(input, env)) reason = input?.tool_name === "Bash" ? unreadableDecision(input) : null;
+    const t = input?.tool_name, text = JSON.stringify(input?.tool_input ?? {});
+    if (EDIT_TOOLS.includes(t) && text.includes(".claude")) reason = "orbit · DENY · write to ~/.claude\nnote     the guard failed";
+    else if (!isOperator(input, env)) reason = t === "Bash" ? unreadableDecision(input, env) : null;
     else reason = `OPR-01: the orbit guard failed (${e.message}), so the operator's tool call is denied.`;
   }
   const ask = reason !== null && typeof reason === "object";

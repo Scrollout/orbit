@@ -14,7 +14,7 @@
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
 //   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.1)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
-//   outward{class,subcommand,refs?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run; recorded, never an authorisation
+//   outward{class,subcommand,refs?,sha?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run (class go: the unattended go's own action, with the sha pushed); recorded, never an authorisation
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
@@ -70,6 +70,8 @@ const maxRules = dict();   // per tdd-on topic
 let maxRulesAll = null;    // ledger-wide, with the profile's tdd yes or auto
 const tddOn = new Set();   // topics whose triage recorded tdd: true
 const rulesSeen = dict();
+// Two shas name the same commit when one is a prefix of the other (a hand-appended event may carry a short sha).
+const sameSha = (a, b) => typeof a === "string" && typeof b === "string" && a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a));
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
 const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
@@ -179,7 +181,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         if (nw && e.phase === "ci-fix") {
           const b = bs(e.topic);
           if (!b.ciRed) v("DEC-14", n, `ci-fix coder run on ${e.topic} with no failed ci_run as the latest run of the branch (a review finding is phase fix; a cancelled run is not a failure)`);
-          else if (b.headSha && b.redSha !== b.headSha) v("DEC-14", n, `ci-fix coder run on ${e.topic}: the failed run is on ${short(b.redSha)}, the branch head is ${short(b.headSha)}`);
+          else if (b.headSha && !sameSha(b.redSha, b.headSha)) v("DEC-14", n, `ci-fix coder run on ${e.topic}: the failed run is on ${short(b.redSha)}, the branch head is ${short(b.headSha)}`);
         }
         bs(e.topic).ciRed = false;   // every coder run answers the red run before it
         if (e.phase === "fix") {
@@ -220,10 +222,11 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     }
     case "ci_run": {
       if (e.branch) sawCi.add(e.branch);
-      if (e.branch) {   // only a failure is red for ci-fix, and only while it is the branch's latest run
-        const b = bs(e.branch);
-        b.ciRed = e.state === "red" || e.conclusion === "failure";
-        b.redSha = b.headSha = e.sha;
+      if (e.branch) {   // only a failure is red for ci-fix; a green run of the same workflow, or any run on a later sha, clears it
+        const b = bs(e.branch), wf = e.workflow ?? "default";
+        if (e.state === "red" || e.conclusion === "failure") { b.ciRed = true; b.redSha = e.sha; b.redWf = wf; }
+        else if (!b.ciRed || !sameSha(b.redSha, e.sha) || (wf === b.redWf && isGreen(e))) b.ciRed = false;
+        b.headSha = e.sha;
       }
       ((ci[e.sha] ??= {})[e.workflow ?? "default"] = isGreen(e) ? "green" : isRed(e) ? "red" : "pending");
       break;

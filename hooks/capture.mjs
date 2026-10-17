@@ -5,12 +5,15 @@
 // worktree never loses events. Records only ref, sha, `chained` and `by: agent`: never the command line, the remote or an option.
 // Also appends `outward` (class, subcommand, refs, session kind, agent_id, exit code) for each shared or destructive action the
 // guard's classifier finds in the call, read again after it ran; never the command line or a token. Nothing reads it as an authorisation.
+// Under an unattended go, the go's own action (the pinned base push, a merged branch delete) is recorded as class `go`, with the sha
+// pushed: the owner's night log.
 import { readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { loadProfile } from "../scripts/profile.mjs";
 import { FAIL, classifyOutward, isOperator, parseShell, realCtx, safe } from "./guard.mjs";
+import { goForm, goState } from "./go.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REF_SRC = /^\+?[\w./@^~-]+$/;
@@ -103,6 +106,13 @@ export function outwardEvents(event, getCtx, env = {}) {
   const kind = isOperator(event, env) ? "operator" : event.agent_id ? "subagent" : "peer";
   const r = event.tool_response;
   const code = [r?.exit_code, r?.exitCode, r?.returnCode].find((x) => typeof x === "number") ?? (failed(r) ? 1 : 0);
+  const g = goForm(cmds);
+  if (g && goState(event, env)) {
+    const dir = g.dir === null ? cwd : resolve(cwd, g.dir);
+    const ref = g.kind === "base" ? g.dst : g.name;
+    return [{ dir, argv: ["outward", "class=go", `subcommand=${g.kind === "base" ? "push" : "push --delete"}`, `refs:=${JSON.stringify([`origin/${safe(ref)}`])}`,
+      ...(g.kind === "base" ? [`sha=${g.sha}`] : []), `session_kind=${kind}`, `exit_code:=${code}`] }];
+  }
   return classifyOutward(cmds, text, cwd, env, after).findings.filter((f) => f.cls === "shared" || f.cls === "destructive").map((f) => ({
     dir: f.dir ?? cwd,
     argv: ["outward", `class=${f.cls}`, `subcommand=${String(f.sub ?? "?").split(" ").map(safe).join(" ")}`, `refs:=${JSON.stringify((f.refs ?? []).map((x) => String(x)))}`,
