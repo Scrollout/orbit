@@ -6,6 +6,9 @@ The unattended go opens with a permission prompt, no code (rules 1.15.15, comman
 - **Removed**: the UserPromptSubmit hook (`hooks/unattended.sh`), the one-time code, its terminal write (the screen redraw garbled it), `confirm`, the 2 minute pending window and the reads denied while a code was pending.
 - **Docs**: README (Unattended go) and [docs/threat-model.md](docs/threat-model.md) state that the proof is the owner's answer to the permission prompt.
 
+### Next (0.22.0, not yet released)
+- **TypeScript check layer** (Refs #39): `tsconfig.json` plus JSDoc types, checked by `tsc -p .` (`--checkJs`, no emit, strict off) in `make quality`; the shipped code stays plain `.mjs`, no build step, no runtime change. Shared types are in `types/orbit.d.ts` (shell parser result, guard decision, go state). `ci/scripts/tsc-baseline.mjs` fails on a finding not in `ci/tsc-baseline.json` and on a stale entry. typescript 6.0.3 and @types/node 24.19.0 are pinned in the toolbox lockfile. Run it with `make quality`.
+
 ## 0.21.1
 Guard residuals accepted at 0.21.0 (rules 1.15.7; scenario pin and manifest updated). Fixes #25, #27 to #36.
 - **Glob options**: on a line with `shopt`, `BASHOPTS` or a command whose program the guard cannot tell (also inside `sh -c` or `eval`), every glob in a write target or a link or copy operand is shared: `shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json` no longer passes silently. `rm *.log` stays silent, also after `set -euo pipefail` (no `set` option widens matching).

@@ -9,7 +9,7 @@
 | `make toolbox` | builds `orbit-ci-toolbox:dev` from `ci/Dockerfile` (context `ci/` only) |
 | `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test, `claude plugin validate` and its self-test |
 | `make plugin-validate` | `claude plugin validate` on `.` (the marketplace) and `.claude-plugin/plugin.json` (the plugin) alone (`ci/scripts/plugin-validate.sh`): offline, no auth; fails on an error or any warning but `CLAUDE.md` at the plugin root, also one in another form (any output line outside the known shapes); `ci/scripts/plugin-validate.test.sh` (in `make vet`) runs it on fixture plugins: clean passes, a planted warning or an error fails |
-| `make quality` | eslint (`ci/eslint.config.mjs`), `npm test` |
+| `make quality` | eslint (`ci/eslint.config.mjs`), `tsc -p .` (JSDoc types, `ci/tsc-baseline.json`), `npm test` |
 | `make security` | gitleaks on the tree and the history (findings as file:line and rule, never the secret), eslint-plugin-security (`ci/eslint.security.mjs`), dependency check |
 | `make report` | prints the Markdown report of the last run |
 | `make report-test` | renderer self-test on `ci/fixtures/` (pass, fail, skipped, oversize); also run by `make vet` |
@@ -55,9 +55,10 @@ Base images are pinned by version and digest; binaries by version and the releas
 | hadolint | 2.14.0 |
 | eslint, @eslint/js | 9.39.5 |
 | eslint-plugin-security | 4.0.1 |
+| typescript, @types/node | 6.0.3, 24.19.0 |
 | @anthropic-ai/claude-code | 2.1.288 |
 
 To bump: change the `ARG` version and sha256 (from the release's checksum file) or the digest in `ci/Dockerfile`, the `ENV` version, and this table; for npm, edit `ci/package.json` and run `npm install --package-lock-only` in `ci/`. Then `make ci`.
 
 ## Tuning and baseline
-Rules turned off are in `ci/eslint*.mjs`, each with its reason. Findings still in plugin files are listed per file in `ci/eslint-baseline.json` (reason each, Scrollout/orbit#3 for the regex rules); `ci/scripts/eslint-baseline.mjs` records the expected hit count per file and rule and fails on any other finding, on a count that grows (a new hit in a baselined file) and on one that shrinks (stale), so fixing shrinks the list. The baseline holds one entry today: the reference regexes of `scripts/rx-diff.test.mjs`, kept on purpose as the oracle of its differential test (Scrollout/orbit#3 fixed every plugin finding); add an entry only with a reason. Findings left unfixed on purpose are reported to the owner, not hidden. Semgrep is not used: it needs a Python stack with no hash-pinned install here; eslint-plugin-security and shellcheck cover the JS and shell.
+Rules turned off are in `ci/eslint*.mjs`, each with its reason. Findings still in plugin files are listed per file in `ci/eslint-baseline.json` (reason each, Scrollout/orbit#3 for the regex rules); `ci/scripts/eslint-baseline.mjs` records the expected hit count per file and rule and fails on any other finding, on a count that grows (a new hit in a baselined file) and on one that shrinks (stale), so fixing shrinks the list. The baseline holds one entry today: the reference regexes of `scripts/rx-diff.test.mjs`, kept on purpose as the oracle of its differential test (Scrollout/orbit#3 fixed every plugin finding); add an entry only with a reason. Types: `tsconfig.json` checks `hooks/`, `scripts/` and `ci/scripts/` `.mjs` files from their JSDoc (`npx tsc -p .` with typescript installed, or `make quality`); `ci/scripts/tsc-baseline.mjs` counts findings per file and code in `ci/tsc-baseline.json` like the eslint baseline, and its `skip` list holds files not counted yet. Findings left unfixed on purpose are reported to the owner, not hidden. Semgrep is not used: it needs a Python stack with no hash-pinned install here; eslint-plugin-security and shellcheck cover the JS and shell.
