@@ -33,4 +33,4 @@ The owner approves in two forms: an answer to a prompt, or **the go** (`/orbit:u
 - The go state and the go log can be forged by a program the agent runs (a script file or a compiled tool; the guard denies only the writes it parses); the evidence gates hold either way, the audit's DEC-06 grant does not.
 - The audit reads the go log under the OS user's home while capture writes it under `HOME`: a `HOME` override makes go pushes report as violations (fails safe).
 - While a code is pending, a script file the agent runs can read the owner's terminal (`tmux capture-pane`); the guard denies only the reads it parses.
-- A glob in a write target or a link or copy operand is denied only when its literal pattern can match under `~/.claude`; one that reaches it through another symlink is shared, not denied.
+- A glob in a write target or a link or copy operand is denied only when its literal pattern, resolved against the cwd segment by segment, can match under `~/.claude`; any other glob is silent, so one that reaches it through another symlink (or a `..` after a symlinked segment) is not caught.

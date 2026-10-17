@@ -7,7 +7,8 @@
 |---|---|
 | `make help` | lists targets |
 | `make toolbox` | builds `orbit-ci-toolbox:dev` from `ci/Dockerfile` (context `ci/` only) |
-| `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test |
+| `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test, `claude plugin validate` |
+| `make plugin-validate` | `claude plugin validate` on `.` (the marketplace) and `.claude-plugin/plugin.json` (the plugin) alone (`ci/scripts/plugin-validate.sh`): offline, no auth; fails on an error or any warning but `CLAUDE.md` at the plugin root |
 | `make quality` | eslint (`ci/eslint.config.mjs`), `npm test` |
 | `make security` | gitleaks on the tree and the history (findings as file:line and rule, never the secret), eslint-plugin-security (`ci/eslint.security.mjs`), dependency check |
 | `make report` | prints the Markdown report of the last run |
@@ -43,7 +44,7 @@ Each check appends one JSON line to `ci/out/<target>.jsonl` (gitignored, truncat
 In the target's script under `ci/scripts/`: `check <name> <tool> <version> <command...>` (exit non-zero to fail; print `path:line message` lines for findings) or `skip <name> <tool> <version> <why>`. Install the tool in `ci/Dockerfile` and export its version in the `ENV` line.
 
 ## Pinned versions and bumping
-Base images are pinned by version and digest; binaries by version and the release's sha256; eslint packages by `ci/package-lock.json`. Each version is at least two weeks old when pinned (the `acorn` override keeps a transitive one that old). Debian `git` and `ca-certificates` are the distribution's current ones, not pinned.
+Base images are pinned by version and digest; binaries by version and the release's sha256; eslint packages and `@anthropic-ai/claude-code` (installed with `--ignore-scripts`, its platform binary linked) by `ci/package-lock.json`. Each version is at least two weeks old when pinned (the `acorn` override keeps a transitive one that old). Debian `git` and `ca-certificates` are the distribution's current ones, not pinned.
 
 | Tool | Version |
 |---|---|
@@ -54,6 +55,7 @@ Base images are pinned by version and digest; binaries by version and the releas
 | hadolint | 2.14.0 |
 | eslint, @eslint/js | 9.39.5 |
 | eslint-plugin-security | 4.0.1 |
+| @anthropic-ai/claude-code | 2.1.288 |
 
 To bump: change the `ARG` version and sha256 (from the release's checksum file) or the digest in `ci/Dockerfile`, the `ENV` version, and this table; for npm, edit `ci/package.json` and run `npm install --package-lock-only` in `ci/`. Then `make ci`.
 

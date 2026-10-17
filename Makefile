@@ -4,7 +4,7 @@ CI_IMAGE ?= orbit-ci-toolbox:dev
 export CI_IMAGE
 IN := ci/scripts/in-toolbox.sh
 
-.PHONY: help toolbox vet quality security report report-test ci
+.PHONY: help toolbox vet quality security report report-test plugin-validate ci
 .DEFAULT_GOAL := help
 
 ## help: list the targets
@@ -15,7 +15,7 @@ help:
 toolbox:
 	@docker build -q -t $(CI_IMAGE) ci >/dev/null && echo "toolbox: built $(CI_IMAGE)" >&2
 
-## vet: static checks (shellcheck, node --check, JSON, actionlint, hadolint, report self-test)
+## vet: static checks (shellcheck, node --check, JSON, actionlint, hadolint, report self-test, plugin validate)
 vet: toolbox
 	@$(IN) sh ci/scripts/vet.sh
 
@@ -34,6 +34,10 @@ report: toolbox
 ## report-test: self-test of the report renderer against fixtures
 report-test: toolbox
 	@$(IN) node ci/scripts/report.test.mjs
+
+## plugin-validate: claude plugin validate (marketplace and plugin) from the pinned Claude Code, offline; any warning but CLAUDE.md at the root fails
+plugin-validate: toolbox
+	@$(IN) sh ci/scripts/plugin-validate.sh
 
 ## ci: clears ci/out, then vet, quality, security in that order, all run even after a failure; prints the report; fails if any failed
 ci: toolbox

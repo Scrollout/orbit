@@ -554,13 +554,36 @@ test("#22 row 3: xargs, find, fd and parallel around gh api are shared", () => {
   });
 });
 
-test("#22 row 4: a glob in an ln/cp operand or a write target is shared; one that can match under ~/.claude is denied", () => {
+test("#22 row 4: a glob in an ln/cp operand or a write target that can match under ~/.claude is denied; any other is silent", () => {
   withGo((env, h) => {
     const who = { ...MAIN, cwd: h, permission_mode: "default" };
     for (const c of ["echo x > ~/.claud?/settings.json", "ln ~/.claud*/x ~/s", "ln ~/.claud?/settings.json ~/s", "cp -l ~/.c[l]aude/settings.json ~/s",
       "ln -s ~/.claude/{a,settings.json} ~/s", "echo x > ~/**/settings.json", "touch .claud?/x"]) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", c);
-    attendedAsk(env, ["echo x > /tmp/o?.txt", "ln /tmp/a* ~/s", "cp /tmp/a[0-9] ~/s", "rm ~/x/*.log", "ln -s /tmp/{a,b} ~/s"], who);
+    for (const c of ["echo x > /tmp/o?.txt", "ln /tmp/a* ~/s", "cp /tmp/a[0-9] ~/s", "rm ~/x/*.log", "ln -s /tmp/{a,b} ~/s"]) for (const m of ["default", "bypassPermissions"]) assert.equal(guard(bash(c, { ...who, permission_mode: m }), env, ctx()), null, `${m}: ${c}`);
     for (const c of ["ls *.md", "cat ~/.claude/*.json | head", "ln -s a b"]) assert.equal(guard(bash(c, { ...who, cwd: repo }), env, ctx()), null, c);
+  });
+});
+
+test("#22 narrowing: everyday local globs are silent; a segment-wise match under ~/.claude or CLAUDE_CONFIG_DIR is denied", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const at = { ...MAIN, cwd: repo, permission_mode: m };
+      for (const c of ["rm *.log", "sed -i s/a/b/ *.md", "mkdir a/{b,c}", "cp src/*.js dist/", "ln -s *.md d/"]) assert.equal(guard(bash(c, at), env, ctx()), null, `${m}: ${c}`);
+      const inH = { ...at, cwd: h };
+      for (const c of ["echo x > ~/.claud?/settings.json", "ln ~/.claud*/x ~/s", "cp x ~/.c*/settings.json", "rm .cl*/settings.json"]) assert.equal(kind(guard(bash(c, inH), env, ctx())), "deny", `${m}: ${c}`);
+      // .. resolves, also inside a brace alternative; a relative pattern counts against the cwd.
+      const sub = { ...at, cwd: join(h, "x") };
+      for (const c of ["touch ../.cl*/settings.json", "touch {a,../.claud?}/settings.json", "rm *.json"]) assert.equal(kind(guard(bash(c, c === "rm *.json" ? { ...at, cwd: join(h, ".claude") } : sub), env, ctx())), "deny", `${m}: ${c}`);
+      assert.equal(guard(bash("touch ../x*/a", sub), env, ctx()), null, `${m}: a .. glob outside`);
+      // An unknown cwd: a pattern that could match .claude is denied, another is silent.
+      const unk = { ...at, cwd: undefined };
+      assert.equal(kind(guard(bash("rm .cl*/settings.json", unk), env, ctx())), "deny", `${m}: unknown cwd`);
+      assert.equal(guard(bash("rm *.log", unk), env, ctx()), null, `${m}: unknown cwd, *.log`);
+      // CLAUDE_CONFIG_DIR counts like ~/.claude.
+      const cfg = join(h, "cfg");
+      assert.equal(kind(guard(bash(`echo x > ${join(h, "c?g")}/settings.json`, inH), { ...env, CLAUDE_CONFIG_DIR: cfg }, ctx())), "deny", `${m}: CLAUDE_CONFIG_DIR`);
+      assert.equal(guard(bash(`echo x > ${join(h, "c?g")}/settings.json`, inH), env, ctx()), null, `${m}: no CLAUDE_CONFIG_DIR`);
+    }
   });
 });
 

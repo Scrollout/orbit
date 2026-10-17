@@ -1579,15 +1579,16 @@ function segMatch(p, s, i = 0, k = 0) {
   }
   return k === s.length;
 }
-// Whether the literal pattern (an absolute path, or null: a relative one in an unknown directory) could name a path in
-// one of dirs: a ** segment, or its first segments match a dir's. A relative pattern counts when a segment can match a
-// dir's name.
-function globUnder(pat, rel, dirs) {
+// Whether the literal pattern could name a path in one of dirs. Each brace alternative resolves against base (.. too);
+// then a ** segment, or its first segments matching a dir's, counts. A relative pattern with no base (an unknown cwd)
+// counts when a segment can match a dir's name.
+function globUnder(pat, base, dirs) {
   const alts = braces(pat);
   if (alts === null) return true;
   return alts.some((a) => {
-    const segs = a.split("/").filter(Boolean);
-    if (rel !== null) return segs.some((x) => x.includes("**") || dirs.some((d) => segMatch(x, basename(d))));
+    const rel = !isAbsolute(a) && !base;
+    const segs = (rel ? a : resolve(base ?? "/", a)).split("/").filter(Boolean);
+    if (rel) return segs.some((x) => x.includes("**") || dirs.some((d) => segMatch(x, basename(d))));
     return dirs.some((d) => {
       const ds = d.split("/").filter(Boolean);
       for (let i = 0; i < ds.length; i++) {
@@ -1601,17 +1602,12 @@ function globUnder(pat, rel, dirs) {
 }
 
 // A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null. A glob
-// in a write target or an ln/cp operand is a shared finding in st.links, or its text when it can match under ~/.claude.
+// in a write target or an ln/cp operand counts when it can match under ~/.claude; any other glob is silent (#22).
 function claudeWrite(cmds, st, dirs) {
   const names = [...new Set([...dirs, ...[st.env?.HOME && join(st.env.HOME, ".claude"), st.env?.CLAUDE_CONFIG_DIR].filter((d) => typeof d === "string" && isAbsolute(d))])];
   const hit = (w, base = st.cwd) => {
     const e = expOf(w, st);
-    if (e != null && hasGlob(e)) {
-      const rel = !isAbsolute(e) && !base ? e : null;
-      if (globUnder(rel === null ? resolve(base ?? "/", e) : e, rel, names) || w.raw.includes(".claude")) return w.raw;
-      st.links?.push({ cls: "shared", what: "a glob in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
-      return null;
-    }
+    if (e != null && hasGlob(e)) return globUnder(e, base, names) || w.raw.includes(".claude") ? w.raw : null;
     if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
     const f = realOrNull(resolve(base ?? "/", e));
     return f === null || dirs.some((d) => inside(d, f)) ? w.raw : null;

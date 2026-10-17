@@ -25,4 +25,5 @@ check actionlint actionlint "$ACTIONLINT_VERSION" yaml_lint
 check hadolint hadolint "$HADOLINT_VERSION" hadolint --no-color ci/Dockerfile
 check lib-test sh "posix" sh ci/scripts/lib.test.sh
 check report-test node "$(node -v)" node ci/scripts/report.test.mjs
+check plugin-validate claude "$CLAUDE_CODE_VERSION" sh ci/scripts/plugin-validate.sh
 finish
