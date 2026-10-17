@@ -569,9 +569,14 @@ const GH_GLOBAL_VALUED = ["-R", "--repo", "--hostname"];
 const GH_API_VALUED = ["-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "-p", "--preview", "--cache"];
 const GH_WRITE_ENDPOINT = /(^|\/)(merges|pulls|merge|refs|contents|git)(\/|$|\?)/;
 
-// The positionals, api method (null: dynamic), fields, --input, -R/--repo and the other flags of a gh call.
+// gh api's flags without a value; with the valued ones above, the flags ghParse knows exactly (#22).
+const GH_API_BOOL = ["-i", "--include", "--paginate", "--silent", "--slurp", "--verbose"];
+const GH_LONG_VALUED = [...GH_GLOBAL_VALUED, ...GH_API_VALUED].filter((o) => o.startsWith("--"));
+
+// The positionals, api method (null: dynamic), fields, --input, -R/--repo, the other flags of a gh call, and the flags it
+// does not know exactly (unknown).
 function ghParse(args) {
-  const pos = [], fields = [], flags = new Set();
+  const pos = [], fields = [], flags = new Set(), unknown = [];
   let method, input = false, repo;
   for (let i = 0; i < args.length; i++) {
     const a = args[i].lit;
@@ -585,20 +590,40 @@ function ghParse(args) {
     if (a === "-R" || a === "--repo") { repo = args[i + 1]?.lit ?? null; i++; continue; }
     if (a.startsWith("--repo=")) { repo = a.slice(7); continue; }
     if ([...GH_GLOBAL_VALUED, ...GH_API_VALUED].includes(a)) { i++; continue; }
-    if (a.startsWith("-")) { flags.add(a.split("=")[0]); continue; }
+    if (a.startsWith("-")) {
+      flags.add(a.split("=")[0]);
+      if (!GH_API_BOOL.includes(a) && !(a.includes("=") && GH_LONG_VALUED.includes(a.split("=")[0]))) unknown.push(a);
+      continue;
+    }
     pos.push(args[i]);
   }
-  return { pos, method, fields, input, repo, flags };
+  return { pos, method, fields, input, repo, flags, unknown };
 }
 
-function ghDeny(args) {
-  const { pos, method: m0, fields, input } = ghParse(args);
+// Why a gh api call is not read exactly (#22), else null: a substitution wrapper (xargs, find, fd, parallel), a control
+// character in an argument, a flag ghParse does not know exactly, or an endpoint with %, //, /./ or /../.
+function ghApiOdd(args, p, xargs) {
+  if (xargs) return "arguments a wrapper appends";
+  if (args.some((w) => w.lit !== null && [...w.lit].some((c) => c.charCodeAt(0) < 0x20 && c !== "\n" && c !== "\t"))) return "a control character";
+  if (p.unknown.length) return `option ${safe(p.unknown[0])} (not one it reads exactly)`;
+  const ep = p.pos[1]?.lit;
+  if (typeof ep === "string") {
+    const e = ep.replace(/^https?:\/\/[^/]*/i, ""), s = e.startsWith("/") ? e : `/${e}`;
+    if (s.includes("%") || s.includes("//") || s.includes("/./") || s.includes("/../") || s.endsWith("/.") || s.endsWith("/..")) return "an endpoint it cannot read exactly";
+  }
+  return null;
+}
+
+function ghDeny(args, xargs = false) {
+  const p = ghParse(args), { pos, method: m0, fields, input } = p;
   const method = m0 === null ? "?" : m0 ?? null;
   const [p0, p1] = pos.map((w) => w.lit);
   if (p0 === "pr" && (p1 === "merge" || p1 === "checkout")) return `run "gh pr ${p1}" (the merge is the verified local --no-ff merge a worker builds)`;
   if (p0 !== "api") return null;
+  const odd = ghApiOdd(args, p, xargs);
+  if (odd) return `run "gh api" with ${odd}`;
   const endpoint = p1;
-  if (gqlEndpoint(endpoint)) {
+  if (pos.slice(1).some((w) => gqlEndpoint(w.lit))) {
     const g = graphqlRead(args);
     if (g.cls || g.tracker) return `run a GraphQL mutation, or a call it cannot read (a variable, placeholder, @file, --input or another argument shape), through "gh api graphql"`;
     return null;
@@ -881,7 +906,7 @@ function checkCmds(cmds, st, ctx, op, total) {
       return deny(`run "git ${g.sub}${g.rest.length ? " " + g.rest.map(shown).join(" ") : ""}" (${why})`);
     }
     if (!op) continue;
-    if (r.name === "gh") { const d = ghDeny(r.args); if (d) return deny(d); continue; }
+    if (r.name === "gh") { const d = ghDeny(r.args, r.xargs); if (d) return deny(d); continue; }
     const targets = writeTargets(r.name, r.args);
     if (r.xargs && (targets.length || r.name in WRITERS || r.name === "sed")) return deny(`run "xargs ${r.name}" (its targets are unknown before it runs)`);
     for (const t of targets) { const d = target_(t, st, ctx); if (d) return deny(`write ${d} (${r.name})`); }
@@ -1242,7 +1267,8 @@ export function graphqlRead(args) {
   if (queries.length !== 1) return no;
   const t = gqlStrip(queries[0]);
   if (t === null) return no;
-  if (!/\bmutation\b/i.test(t) && /^\s*(?:query\b|\{)/.test(t)) return { cls: null };
+  // A read: no mutation keyword and no comment anywhere in the raw query (#22: a comment may end at a character it misreads).
+  if (!/mutation/i.test(queries[0]) && !queries[0].includes("#") && /^\s*(?:query\b|\{)/.test(t)) return { cls: null };
   const top = mutationFields(queries[0]);
   if (top && top.length && top.every((x) => TRACKER_MUTATIONS.has(x))) return { cls: null, tracker: true };
   return { cls: "shared", what: "GraphQL mutation" };
@@ -1294,16 +1320,21 @@ function ghOut(r, add, loose = false) {
   if ((p0 === "project" && ["delete", "item-delete", "field-delete"].includes(p1)) || ((p0 === "issue" || p0 === "label") && p1 === "delete")) return f("destructive", `${p0} ${p1}`);
   if (p0 === "run" && (p1 === "cancel" || p1 === "rerun")) return f("shared", `run ${p1}`);
   if (p0 === "workflow" && p1 === "run") return f("shared", "workflow dispatch");
+  if (p0 === "extension" && ["exec", "install", "upgrade"].includes(p1)) return f("shared", `gh extension ${p1}`);
   if (p0 !== "api") return;
   const ep = p1 ?? null, epShow = ep === null ? "<?>" : safe(ep);
   if (p.method === null) return f("destructive", "gh api with a method it cannot read", `gh api ? ${epShow}`);
   const m = (p.method ?? (p.fields.length || p.input ? "POST" : "GET")).toUpperCase();
   if (m === "DELETE") return f("destructive", "gh api DELETE", `gh api DELETE ${epShow}`);
   const unread = p.input || p.fields.some((x) => x.lit === null || /^[^=]*=@/.test(x.lit));
-  if (gqlEndpoint(ep)) {
+  const odd = ghApiOdd(r.args, p, r.xargs);
+  if (p.pos.slice(1).some((w) => gqlEndpoint(w.lit))) {
     const g = graphqlRead(r.args);
+    if (g.cls === "destructive") return f(g.cls, g.what, "gh api graphql");
+    if (odd) return f("shared", `gh api graphql with ${odd}`, "gh api graphql");
     return g.cls ? f(g.cls, g.what, "gh api graphql") : undefined;
   }
+  if (odd) return f("shared", `gh api with ${odd}`, `gh api ${safe(m)} ${epShow}`);
   if (m === "GET" || m === "HEAD") return;
   const path = ep === null ? null : ep.replace(/^https?:\/\/[^/]+/, "").replace(/^\//, "").split("?")[0];
   if (path !== null && /^repos\/[^/]+\/[^/]+\/?$/.test(path)) {
@@ -1508,10 +1539,79 @@ const noteFile = (rel) => {
 };
 const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
 
-// A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null.
+// ---------- globs in an ln/cp operand or a write target (#22) ----------
+const hasGlob = (s) => /[*?[{]/.test(s);
+// A pattern with its {a,b} alternatives expanded (at most 64; null beyond: the caller takes the stricter answer).
+function braces(s, n = 0) {
+  const i = s.indexOf("{");
+  if (i < 0 || n > 8) return [s];
+  let depth = 0, j = i;
+  const parts = [], start = [i + 1];
+  for (; j < s.length; j++) {
+    if (s[j] === "{") depth++;
+    else if (s[j] === "}" && --depth === 0) break;
+    else if (s[j] === "," && depth === 1) start.push(j + 1);
+  }
+  if (j >= s.length || start.length < 2) return [s];
+  for (let k = 0; k < start.length; k++) parts.push(s.slice(start[k], (start[k + 1] ?? j + 1) - 1));
+  const out = parts.flatMap((p) => braces(s.slice(0, i) + p + s.slice(j + 1), n + 1));
+  return out.length > 64 ? null : out;
+}
+// Whether one path segment matches a glob segment: *, ?, [...] (with ! or ^ and ranges); a [ without ] is literal.
+function segMatch(p, s, i = 0, k = 0) {
+  for (; i < p.length; i++, k++) {
+    if (p[i] === "*") { for (let x = k; x <= s.length; x++) if (segMatch(p, s, i + 1, x)) return true; return false; }
+    if (k >= s.length) return false;
+    if (p[i] === "?") continue;
+    if (p[i] === "[") {
+      const end = p.indexOf("]", i + 2);
+      if (end > 0) {
+        const neg = p[i + 1] === "!" || p[i + 1] === "^", set = p.slice(neg ? i + 2 : i + 1, end);
+        let hit = false;
+        for (let c = 0; c < set.length; c++) {
+          if (set[c + 1] === "-" && c + 2 < set.length) { if (s[k] >= set[c] && s[k] <= set[c + 2]) hit = true; c += 2; } else if (s[k] === set[c]) hit = true;
+        }
+        if (hit === neg) return false;
+        i = end; continue;
+      }
+    }
+    if (p[i] !== s[k]) return false;
+  }
+  return k === s.length;
+}
+// Whether the literal pattern (an absolute path, or null: a relative one in an unknown directory) could name a path in
+// one of dirs: a ** segment, or its first segments match a dir's. A relative pattern counts when a segment can match a
+// dir's name.
+function globUnder(pat, rel, dirs) {
+  const alts = braces(pat);
+  if (alts === null) return true;
+  return alts.some((a) => {
+    const segs = a.split("/").filter(Boolean);
+    if (rel !== null) return segs.some((x) => x.includes("**") || dirs.some((d) => segMatch(x, basename(d))));
+    return dirs.some((d) => {
+      const ds = d.split("/").filter(Boolean);
+      for (let i = 0; i < ds.length; i++) {
+        if (i >= segs.length) return false;
+        if (segs[i].includes("**")) return true;
+        if (!segMatch(segs[i], ds[i])) return false;
+      }
+      return true;
+    });
+  });
+}
+
+// A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null. A glob
+// in a write target or an ln/cp operand is a shared finding in st.links, or its text when it can match under ~/.claude.
 function claudeWrite(cmds, st, dirs) {
+  const names = [...new Set([...dirs, ...[st.env?.HOME && join(st.env.HOME, ".claude"), st.env?.CLAUDE_CONFIG_DIR].filter((d) => typeof d === "string" && isAbsolute(d))])];
   const hit = (w, base = st.cwd) => {
     const e = expOf(w, st);
+    if (e != null && hasGlob(e)) {
+      const rel = !isAbsolute(e) && !base ? e : null;
+      if (globUnder(rel === null ? resolve(base ?? "/", e) : e, rel, names) || w.raw.includes(".claude")) return w.raw;
+      st.links?.push({ cls: "shared", what: "a glob in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      return null;
+    }
     if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
     const f = realOrNull(resolve(base ?? "/", e));
     return f === null || dirs.some((d) => inside(d, f)) ? w.raw : null;
@@ -1542,6 +1642,8 @@ function claudeWrite(cmds, st, dirs) {
     const targets = writeTargets(r.name, r.args);
     if (r.xargs && (targets.length || r.name in WRITERS) && text.includes(".claude")) return r.name;
     for (const t of targets) { const h = hit(t); if (h) return h; }
+    // Every cp operand with a glob counts (#22); ln checks all its operands below.
+    if (r.name === "cp") for (const t of positionals(r.args, WRITERS.cp.opts)) { if (t.exp != null && hasGlob(t.exp)) { const h = hit(t); if (h) return h; } }
     // A link to a ~/.claude path (ln in any mode, cp -s or -l) is a way to write it later: every operand counts.
     if (r.name === "ln" || (r.name === "cp" && r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit)))) {
       const pos = positionals(r.args, WRITERS[r.name].opts);

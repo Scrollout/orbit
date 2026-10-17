@@ -508,3 +508,14 @@ test("realCtx: a worktree profile cannot drop the main checkout's review_trailer
     assert.equal(q.pusher, "owner");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("#22 OPR-01: ghDeny denies a control character, an unknown gh api flag, an odd endpoint and xargs around gh api", () => {
+  const m = "{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}";
+  for (const c of [`gh api graphql -f query='query A{viewer{login}}#\rmutation B${m}' -f operationName=B`,
+    `gh api -iX POST graphql -f query='mutation${m}'`, `gh api -iq .x graphql -f query='mutation${m}'`, `gh api -iH 'Accept: x' graphql -f query='mutation${m}'`,
+    `gh api -ip x graphql -f query='mutation${m}'`, `gh api -it x graphql -f query='mutation${m}'`,
+    `gh api /%67raphql -f query='mutation${m}'`, `gh api https://api.github.com/./graphql -f query='mutation${m}'`,
+    "printf -- --input m.json | xargs gh api graphql -f query='{viewer{login}}'"]) deniedOp(c);
+  allowedOp("gh api graphql -f query='query{viewer{login}}'");
+  allowedOp("gh api repos/o/r/pulls --jq '.[].number'");
+});

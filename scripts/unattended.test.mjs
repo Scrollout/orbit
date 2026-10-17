@@ -506,3 +506,73 @@ test("#21: the tracker --plan lines, a plain read query and a plain link in the 
     assert.equal(guard(bash("ln -s a b", { ...who, cwd: repo }), env, ctx()), null, "ln -s a b in the repo");
   });
 });
+
+// ---------- fix-round 4 re-review of 0.21.0 (Orbit #22): what the guard cannot read exactly is shared ----------
+const QV = "-f query='query{viewer{login}}'";
+test("#22 row 1: a control character in a gh api argument is shared; a read query holds no # and no mutation", () => {
+  withGo((env) => attendedAsk(env, [
+    `gh api graphql -f query='query A{viewer{login}}#\rmutation B${MERGE_PR}' -f operationName=B`,
+    "gh api graphql -f query='query{viewer{login}}' -f x='a\rb'",
+    "gh api repos/o/r/issues -f body='a\u0001b'",
+    "gh api graphql -f query='query{viewer{login}} # mutation'",
+    "gh api graphql -f query='{viewer{login}} #'",
+  ]));
+});
+
+test("#22 row 2: a clustered or unknown flag in gh api is shared; graphql in any positional is read; odd endpoint spellings are shared", () => {
+  withGo((env) => {
+    attendedAsk(env, [
+      `gh api -iX POST graphql -f query='mutation${MERGE_PR}'`,
+      `gh api -iq .x graphql -f query='mutation${MERGE_PR}'`,
+      `gh api -iH 'Accept: x' graphql -f query='mutation${MERGE_PR}'`,
+      `gh api -ip x graphql -f query='mutation${MERGE_PR}'`,
+      `gh api -it x graphql -f query='mutation${MERGE_PR}'`,
+      `gh api /%67raphql -f query='mutation${MERGE_PR}'`,
+      `gh api https://api.github.com/./graphql -f query='mutation${MERGE_PR}'`,
+      `gh api ./graphql -f query='mutation${MERGE_PR}'`,
+      `gh api repos/o/r//pulls/1/merge -X PUT`,
+      `gh api repos/o/r/../r/pulls/1/merge -X PUT`,
+    ]);
+    const who = { ...MAIN, permission_mode: "default" };
+    assert.equal(kind(guard(bash(`gh api -iX POST graphql -f query='mutation{deleteRef${DEL_REF}'`, who), env, ctx())), "deny", "a destructive name keeps its class");
+    for (const c of ["gh api repos/o/r/pulls", "gh api -i repos/o/r", "gh api --paginate repos/o/r/issues --jq .[].number", "gh api repos/o/r -q .name"]) assert.equal(guard(bash(c, who), env, ctx()), null, c);
+  });
+});
+
+test("#22 row 3: xargs, find, fd and parallel around gh api are shared", () => {
+  withGo((env) => {
+    // In a pipe the shared finding is not alone in its call: denied.
+    assert.equal(kind(guard(bash(`printf -- --input m.json | xargs gh api graphql ${QV}`, { ...MAIN, permission_mode: "default" }), env, ctx())), "deny");
+    attendedAsk(env, [
+      `xargs -a args.txt gh api graphql ${QV}`,
+      `find . -exec gh api graphql ${QV} {} +`,
+      `find . -exec gh api graphql ${QV} \\;`,
+      `parallel gh api graphql ${QV} ::: a`,
+      `fd -x gh api graphql ${QV}`,
+      "xargs -a args.txt gh api repos/o/r/issues",
+    ]);
+  });
+});
+
+test("#22 row 4: a glob in an ln/cp operand or a write target is shared; one that can match under ~/.claude is denied", () => {
+  withGo((env, h) => {
+    const who = { ...MAIN, cwd: h, permission_mode: "default" };
+    for (const c of ["echo x > ~/.claud?/settings.json", "ln ~/.claud*/x ~/s", "ln ~/.claud?/settings.json ~/s", "cp -l ~/.c[l]aude/settings.json ~/s",
+      "ln -s ~/.claude/{a,settings.json} ~/s", "echo x > ~/**/settings.json", "touch .claud?/x"]) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", c);
+    attendedAsk(env, ["echo x > /tmp/o?.txt", "ln /tmp/a* ~/s", "cp /tmp/a[0-9] ~/s", "rm ~/x/*.log", "ln -s /tmp/{a,b} ~/s"], who);
+    for (const c of ["ls *.md", "cat ~/.claude/*.json | head", "ln -s a b"]) assert.equal(guard(bash(c, { ...who, cwd: repo }), env, ctx()), null, c);
+  });
+});
+
+test("#22 row 5: gh extension exec, install and upgrade are shared", () => {
+  withGo((env) => attendedAsk(env, ["gh extension exec x", "gh extension install o/r", "gh extension upgrade x"]));
+});
+
+test("#22: the tracker --plan lines and a plain read query stay silent", () => {
+  withGo((env) => {
+    const who = { ...MAIN, permission_mode: "default" };
+    const all = { issues: true, labels: true, milestones: true, issue_types: true, projects: true };
+    const cmds = plan({ repo: "o/r" }, all, "M1 plan", ["core"]).filter((l) => l.startsWith("gh ")).map((l) => l.replace(/<[^>]*>/g, "X"));
+    for (const c of [...cmds, `gh api graphql ${QV}`]) assert.equal(guard(bash(c, who), env, ctx()), null, c);
+  });
+});
