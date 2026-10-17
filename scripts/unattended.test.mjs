@@ -759,6 +759,37 @@ test("#34: a glob or brace word among git's global options or as the subcommand 
   });
 });
 
+test("#35: only a word bash brace-expands is a brace word: {} placeholders after git -C stay allowed; {a,b}, {1..3}, {,} stay denied", () => {
+  withGo((env, h) => {
+    denyEvery(env, ["git -C {a,b} status", "git -C {1..3} status", "git -C . {,}status", "git -C {{a,b} status"]);
+    for (const m of ["default", "bypassPermissions"]) {
+      for (const c of ["ls -d */ | xargs -I{} git -C {} status", "find . -maxdepth 1 -type d -exec git -C {} status ';'", "git -C {a} status", "git -C x{a,b status"]) {
+        assert.equal(guard(bash(c, { ...MAIN, cwd: h, permission_mode: m }), env, ctx()), null, `${m}: ${c}`);
+      }
+    }
+  });
+});
+
+test("#36: a command substitution inside an unquoted here-doc, ${...} or $((...)) is checked as a bare one; a quoted here-doc stays inert", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const s of ["git push -f origin feat", "echo x > ~/.claude/settings.json"]) {
+        const bare = kind(guard(bash(`echo $(${s})`, who), env, ctx()));
+        assert.notEqual(bare, "allow", `${m}: bare ${s}`);
+        for (const c of [`cat <<EOF\nmsg $(${s})\nEOF`, `cat <<-EOF\n\t\`${s}\`\n\tEOF`, `echo \${x:-$(${s})}`, `echo "\${x:-$(${s})}"`, `echo \${x:-\`${s}\`}`, `echo $((1 + $(${s})))`, `echo $((\`${s}\`))`]) {
+          assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${c}`);
+        }
+        assert.equal(guard(bash(`cat <<'EOF'\n$(${s})\nEOF`, who), env, ctx()), null, `${m}: quoted here-doc ${s}`);
+      }
+      for (const c of ["cat <<EOF\nFix the parser\n\nCo-Authored-By: X <x@example.com>\nEOF", "cat <<EOF\nhome $HOME, ${x:-y}, $((1+2))\nEOF", "echo ${x:-y} $((1+2)) ${#x}"]) {
+        assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${c}`);
+      }
+      for (const c of ["cat <<EOF\n$(git push -f origin feat (\nEOF", "echo ${x:-$(git push -f origin feat (}", "echo $(( $(git push -f origin feat ( ))"]) assert.notEqual(kind(guard(bash(c, who), env, ctx())), "allow", `${m}: unparsable ${c}`);
+    }
+  });
+});
+
 // #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2], opens?: [target0, ...] } (opens: what opening the fd
 // yields, when it changed after the readlink); devs: path -> { char, uid }. parentTerminal returns an open fd: pt maps it back.
 function fakeProc(procs, devs) {

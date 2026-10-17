@@ -83,7 +83,7 @@ function list(p, depth, close) {
       const op = m[2];
       if (op === "<<" || op === "<<-") {
         if (w.lit === null) throw new ParseError("dynamic heredoc delimiter");
-        pending.push({ cmd, delim: w.lit, strip: op === "<<-" });
+        pending.push({ cmd, delim: w.lit, strip: op === "<<-", quoted: /['"\\]/.test(w.raw), depth });
       } else if (WRITE_OPS.has(op) && !(op === ">&" && /^(\d+|-)$/.test(w.lit ?? ""))) cmd.redirs.push({ op, target: w });
       continue;
     }
@@ -130,6 +130,26 @@ function heredocs(p, pending) {
       body.push(line);
     }
     h.cmd.heredoc = body.length ? body.join("\n") + "\n" : "";
+    if (!h.quoted) bodySubs(p, h.cmd.heredoc, h.depth);
+  }
+}
+
+// An unquoted here-doc body: its command substitutions ($(...) and `...`, also inside ${...} and $((...))) are parsed as
+// commands (#36); one it cannot parse is a parse error.
+function bodySubs(p, t, depth) {
+  for (let j = 0; j < t.length; j++) {
+    if (t[j] === "\\") { j++; continue; }
+    if (t[j] === "`") {
+      let k = j + 1, inner = "";
+      for (; k < t.length && t[k] !== "`"; k++) { if (t[k] === "\\" && k + 1 < t.length) k++; inner += t[k]; }
+      if (k >= t.length) throw new ParseError("unclosed ` in a heredoc");
+      list({ s: inner, i: 0, cmds: p.cmds, env: p.env, f: p.f }, depth + 1, null);
+      j = k;
+    } else if (t.startsWith("$(", j) && t[j + 2] !== "(") {
+      const q = { s: t, i: j + 2, cmds: p.cmds, env: p.env, f: p.f };
+      list(q, depth + 1, ")");
+      j = q.i - 1;
+    }
   }
 }
 
@@ -137,24 +157,33 @@ function heredocs(p, pending) {
 // environment (null when anything else is dynamic), `subs` the [from, to) ranges of the commands it substitutes.
 function word(p, depth) {
   const s = p.s, start = p.i, subs = [], names = [];
-  let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0, glob = false, ext = false, plainAt = -1;
+  let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0, glob = false, ext = false, plainAt = -1, nested = false;
+  const plain = new Set();
   const add = (t) => { lit += t; exp += t; litChars += t.length; };
   const sub = () => { const from = p.cmds.length; list(p, depth + 1, ")"); subs.push([from, p.cmds.length]); dyn = unexp = true; };
   const dollar = () => {
+    // A substitution inside $((...)) or ${...} is parsed as any other (#36); the word is then not only that substitution.
+    const inner = () => {
+      if (s.startsWith("$(", p.i) && s[p.i + 2] !== "(") { p.i += 2; sub(); nested = true; return true; }
+      if (s[p.i] === "`") { backtick(); nested = true; return true; }
+      if (s[p.i] === "\\") p.i++;
+      return false;
+    };
     if (s.startsWith("$((", p.i)) {
       let n = 0;
-      for (; p.i < s.length; p.i++) { if (s[p.i] === "(") n++; else if (s[p.i] === ")" && --n === 0) break; }
+      for (; p.i < s.length; p.i++) { if (inner()) p.i--; else if (s[p.i] === "(") n++; else if (s[p.i] === ")" && --n === 0) break; }
       if (p.i >= s.length) throw new ParseError("unclosed $((");
       p.i++; dyn = unexp = true; return;
     }
     if (s[p.i + 1] === "(") { p.i += 2; sub(); return; }
     let name = null;
     if (s[p.i + 1] === "{") {
-      const e = s.indexOf("}", p.i);
-      if (e < 0) throw new ParseError("unclosed ${");
-      const inner = s.slice(p.i + 2, e);
+      const b = p.i + 2;
+      for (p.i = b; p.i < s.length && s[p.i] !== "}"; p.i++) if (inner()) p.i--;
+      if (p.i >= s.length) throw new ParseError("unclosed ${");
+      const e = p.i;
       p.i = e + 1;
-      if (/^[A-Za-z_]\w*$/.test(inner)) name = inner; else { dyn = unexp = true; return; }
+      if (/^[A-Za-z_]\w*$/.test(s.slice(b, e))) name = s.slice(b, e); else { dyn = unexp = true; return; }
     } else {
       const m = /^[A-Za-z_]\w*/.exec(s.slice(p.i + 1));
       if (m) { name = m[0]; p.i += 1 + name.length; }
@@ -249,13 +278,31 @@ function word(p, depth) {
       }
       if (!"'\"\\$`".includes(n)) dyn = unexp = true;
     }
-    // An unquoted { may start a brace expansion ({a,b}, {a..b}): counted with the glob characters (#28).
-    if (c === "*" || c === "?" || c === "[" || c === "{") glob = true;
+    if (c === "*" || c === "?" || c === "[") glob = true;
+    plain.add(p.i);
     add(c); plainAt = p.i++;
   }
   if (p.i === start) return null;
-  // glob: an unquoted *, ?, [ or { (or an extglob group); ext: an extglob group.
-  return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), glob, ext, subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 ? subs[0] : null };
+  // A brace expansion ({a,b}, {a..b}) counts with the glob characters (#28), only where bash expands one (#35).
+  glob ||= expandsBraces(s, start, p.i, plain);
+  // glob: an unquoted *, ?, [, a brace expansion or an extglob group; ext: an extglob group.
+  return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), glob, ext, subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 && !nested ? subs[0] : null };
+}
+
+// Whether s[start, end) brace-expands: an unquoted { with its matching } and an unquoted , or .. at its top level (#35);
+// plain holds the positions of the unquoted, unescaped characters. {}, {a} and x{a,b stay literal, as in bash.
+function expandsBraces(s, start, end, plain) {
+  for (let i = start; i < end; i++) {
+    if (s[i] !== "{" || !plain.has(i)) continue;
+    let n = 0, top = false;
+    for (let j = i; j < end; j++) {
+      if (!plain.has(j)) continue;
+      if (s[j] === "{") n++;
+      else if (s[j] === "}" && --n === 0) { if (top) return true; break; }
+      else if (n === 1 && (s[j] === "," || (s[j] === "." && s[j + 1] === "." && plain.has(j + 1)))) top = true;
+    }
+  }
+  return false;
 }
 
 // ---------- command resolution ----------
