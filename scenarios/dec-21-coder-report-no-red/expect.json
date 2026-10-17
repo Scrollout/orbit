@@ -1,7 +1,0 @@
-{
-  "report_exit": 2,
-  "report_gaps": [
-    "TestCartEmpty: CANNOT FAIL FIRST needs a reason",
-    "TestCartTotal: no RED line (the test failing without the change)"
-  ]
-}

@@ -1,7 +1,7 @@
 ---
 description: Scaffold an OKF v0.2 docs bundle (index, log, constitution, doc rules) plus AGENTS.md/CLAUDE.md pointers; never overwrites existing files
-argument-hint: [bundle path, default docs/okf] [project name]
-version: 1.0.0
+argument-hint: "[bundle path, default docs/okf] [project name]"
+version: 1.0.1
 ---
 Scaffold the OKF bundle in the current repo root. Arguments: $ARGUMENTS
 

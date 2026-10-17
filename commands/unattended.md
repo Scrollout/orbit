@@ -1,8 +1,8 @@
 ---
-description: Owner only, typed: open, close or show an unattended go for this session. Orbit's prompt hook handles it before the model sees it; under the go only the pinned base push of a verified merge and the delete of a merged topic branch run without the owner
+description: "Owner only, typed: open, close or show an unattended go for this session. Orbit's prompt hook handles it before the model sees it; under the go only the pinned base push of a verified merge and the delete of a merged topic branch run without the owner"
 argument-hint: on [duration, default 12h, at most 24h] | confirm <code> | off | status
 disable-model-invocation: true
-version: 1.0.0
+version: 1.0.1
 ---
 This command is handled by Orbit's UserPromptSubmit hook (`hooks/unattended.mjs`), which blocks the prompt, so this text reaches you only when that hook did not run (node missing, the plugin's hooks off, or the command came through a tool). Then no go opened: do nothing for it, open no go, write no state file, and tell the owner in one line that the unattended go is not open because Orbit's prompt hook did not handle the command. Arguments: $ARGUMENTS
 

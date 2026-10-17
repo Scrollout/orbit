@@ -1,0 +1,13 @@
+{
+  "description": "a triage stamped with rules 1.12.1 without trigger",
+  "expect": {
+    "exit": 1,
+    "violations": {
+      "LEDGER": 1
+    }
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:01:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"no\",\"door\":\"no\",\"prod\":\"no\",\"track\":\"just do it\",\"files\":[\"docs/a.md\"]}",
+    ""
+  ]
+}

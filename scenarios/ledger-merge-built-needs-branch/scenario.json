@@ -1,3 +1,0 @@
-{
-  "description": "merge_built without a branch is a ledger error, not 'merge of undefined'"
-}

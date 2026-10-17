@@ -511,3 +511,42 @@ test("H6: the commit subject in a reason drops control and format characters and
   assert.ok(!/[\p{Cc}\p{Cf}]/u.test(shown), row);
   assert.ok(shown.startsWith("evil ab"), row);
 });
+
+// ---------- full review of 0.21.0 (Orbit #16) ----------
+test("#16 finding 1: git remote add, set-url (also --push), set-head, rename and remove are shared; listings stay silent", () => {
+  for (const c of ["git remote set-url origin git@github.com:evil/r.git", "git remote set-url --push origin git@github.com:evil/r.git", "git remote add up https://example.com/x.git",
+    "git remote set-head origin develop", "git remote rename origin old", "git remote remove origin", "git remote rm origin", "git -C /r/main remote -v set-url origin x", "git remote $OP origin x"]) {
+    assert.equal(kind(call(c, SESSIONS.peer, "default")), "ask", c);
+    assert.equal(kind(call(c, SESSIONS.subagent, "dontAsk")), "deny", c);
+  }
+  for (const c of ["git remote", "git remote -v", "git remote get-url origin", "git remote get-url --push origin", "git remote show origin"]) assert.equal(call(c, SESSIONS.peer, "default"), null, c);
+});
+
+test("#16 finding 3: gh project delete, item-delete, field-delete, gh issue delete and gh label delete are destructive in every mode", () => {
+  for (const c of ["gh project delete 3 --owner o", "gh project item-delete 3 --owner o --id X", "gh project field-delete --id F", "gh issue delete 4 --yes", "gh label delete bug --yes", "gh issue delete 4 -R o/r"]) {
+    for (const mode of MODES) for (const who of ["peer", "subagent", "operator"]) assert.equal(kind(call(c, SESSIONS[who], mode)), "deny", `${who} ${mode} ${c}`);
+  }
+});
+
+test("#16 finding 4: the tracker's metadata writes are silent; other mutations stay shared; milestone and label deletes stay denied", () => {
+  const silent = [
+    "gh api repos/o/r/milestones -f title='M1 plan'", "gh api -X PATCH repos/o/r/milestones/3 -f state=closed", "gh api repos/o/r/labels -f name=area:x",
+    "gh api -X PATCH repos/o/r/labels/bug -f color=ff0000", "gh api --method POST repos/o/r/labels -f name=x",
+    "gh api graphql -f query='mutation($i:ID!,$t:ID!){updateIssueIssueType(input:{issueId:$i,issueTypeId:$t}){issue{number}}}' -f i=I -f t=T",
+    "gh api graphql -f query='mutation { addProjectV2ItemById(input: {projectId: \"P\", contentId: \"I\"}) { item { id } } }'",
+    "gh api graphql -f query='mutation{updateProjectV2ItemFieldValue(input:{projectId:\"P\",itemId:\"I\",fieldId:\"F\",value:{singleSelectOptionId:\"S\"}}){projectV2Item{id}}}'",
+    "gh api graphql -f query='mutation{linkProjectV2ToRepository(input:{projectId:\"P\",repositoryId:\"R\"}){repository{id}}}'",
+    "gh api graphql -f query='mutation{createProjectV2(input:{ownerId:\"O\",title:\"M1\"}){projectV2{id number}}}'",
+  ];
+  for (const c of silent) for (const mode of MODES) for (const who of ["peer", "subagent"]) assert.equal(call(c, SESSIONS[who], mode), null, `${who} ${mode} ${c}`);
+  const shared = [
+    "gh api graphql -f query='mutation{createProjectV2(input:{}){projectV2{id}} mergePullRequest(input:{pullRequestId:\"P\"}){pullRequest{id}}}'",
+    "gh api graphql -f query='mutation{x: mergePullRequest(input:{pullRequestId:\"P\"}){pullRequest{id}}}'",
+    "gh api graphql -f query='mutation{addProjectV2ItemById(input:{}){item{id}} # c\n mergePullRequest(input:{}){pullRequest{id}}}'",
+    "gh api graphql -f query='mutation{addProjectV2ItemById(input:{}){item{id}}} mutation{mergePullRequest(input:{}){pullRequest{id}}}'",
+    "gh api graphql -f query=@q.graphql", "gh api graphql -f query=\"$Q\"", "gh api graphql --input q.json",
+    "gh api repos/o/r/milestones/3/x -f a=b", "gh api -X PUT repos/o/r/labels -f name=x",
+  ];
+  for (const c of shared) assert.equal(kind(call(c, SESSIONS.peer, "default")), "ask", c);
+  for (const c of ["gh api -X DELETE repos/o/r/milestones/3", "gh api -X DELETE repos/o/r/labels/bug"]) assert.equal(kind(call(c, SESSIONS.peer, "default")), "deny", c);
+});

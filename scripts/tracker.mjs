@@ -1,16 +1,17 @@
 // Tracker awareness (#14): which GitHub tracker features this project can use. Zero dependencies.
-//   node <plugin>/scripts/tracker.mjs [--root .] [--detect] [--plan "<milestone title>" [--project]]
+//   node <plugin>/scripts/tracker.mjs [--root .] [--detect | --cached] [--plan "<milestone title>" [--project]]
 // Detect (read-only gh calls under one deadline; any failure turns that feature off): an origin remote on github.com, gh
 // authed, the `project` token scope, issues enabled, labels and milestones readable, org issue types (none for a user repo),
 // Projects v2 readable. Cached in .orbit/tracker.json of the main checkout (self-ignored by .orbit/.gitignore) with
 // checked_at; re-detected when older than 7 days or on --detect. The profile overrides: `issue_tracker: none|no|off` turns
 // everything off, `milestones: no` and `issue_types: no` turn theirs off, and Projects are on only with `github_projects: on`
 // (default off) or --project (the owner's yes for one milestone). Detection never turns on what the profile turns off.
+// --cached (the SessionStart handoff): the cache only, a missing or stale one re-detected detached for the next session.
 // Prints one line of the features on (the SessionStart handoff shows it); --plan prints the intent step 8 commands instead.
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadProfile } from "./profile.mjs";
 
 const DEADLINE_MS = 7000;              // the whole detection, inside the 10 s SessionStart hook timeout
@@ -70,9 +71,22 @@ export function tracker(root, force) {
   try {
     mkdirSync(join(main, ".orbit"), { recursive: true });
     writeFileSync(join(main, ".orbit", ".gitignore"), "*\n");
-    writeFileSync(file, JSON.stringify(cache, null, 2) + "\n");
+    writeFileSync(`${file}.${process.pid}`, JSON.stringify(cache, null, 2) + "\n");
+    renameSync(`${file}.${process.pid}`, file);   // a reader never sees half a file
   } catch { /* read-only checkout: use the result uncached */ }
   return { main, cache };
+}
+
+// The SessionStart read (--cached): the cache as it is, never a gh call in the foreground; a missing or stale cache starts
+// `--detect` detached in the background, so the next session has it. cache null: nothing cached yet.
+export function cached(root) {
+  const main = mainRoot(root);
+  let c = null;
+  try { c = JSON.parse(readFileSync(join(main, ".orbit", "tracker.json"), "utf8")); } catch { /* none yet */ }
+  if (!c || !(Date.now() - Date.parse(c.checked_at) < MAX_AGE_MS)) {
+    try { spawn(process.execPath, [fileURLToPath(import.meta.url), "--root", main, "--detect"], { detached: true, stdio: "ignore" }).unref(); } catch { /* no detection this time */ }
+  }
+  return { main, cache: c };
 }
 
 // The features on after the profile's overrides; projects also when the owner said yes for this milestone (--project).
@@ -116,7 +130,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const root = resolve(flag("root") ?? ".");
   const title = flag("plan");
   if (args.includes("--plan") && (!title || title.startsWith("--"))) { console.error('usage: tracker.mjs [--root .] [--detect] [--plan "<milestone title>" [--project]]'); process.exit(64); }
-  const { main, cache } = tracker(root, args.includes("--detect"));
+  const { main, cache } = args.includes("--cached") ? cached(root) : tracker(root, args.includes("--detect"));
+  if (!cache) process.exit(0);
   const profile = loadProfile(main).data;
   const f = effective(cache, profile, args.includes("--project"));
   console.log((title ? plan(cache, f, title, profile?.areas) : [line(cache, f)]).join("\n"));

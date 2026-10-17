@@ -1,7 +1,0 @@
-{
-  "description": "a tag on a commit that was never pushed to the base",
-  "profile_extra": [
-    "release_when: change-set",
-    "release_via: session"
-  ]
-}

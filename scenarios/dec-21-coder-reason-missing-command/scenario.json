@@ -1,9 +1,0 @@
-{
-  "description": "the coder exempts its proof test because the profile has no targeted-test command: that is a profile gap, not a reason about the test",
-  "report": {
-    "role": "coder",
-    "tests": [
-      "TestCartTotal"
-    ]
-  }
-}

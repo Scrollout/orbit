@@ -1,0 +1,9 @@
+{
+  "description": "reviewer's proof check finds the proof test passes without the change and reports it as a CONFIRMED finding; the docs exemption needs no check: passes",
+  "report": {
+    "role": "reviewer"
+  },
+  "expect": {},
+  "report_md": "PROOF CHECK TestCartTotal -- passes\n    ok  \texample/cart\t0.010s\n\n1. src/cart_test.go:18 - CONFIRMED: proof does not prove: TestCartTotal passes with src/cart.go reverted to the merge-base.\n",
+  "coder_md": "Files changed: src/cart.go, src/cart_test.go, docs/cart.md.\n\nRED TestCartTotal -- --- FAIL: TestCartTotal (0.00s)\nRED TestCartTotal --     cart_test.go:21: total = 0, want 300\nGREEN TestCartTotal -- --- PASS: TestCartTotal (0.00s)\nGREEN TestCartTotal -- ok  \texample/cart\t0.012s\nCANNOT FAIL FIRST docs -- docs-only change, no test can fail before it\n"
+}

@@ -3,9 +3,10 @@
 Detail of the `operator` skill (`skills/operator/SKILL.md`); the numbered rules live there. Load when opening issues, or when a plan uses a GitHub Project.
 
 ## What the project has
-- `node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs"` prints one line of the features on (the SessionStart handoff shows it): issues, labels, milestones, issue types, projects. It detects with read-only `gh` calls under one deadline (a failure turns that feature off) and caches `.orbit/tracker.json` in the main checkout (self-ignored), re-detected after 7 days; `--detect` re-detects now (after `gh auth refresh -s project`, a new milestone or label).
+- `node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs"` prints one line of the features on: issues, labels, milestones, issue types, projects. The SessionStart handoff shows it from the cache only (`--cached`); a missing or stale cache is re-detected in the background, so the line appears from the next session. It detects with read-only `gh` calls under one deadline (a failure turns that feature off) and caches `.orbit/tracker.json` in the main checkout (self-ignored), re-detected after 7 days; `--detect` re-detects now (after `gh auth refresh -s project`, a new milestone or label).
 - The profile wins: `issue_tracker: none`, `milestones: no`, `issue_types: no` turn theirs off; Projects need `github_projects: on` (default `off`). Detection never turns on what the profile turns off.
 - A feature that is off is skipped silently, never worked around.
+- The guard lets these writes run without a prompt: milestone and label create or edit (`gh api`), and `updateIssueIssueType`, `createProjectV2`, `linkProjectV2ToRepository`, `addProjectV2ItemById`, `updateProjectV2ItemFieldValue` as the only fields of one mutation. Deletes (milestones, labels, issues, Projects and their items or fields) are denied: the owner runs them.
 
 ## Issues
 One issue per finding round (not per finding), per red run, per carried or deferred item, with whichever is on:

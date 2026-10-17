@@ -1,6 +1,0 @@
-{
-  "report_exit": 2,
-  "report_gaps": [
-    "TestCartTotal: CANNOT FAIL FIRST names a missing profile command; that is a profile gap (targeted_test), not a reason about the test"
-  ]
-}

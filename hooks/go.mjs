@@ -92,8 +92,14 @@ export function githubRepo(url) {
 
 // ev: { git(dir, ...args), gh(apiPath) }, each { code, out } or a failure without a code (a timeout or an error).
 const out = (r) => (r && r.code === 0 && typeof r.out === "string" ? r.out : null);
-const remoteTip = (ev, dir, b) => {
-  const l = out(ev.git(dir, "ls-remote", "origin", `refs/heads/${b}`))?.split("\n").filter(Boolean);
+// The URL `git push origin` uses: the push URL (pushurl, pushInsteadOf) must equal the fetch URL (insteadOf applied) and be a
+// github.com repository; every later read (ls-remote, the gh owner/repo) goes to it. null on any mismatch or failure.
+export function pushUrl(ev, dir) {
+  const fetch = out(ev.git(dir, "remote", "get-url", "origin")), push = out(ev.git(dir, "remote", "get-url", "--push", "origin"));
+  return fetch && push && fetch === push && !fetch.includes("\n") && githubRepo(fetch) ? fetch : null;
+}
+const remoteTip = (ev, dir, url, b) => {
+  const l = out(ev.git(dir, "ls-remote", url, `refs/heads/${b}`))?.split("\n").filter(Boolean);
   if (!l || l.length !== 1) return null;
   const [sha, ref] = l[0].split("\t");
   return ref === `refs/heads/${b}` && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
@@ -108,17 +114,20 @@ function runsOf(ev, repo, sha) {
 }
 
 // The base push evidence for the pinned merge sha: null when every check holds, else the first failing check (fixed text).
+// trailerKey: the main checkout profile's review_trailer (Reviewed-by when it names none); requiredChecks: its required_checks.
 // Commit statuses and check runs are never read (an agent can mint one); only GitHub Actions workflow runs count.
-export function baseEvidence(ev, dir, sha, base, trailerKeys) {
+export function baseEvidence(ev, dir, sha, base, trailerKey, requiredChecks = []) {
   const g = (...a) => out(ev.git(dir, ...a));
+  const url = pushUrl(ev, dir);
+  if (!url) return "origin's push URL is not its fetch URL on github.com";
   const parents = g("rev-list", "--parents", "-n", "1", sha)?.split(/\s+/);
   if (!parents || parents.length !== 3 || parents[0] !== sha) return "it is not a two-parent merge";
   const [, p1, p2] = parents;
-  if (remoteTip(ev, dir, base) !== p1) return `its first parent is not the tip of origin/${base}`;
+  if (remoteTip(ev, dir, url, base) !== p1) return `its first parent is not the tip of origin/${base}`;
   const trees = g("rev-parse", `${sha}^{tree}`, `${p2}^{tree}`)?.split("\n");
   if (!trees || trees.length !== 2 || !trees[0] || trees[0] !== trees[1]) return "its tree differs from the branch it merges";
   const msg = g("log", "-1", "--no-show-signature", "--format=%B", sha);
-  if (msg === null || !trailerKeys.some((k) => trailerOk(msg, k))) return "the review trailer is not in its last paragraph with Co-Authored-By";
+  if (msg === null || !trailerOk(msg, trailerKey)) return "the review trailer is not in its last paragraph with Co-Authored-By";
   const names = g("diff", "--name-status", "--no-renames", "--no-ext-diff", "--no-textconv", p1, sha);
   if (names === null) return "its changed files cannot be read";
   for (const l of names.split("\n").filter(Boolean)) {
@@ -129,24 +138,28 @@ export function baseEvidence(ev, dir, sha, base, trailerKeys) {
   const diff = g("diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", p1, sha);
   if (diff === null) return "its diff cannot be read";
   if (diff.split("\n").some((l) => l.startsWith("+") && !l.startsWith("+++") && SKIP_MARKERS.some((m) => l.includes(m)))) return "it adds a test skip marker";
-  const repo = githubRepo(g("remote", "get-url", "origin"));
-  if (!repo) return "origin is not a github.com repository";
+  const repo = githubRepo(url);
   const mine = runsOf(ev, repo, p2);
   if (!mine) return "the branch's CI runs cannot be read in time";
   if (!mine.length) return "the branch has no CI run";
   if (!mine.every((x) => x.head_sha === p2 && x.status === "completed" && x.conclusion === "success" && x.run_attempt === 1)) return "not every CI run of the branch passed on its first attempt";
   const tip = runsOf(ev, repo, p1);
   if (!tip) return "the base tip's CI runs cannot be read in time";
+  const green = tip.filter((x) => x.head_sha === p1 && x.status === "completed" && x.conclusion === "success");
+  if (!green.length) return "the base tip has no green CI run";
   const have = new Set(mine.map((x) => x.name));
-  if (tip.some((x) => x.conclusion === "success" && !have.has(x.name))) return "a workflow green on the base tip did not run green on the branch";
+  if (green.some((x) => !have.has(x.name))) return "a workflow green on the base tip did not run green on the branch";
+  if (requiredChecks.some((n) => !have.has(n))) return "a required check of the profile did not run green on the branch";
   return null;
 }
 
 // The branch delete evidence: the branch's remote tip is an ancestor of the remote base tip.
 export function deleteEvidence(ev, dir, name, base) {
-  const tip = remoteTip(ev, dir, name);
+  const url = pushUrl(ev, dir);
+  if (!url) return "origin's push URL is not its fetch URL on github.com";
+  const tip = remoteTip(ev, dir, url, name);
   if (!tip) return "the branch is not on origin";
-  const bt = remoteTip(ev, dir, base);
+  const bt = remoteTip(ev, dir, url, base);
   if (!bt) return `origin/${base} cannot be read in time`;
   return out(ev.git(dir, "merge-base", "--is-ancestor", tip, bt)) === null ? `it is not merged into origin/${base}` : null;
 }

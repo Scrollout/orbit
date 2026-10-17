@@ -1,7 +1,0 @@
-{
-  "description": "change-set: a second merge is pushed while the first one has no release",
-  "profile_extra": [
-    "release_when: change-set",
-    "release_via: session"
-  ]
-}

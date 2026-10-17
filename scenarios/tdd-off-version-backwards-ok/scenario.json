@@ -1,3 +1,0 @@
-{
-  "description": "the same older-version event on a topic without tdd: true is not checked, as in 0.14.0"
-}

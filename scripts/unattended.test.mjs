@@ -4,14 +4,14 @@
 // the pinned sha with full evidence is allowed and captured as class `go`.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FAIL, guard } from "../hooks/guard.mjs";
-import { goState } from "../hooks/go.mjs";
+import { FAIL, guard, realCtx } from "../hooks/guard.mjs";
+import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
 import { onPrompt } from "../hooks/unattended.mjs";
-import { outwardEvents } from "../hooks/capture.mjs";
+import { goLog, outwardEvents } from "../hooks/capture.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SID = "sess-1";
@@ -107,17 +107,19 @@ test("goState: session match, at most 24 h, unexpired, no agent_id, bypassPermis
 });
 
 // ---------- evidence stubs: git and gh never touch the network ----------
+const ORIGIN = "git@github.com:o/r.git";
 const M = "a".repeat(40), P1 = "b".repeat(40), P2 = "c".repeat(40), T = "d".repeat(40), TIP = "e".repeat(40);
 const run = (name, o = {}) => ({ name, status: "completed", conclusion: "success", run_attempt: 1, head_sha: P2, ...o });
 const MSG = "Merge branch 'topic'\n\nReviewed-by: reviewer (opus) - comment 1 on issue #2\nCo-Authored-By: X <x@example.com>";
 function evidence(over = {}) {
   const git = {
     [`rev-list --parents -n 1 ${M}`]: `${M} ${P1} ${P2}`,
-    "ls-remote origin refs/heads/main": `${P1}\trefs/heads/main`,
-    "ls-remote origin refs/heads/old-topic": `${TIP}\trefs/heads/old-topic`,
+    [`ls-remote ${ORIGIN} refs/heads/main`]: `${P1}\trefs/heads/main`,
+    [`ls-remote ${ORIGIN} refs/heads/old-topic`]: `${TIP}\trefs/heads/old-topic`,
     [`merge-base --is-ancestor ${TIP} ${P1}`]: "",
     [`rev-parse ${M}^{tree} ${P2}^{tree}`]: `${T}\n${T}`,
-    "remote get-url origin": "git@github.com:o/r.git",
+    "remote get-url origin": ORIGIN,
+    "remote get-url --push origin": ORIGIN,
     [`log -1 --no-show-signature --format=%B ${M}`]: MSG,
     [`diff --name-status --no-renames --no-ext-diff --no-textconv ${P1} ${M}`]: "M\tsrc/a.go\nA\tsrc/a_test.go",
     [`diff -U0 --no-color --no-ext-diff --no-textconv ${P1} ${M}`]: "+++ b/src/a.go\n+func x() {}",
@@ -175,11 +177,11 @@ test("the one test, part 2: under a hand-written go, the pinned sha with full ev
       deny(`added skip ${m}`, PINNED, { git: { [`diff -U0 --no-color --no-ext-diff --no-textconv ${P1} ${M}`]: `+++ b/src/a_test.go\n+${m}` } });
     }
     deny("tree differs from HEAD^2", PINNED, { git: { [`rev-parse ${M}^{tree} ${P2}^{tree}`]: `${T}\n${"f".repeat(40)}` } });
-    deny("HEAD^1 is not the remote base tip", PINNED, { git: { "ls-remote origin refs/heads/main": `${"f".repeat(40)}\trefs/heads/main` } });
+    deny("HEAD^1 is not the remote base tip", PINNED, { git: { [`ls-remote ${ORIGIN} refs/heads/main`]: `${"f".repeat(40)}\trefs/heads/main` } });
     deny("not a two-parent merge", PINNED, { git: { [`rev-list --parents -n 1 ${M}`]: `${M} ${P1}` } });
     deny("no trailer in the last paragraph", PINNED, { git: { [`log -1 --no-show-signature --format=%B ${M}`]: "Merge\n\nReviewed-by: x\n\nCo-Authored-By: X <x@example.com>" } });
-    deny("ls-remote times out", PINNED, { git: { "ls-remote origin refs/heads/main": FAIL } });
-    deny("not a GitHub origin", PINNED, { git: { "remote get-url origin": "https://example.com/o/r.git" } });
+    deny("ls-remote times out", PINNED, { git: { [`ls-remote ${ORIGIN} refs/heads/main`]: FAIL } });
+    deny("not a GitHub origin", PINNED, { git: { "remote get-url origin": "https://example.com/o/r.git", "remote get-url --push origin": "https://example.com/o/r.git" } });
     deny("from a subagent", PINNED, {}, { ...MAIN, agent_id: "a1", agent_type: "orbit:coder" });
     deny("the target is not origin/HEAD", `git push origin ${M}:refs/heads/main`, { ctx: { originHead: () => "develop" } });
     for (const c of ["git push origin HEAD:main", `git push origin ${M}:main`, `git push origin ${M.slice(0, 12)}:refs/heads/main`, `git push origin ${M}:refs/heads/main && echo ok`,
@@ -286,4 +288,110 @@ test("hooks.json: the prompt hook runs on UserPromptSubmit; the guard matcher co
   const m = h.PreToolUse.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard"))).matcher.split("|");
   for (const name of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob", "mcp__.*", ".*Cron.*", ".*Schedule.*", ".*Wakeup.*", ".*Trigger.*", ".*Message.*", ".*Skill.*", "SlashCommand"]) assert.ok(m.includes(name), name);
   assert.ok(existsSync(join(repo, "commands/unattended.md")), "the command file exists, so the slash command is not rejected before the hook");
+});
+
+// ---------- full review of 0.21.0 (Orbit #16) ----------
+test("#16 finding 1: the go's evidence reads the URL the push uses; a pushurl or pushInsteadOf that differs denies", () => {
+  withGo((env) => {
+    assert.equal(guard(bash(PINNED), env, ctx()), null, "same URL: allowed");
+    for (const u of ["git@github.com:evil/r.git", "https://github.com/o/r.git", "https://example.com/o/r.git"]) {
+      assert.equal(kind(guard(bash(PINNED), env, ctx({ git: { "remote get-url --push origin": u } }))), "deny", u);
+    }
+    assert.equal(kind(guard(bash(PINNED), env, ctx({ git: { "remote get-url --push origin": FAIL } }))), "deny", "push URL unreadable");
+    // The base tip is read from the push URL, not from the name origin.
+    assert.equal(kind(guard(bash(PINNED), env, ctx({ git: { [`ls-remote ${ORIGIN} refs/heads/main`]: undefined, "ls-remote origin refs/heads/main": `${P1}\trefs/heads/main` } }))), "deny");
+    assert.equal(guard(bash("git push origin --delete old-topic"), env, ctx()), null);
+    assert.equal(kind(guard(bash("git push origin --delete old-topic"), env, ctx({ git: { "remote get-url --push origin": "git@github.com:evil/r.git" } }))), "deny", "delete: push URL differs");
+  });
+});
+
+test("#16 finding 2: a dangling link to the go file (or into ~/.claude) is a ~/.claude write; ln and cp -s to ~/.claude are denied", () => {
+  const h = home(), env = { HOME: h }, w = realpathSync(mkdtempSync(join(tmpdir(), "orbit-wt-")));
+  const goFile = join(stateDir(h), `go-${SID}.json`);
+  try {
+    symlinkSync(goFile, join(w, "link"));                 // ~/.claude/orbit/unattended does not exist: the link dangles
+    symlinkSync(join(h, ".claude"), join(w, "cl"));        // ~/.claude does not exist either
+    symlinkSync("link", join(w, "link2"));                 // a relative link to the link
+    symlinkSync("loop", join(w, "loop"));                  // cannot be resolved: treated as protected
+    const body = JSON.stringify({ session_id: SID, opened: 1, until: 2 });
+    for (const mode of ["default", "bypassPermissions", "dontAsk"]) {
+      const who = { session_id: SID, cwd: w, permission_mode: mode };
+      const t = (tool_name, tool_input) => guard({ ...who, tool_name, tool_input }, env, ctx());
+      for (const c of [`printf '%s' '${body}' > link`, `printf x > ${w}/link`, "echo x > link2", "tee link < /dev/null", "cp x link", "echo x > cl/orbit/unattended/go-sess-1.json", "echo x > loop",
+        `ln -s ${goFile} /tmp/x`, "ln -s ~/.claude/orbit/unattended/go-sess-1.json here", "ln -sf ~/.claude/settings.json here", "ln ~/.claude/settings.json here", `cp -s ${goFile} here`, "cp --symbolic-link ~/.claude/x here", "ln -s ~/.claude here"]) {
+        assert.equal(kind(t("Bash", { command: c })), "deny", `${mode} ${c}`);
+      }
+      for (const f of ["link", join(w, "link"), join(w, "link2"), join(w, "cl/orbit/unattended/go-sess-1.json"), join(w, "loop")]) {
+        for (const tool of ["Write", "Edit"]) assert.equal(kind(t(tool, { file_path: f })), "deny", `${mode} ${tool} ${f}`);
+      }
+      assert.equal(t("Bash", { command: "ln -s /tmp/a here" }), null, "a link outside ~/.claude stays allowed");
+      assert.equal(t("Write", { file_path: join(w, "plain.txt") }), null);
+    }
+    assert.ok(!existsSync(goFile), "no go file");
+    assert.equal(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env), null, "no go armed");
+  } finally { rmSync(h, { recursive: true, force: true }); rmSync(w, { recursive: true, force: true }); }
+});
+
+test("#16 finding 5: a git whose grandchild holds stdout cannot hold the guard past the evidence deadline", () => {
+  // The stub lives in the checkout (CI mounts /tmp noexec); a temp dir links it as `git`.
+  const bin = realpathSync(mkdtempSync(join(tmpdir(), "orbit-bin-")));
+  symlinkSync(join(repo, "scripts/fixtures/git-hang-stub.sh"), join(bin, "git"));
+  const live = realCtx(repo, {});
+  const path = process.env.PATH;
+  try {
+    withGo((env) => {
+      process.env.PATH = `${bin}:${path}`;
+      process.env.GIT_STUB_PIDS = join(bin, "pids");
+      const t0 = Date.now();
+      const r = guard(bash(PINNED), env, ctx({ ctx: { evidence: () => live.evidence() } }));
+      const ms = Date.now() - t0;
+      process.env.PATH = path;
+      assert.equal(kind(r), "deny", JSON.stringify(r));
+      assert.ok(ms < EVIDENCE_MS + 2000, `took ${ms} ms`);
+      // The grandchild is gone too (its process group was killed): no ssh left connecting after the hook answered.
+      const pid = Number(readFileSync(join(bin, "pids"), "utf8").trim().split("\n")[0]);
+      const alive = () => { try { return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return false; } };
+      const until = Date.now() + 2000;
+      while (alive() && Date.now() < until) { /* reaping takes a moment */ }
+      assert.ok(!alive(), `grandchild ${pid} still runs`);
+    });
+  } finally { process.env.PATH = path; delete process.env.GIT_STUB_PIDS; rmSync(bin, { recursive: true, force: true }); }
+  const g = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks.PreToolUse.flatMap((e) => e.hooks).find((x) => x.command.includes("hooks/guard"));
+  assert.equal(g.onFailure, "block", "a guard timeout blocks the call");
+});
+
+test("#16 findings 6, 7, 8: the go's base, trailer key and required checks come from the main checkout's profile", () => {
+  withGo((env) => {
+    const P = (o) => ({ ctx: { profile: () => ({ base: "main", pusher: "agent", trailer: "Reviewed-by", protected: [], checks: [], ...o }) } });
+    const msg = (key) => ({ [`log -1 --no-show-signature --format=%B ${M}`]: `Merge\n\n${key}: reviewer\nCo-Authored-By: X <x@example.com>` });
+    const deny = (label, over) => assert.equal(kind(guard(bash(PINNED), env, ctx(over))), "deny", label);
+    // 6: <base> must be the profile's base_branch and origin/HEAD's target.
+    deny("profile base differs from origin/HEAD", P({ base: "develop" }));
+    deny("no profile", { ctx: { profile: () => null } });
+    deny("profile without a base", P({ base: null }));
+    // 7: the trailer key is the profile's; Reviewed-by only when it names none.
+    deny("profile names Security-Review, message has Reviewed-by", P({ trailer: "Security-Review" }));
+    assert.equal(guard(bash(PINNED), env, ctx({ ...P({ trailer: "Security-Review" }), git: msg("Security-Review") })), null, "the profile's key passes");
+    assert.equal(guard(bash(PINNED), env, ctx(P({ trailer: null }))), null, "no profile trailer: Reviewed-by");
+    // 8: the base tip needs at least one green workflow; HEAD^2 also covers the profile's required checks.
+    const tip = (o) => ({ [`repos/o/r/actions/runs?head_sha=${P1}&per_page=100`]: o });
+    deny("base tip without runs", { gh: tip({ total_count: 0, workflow_runs: [] }) });
+    deny("base tip without a green run", { gh: tip({ total_count: 1, workflow_runs: [run("ci", { head_sha: P1, conclusion: "failure" })] }) });
+    deny("a required check missing on HEAD^2", P({ checks: ["lint"] }));
+    assert.equal(guard(bash(PINNED), env, ctx(P({ checks: ["codeql"] }))), null, "a required check green on HEAD^2");
+  });
+});
+
+test("#16 finding 9: capture writes the go's actions to the go log under ~/.claude, which the guard protects", () => {
+  withGo((env, h) => {
+    const log = join(stateDir(h), "go-log.jsonl");
+    const ev = { ...MAIN, tool_name: "Bash", tool_input: { command: PINNED }, tool_response: { exit_code: 0 } };
+    goLog(ev, outwardEvents(ev, () => ctx(), env), env);
+    const sub = { ...ev, agent_id: "a1" };
+    goLog(sub, outwardEvents(sub, () => ctx(), env), env);
+    const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(lines.length, 1, "a subagent's push is no go action");
+    assert.deepEqual({ ...lines[0], ts: undefined }, { ts: undefined, session: SID, subcommand: "push", ref: "main", sha: M, exit_code: 0 });
+    assert.equal(kind(guard(bash(`echo '{}' >> ${log}`), env, ctx())), "deny");
+  });
 });

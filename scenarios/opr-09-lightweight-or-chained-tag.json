@@ -1,0 +1,20 @@
+{
+  "description": "a lightweight tag pushed chained after another command",
+  "profile_extra": [
+    "release_when: change-set",
+    "release_via: session"
+  ],
+  "expect": {
+    "exit": 1,
+    "violations": {
+      "OPR-09": 2
+    }
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:01:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.2\",\"operator\":\"1.4.0\",\"rules\":\"1.6.0\"},\"kind\":\"merge_built\",\"branch\":\"feat-a\",\"merge_sha\":\"1111111111111111111111111111111111111111\",\"tree_equal\":true,\"ci_state\":\"green\",\"waived\":\"owner\",\"waiver_reason\":\"scenario\"}",
+    "{\"ts\":\"2026-10-14T10:02:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.2\",\"operator\":\"1.4.0\",\"rules\":\"1.6.0\"},\"kind\":\"push\",\"ref\":\"main\",\"sha\":\"1111111111111111111111111111111111111111\",\"chained\":false,\"by\":\"owner\"}",
+    "{\"ts\":\"2026-10-14T10:03:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.2\",\"operator\":\"1.4.0\",\"rules\":\"1.6.0\"},\"kind\":\"tag_push\",\"tag\":\"v0.4.0\",\"ref\":\"refs/tags/v0.4.0\",\"sha\":\"1111111111111111111111111111111111111111\",\"by\":\"owner\",\"annotated\":false,\"chained\":true,\"signed\":true}",
+    "{\"ts\":\"2026-10-14T10:04:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.2\",\"operator\":\"1.4.0\",\"rules\":\"1.6.0\"},\"kind\":\"release\",\"tag\":\"v0.4.0\",\"url\":\"https://github.com/o/r/releases/tag/v0.4.0\",\"via\":\"session\",\"verify_tag\":true,\"latest\":true}",
+    ""
+  ]
+}

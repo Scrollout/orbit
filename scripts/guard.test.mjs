@@ -371,10 +371,10 @@ test("realCtx reads review_trailer and base_pusher from the profile", async () =
     spawnSync("git", ["init", "-q", "-b", "main", root]);
     mkdirSync(join(root, ".agents"));
     const prof = (lines) => { writeFileSync(join(root, ".agents/project.md"), "```yaml orbit-profile\n" + lines + "\n```\n"); return realCtx(root, {}).profile(root); };
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null, protected: [] });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner\nprotected_branches: [staging, TODO]"), { base: "main", pusher: "owner", trailer: "Reviewed-By", protected: ["staging"] });
-    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null, protected: [] });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By", protected: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null, protected: [], checks: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner\nprotected_branches: [staging, TODO]\nrequired_checks: [ci, TODO]"), { base: "main", pusher: "owner", trailer: "Reviewed-By", protected: ["staging"], checks: ["ci"] });
+    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null, protected: [], checks: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By", protected: [], checks: [] });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

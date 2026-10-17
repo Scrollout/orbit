@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews a built step's diff against its spec, in a fresh context, after the coder reports and before the PM accepts the step (full review), or, only when the brief starts with the line `Mode: fix-round`, checks one fix round (fix-round mode). Give it the step brief (spec, conditions with their proof tests), the base and branch, and the coder's report; for a fix round the line `Mode: fix-round`, the kept findings, the coder's report of each fix and the fix's `<base>..<branch>`. Full review returns at most ten findings, each with path:line, a failure scenario and a CONFIRMED or PLAUSIBLE tag. Fix-round mode returns each kept finding fixed, partly or not fixed with path:line, at most five new findings the fix introduced, and accept or send back. Does not edit, fix, run builds or redesign; when tdd is on its one run is the proof check, a single targeted test in a scratch worktree.
+description: "Reviews a built step's diff against its spec in a fresh context, before the PM accepts it; with the first line `Mode: fix-round`, checks one fix round. Give it the step brief (spec, conditions, proof tests), base, branch and the coder's report; for a fix round also the kept findings and the fix's `<base>..<branch>`. Returns at most ten findings (path:line, failure scenario, CONFIRMED or PLAUSIBLE), or each kept finding fixed/partly/not, new findings, accept or send back. Never edits or fixes."
 model: opus
 tools: Read, Grep, Glob, Bash
 ---

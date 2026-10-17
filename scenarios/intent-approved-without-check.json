@@ -1,0 +1,15 @@
+{
+  "description": "an intent plan approved with no intent-plan.mjs pass (no checked event) before it",
+  "expect": {
+    "exit": 1,
+    "violations": {
+      "LEDGER": 1
+    }
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:01:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"questions\"}",
+    "{\"ts\":\"2026-10-14T10:02:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"draft\"}",
+    "{\"ts\":\"2026-10-14T10:03:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"approved\"}",
+    ""
+  ]
+}

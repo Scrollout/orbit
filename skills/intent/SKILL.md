@@ -1,7 +1,7 @@
 ---
 name: intent
-description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue unless /decide or the operator hands it over as too big for one worker, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
-version: 1.3.0
+description: Turn a goal too big for one session into an approved milestone plan of small units, an OKF roadmap doc checked by a script, before any build (AI-DLC Inception). Use when the owner states a goal, feature or initiative needing several worker sessions or branches, or asks to plan a milestone. Not for a single bug, question or small change (/decide), not for a /decide question unless handed over as too big for one worker, not inside a worker executing a brief, not while /okf-init fills its roadmap.
+version: 1.3.1
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. A field marked TODO is a gap: say so, never invent. The plan's units are then built through the usual flow: `/orbit:decide` per unit, or the operator's dispatch.
 

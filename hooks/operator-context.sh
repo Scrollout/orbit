@@ -12,9 +12,10 @@ common_dir=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/
 [ "$git_dir" = "$common_dir" ] || exit 0
 git -C "$dir" ls-files --error-unmatch "$rel" >/dev/null 2>&1 && exit 0
 git -C "$dir" check-ignore -q "$rel" || exit 0
-# One line of the tracker features on (scripts/tracker.mjs, cached weekly); empty without node.
+# One line of the tracker features on, from the cache only (scripts/tracker.mjs --cached: a missing or stale cache is
+# re-detected in the background, for the next session, so this hook never waits for gh); empty without node or a cache.
 tracker=
-command -v node >/dev/null 2>&1 && tracker=$(node "$(dirname "$0")/../scripts/tracker.mjs" --root "$dir" 2>/dev/null | head -n 1)
+command -v node >/dev/null 2>&1 && tracker=$(node "$(dirname "$0")/../scripts/tracker.mjs" --root "$dir" --cached 2>/dev/null | head -n 1)
 tab=$(printf '\t')
 size=$(wc -c < "$dir/$rel")
 {

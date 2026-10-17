@@ -1,7 +1,7 @@
 ---
-description: Act as PM and run a decision like a team - triage, discovery, proposals, design review, sign-off, record, delivery - with only the people the question needs. Use it unasked for a design, decision-record or roadmap question; a trade-off between real options; a bug or finding with several plausible fixes; a change touching a security path, a one-way door or shared state; or a review finding against the spec or design. Not for a small change whose triage lines are all no, not inside a worker or subagent executing a brief (it reports instead), not for a multi-session goal (/intent).
+description: Act as PM and run a decision like a team - triage, discovery, proposals, design review, sign-off, record, delivery - with only the people it needs. Use unasked for a design, decision-record or roadmap question; a trade-off between real options; a bug or finding with several plausible fixes; a change touching a security path, a one-way door or shared state; a review finding. Not for a small all-no change, not inside a worker executing a brief (it reports), not for a multi-session goal (/intent).
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.7.5
+version: 1.7.6
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 

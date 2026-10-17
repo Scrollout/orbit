@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { denied } from "./denylist.mjs";
-import { actual, differs, dir, expected, names } from "./scenarios.mjs";
+import { actual, differs, dir, expected, names, scenario } from "./scenarios.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (f) => readFileSync(join(root, f), "utf8");
@@ -41,23 +41,25 @@ test("the required happy and policy scenarios exist and are clean where they sho
   assert.equal(actual("incident-track").track, "incident");
 });
 
-test("scenario folders hold only scenario.json, expect.json, an optional ledger.jsonl, report.md and coder.md; none is empty", () => {
+test("scenarios/ holds one <name>.json per scenario and pin.json, each with a description and an expect, and only known keys", () => {
+  for (const e of readdirSync(dir, { withFileTypes: true })) assert.ok(e.isFile() && e.name.endsWith(".json"), `scenarios/${e.name}`);
+  const known = new Set(["description", "profile", "profile_extra", "triage", "report", "expect", "ledger", "go_log", "report_md", "coder_md"]);
+  assert.ok(names().length > 100, String(names().length));
   for (const n of names()) {
-    const files = readdirSync(join(dir, n)).sort();
-    assert.ok(files.includes("scenario.json") && files.includes("expect.json"), n);
-    for (const f of files) assert.ok(["scenario.json", "expect.json", "ledger.jsonl", "report.md", "coder.md"].includes(f), `${n}/${f}`);
+    const sc = scenario(n);
+    assert.ok(typeof sc.description === "string" && sc.description && sc.expect && typeof sc.expect === "object", n);
+    for (const k of Object.keys(sc)) assert.ok(known.has(k), `${n}: ${k}`);
+    assert.equal(Boolean(sc.report), typeof sc.report_md === "string", `${n}: report and report_md go together`);
+    for (const k of ["ledger", "go_log"]) if (k in sc) assert.ok(Array.isArray(sc[k]) && sc[k].every((l) => typeof l === "string"), `${n}: ${k} is a list of lines`);
   }
 });
 
 test("scenarios are anonymised: no project, host, user or lab names", () => {
-  for (const n of names()) for (const f of readdirSync(join(dir, n))) {
-    const text = readFileSync(join(dir, n, f), "utf8");
-    assert.equal(denied(text), null, `${n}/${f}`);
-  }
+  for (const n of names()) assert.equal(denied(JSON.stringify(scenario(n))), null, n);
 });
 
 test("a security-contest scenario is on a one-way door (DEC-13)", () => {
-  for (const n of ["security-contest-rebuttal-ok", "security-contest-rebuttal-needs-reason"]) assert.equal(JSON.parse(readFileSync(join(dir, n, "ledger.jsonl"), "utf8").split("\n")[0]).door, "yes", n);
+  for (const n of ["security-contest-rebuttal-ok", "security-contest-rebuttal-needs-reason"]) assert.equal(JSON.parse(scenario(n).ledger[0]).door, "yes", n);
 });
 
 test("triage-gap scenarios pin the reported gap list", () => {

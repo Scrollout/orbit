@@ -1,0 +1,13 @@
+{
+  "description": "a triage with prod yes on the light review track",
+  "expect": {
+    "exit": 1,
+    "violations": {
+      "DEC-03": 1
+    }
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:01:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"no\",\"door\":\"no\",\"prod\":\"yes\",\"track\":\"light review\",\"files\":[\"docs/a.md\"],\"trigger\":\"asked\"}",
+    ""
+  ]
+}

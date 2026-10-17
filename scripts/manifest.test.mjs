@@ -138,7 +138,7 @@ test("hooks, agents and templates/project.md join the shared hash", () => {
 
 test("the rules entry also hashes scenarios, the scenario test and the profile fixture", () => {
   const m = JSON.parse(readFileSync(join(repo, "skills/MANIFEST.json"), "utf8")).entries["rules/rules.json"].files;
-  for (const f of ["scenarios/pin.json", "scenarios/lifecycle-clean/expect.json", "scenarios/lifecycle-clean/ledger.jsonl", "scripts/scenarios.test.mjs", "scripts/fixtures/real-profile.md"]) assert.ok(m.includes(f), f);
+  for (const f of ["scenarios/pin.json", "scenarios/lifecycle-clean.json", "scripts/scenarios.test.mjs", "scripts/fixtures/real-profile.md"]) assert.ok(m.includes(f), f);
   const root = tree();
   mkdirSync(join(root, "rules"));
   mkdirSync(join(root, "scenarios/s"), { recursive: true });

@@ -1,0 +1,9 @@
+{
+  "description": "a docs-only step: the coder declared every test CANNOT FAIL FIRST, so the reviewer needs no PROOF CHECK line: passes",
+  "report": {
+    "role": "reviewer"
+  },
+  "expect": {},
+  "report_md": "No findings. Checked the docs against the behaviour.\n",
+  "coder_md": "Files changed: docs/cart.md.\n\nCANNOT FAIL FIRST docs -- docs-only change, no test can fail before it\n"
+}

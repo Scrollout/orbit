@@ -156,3 +156,31 @@ test("intent step 8 plan: issues with labels, milestone, type; a Project only wh
   r = run(root, "--plan", "M4 X");
   assert.equal(r.stdout, "tracker: no GitHub remote; no tracker commands\n");
 });
+
+// #16 finding 10: the SessionStart handoff never waits for gh.
+test("--cached only reads the cache; a missing or stale cache starts detection detached, for the next session", async () => {
+  const wait = async (ok) => { for (let i = 0; i < 150 && !ok(); i++) await new Promise((r) => setTimeout(r, 100)); return ok(); };
+  const slow = setup();
+  writeFileSync(join(slow, ".stub", "delay"), "2");
+  let t0 = Date.now(), r = run(slow, "--cached");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "", "no cache: no line");
+  assert.ok(Date.now() - t0 < 1500, `returned after ${Date.now() - t0} ms: gh ran in the foreground`);
+  const root = setup();
+  r = run(root, "--cached");
+  assert.equal(r.stdout, "");
+  assert.ok(await wait(() => { try { return cache(root).repo === "acme/app"; } catch { return false; } }), "the background detection wrote the cache");
+  const n = calls(root).length;
+  r = run(root, "--cached");
+  assert.match(r.stdout, /^tracker: GitHub acme\/app, on: issues, labels, milestones, issue types/);
+  assert.equal(calls(root).length, n, "fresh cache: no call");
+  const c = cache(root);
+  c.checked_at = new Date(Date.now() - 8 * 86400000).toISOString();
+  writeFileSync(join(root, ".orbit", "tracker.json"), JSON.stringify(c));
+  writeFileSync(join(root, ".stub", "delay"), "1");
+  t0 = Date.now();
+  r = run(root, "--cached");
+  assert.match(r.stdout, /^tracker: GitHub acme\/app, on: issues/, "stale: the cached line");
+  assert.ok(Date.now() - t0 < 900, "stale: gh not in the foreground");
+  assert.ok(await wait(() => { try { return Date.now() - Date.parse(cache(root).checked_at) < 60000; } catch { return false; } }), "stale: refreshed in the background");
+});

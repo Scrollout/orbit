@@ -1,6 +1,0 @@
-{
-  "report_exit": 2,
-  "report_gaps": [
-    "TestCartTotal: test_first_commit is yes but no TEST FIRST <sha> line"
-  ]
-}

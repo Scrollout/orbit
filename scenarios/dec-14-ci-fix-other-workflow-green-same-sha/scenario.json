@@ -1,3 +1,0 @@
-{
-  "description": "Orbit #6: a failed ci run, then a green run of another workflow on the same sha: the red flag stands, so a ci-fix coder run is allowed"
-}

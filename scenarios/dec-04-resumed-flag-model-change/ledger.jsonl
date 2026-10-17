@@ -1,3 +1,0 @@
-{"ts":"2026-10-14T10:00:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"triage","topic":"tidy","sec":"no","door":"no","prod":"no","track":"just do it","files":["docs/a.md"]}
-{"ts":"2026-10-14T10:01:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"coder","model":"sonnet","topic":"tidy","phase":"build"}
-{"ts":"2026-10-14T10:02:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"coder","model":"opus","topic":"tidy","phase":"fix","resumed":true}

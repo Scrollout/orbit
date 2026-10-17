@@ -1,0 +1,17 @@
+{
+  "description": "an intent trail in order and one handoff each way",
+  "expect": {
+    "exit": 0,
+    "violations": {}
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:01:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"handoff\",\"topic\":\"big-goal\",\"from\":\"decide\",\"to\":\"intent\"}",
+    "{\"ts\":\"2026-10-14T10:02:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"questions\"}",
+    "{\"ts\":\"2026-10-14T10:03:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"draft\"}",
+    "{\"ts\":\"2026-10-14T10:04:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"checked\"}",
+    "{\"ts\":\"2026-10-14T10:05:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"approved\"}",
+    "{\"ts\":\"2026-10-14T10:06:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"intent\",\"milestone\":\"m3\",\"phase\":\"written\"}",
+    "{\"ts\":\"2026-10-14T10:07:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"handoff\",\"topic\":\"big-goal\",\"from\":\"intent\",\"to\":\"decide\"}",
+    ""
+  ]
+}

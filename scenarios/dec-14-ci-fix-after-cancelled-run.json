@@ -1,0 +1,30 @@
+{
+  "description": "a cancelled run is not a failure: a ci-fix coder run after it has no failed run to fix",
+  "expect": {
+    "exit": 1,
+    "violations": {
+      "DEC-14": 1
+    }
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:00:01Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"yes\",\"door\":\"no\",\"prod\":\"no\",\"track\":\"full review\",\"files\":[\".github/workflows/ci.yml\",\"src/a.go\"],\"trigger\":\"asked\"}",
+    "{\"ts\":\"2026-10-14T10:00:02Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"engineer\",\"model\":\"sonnet\",\"topic\":\"feat-x\"}",
+    "{\"ts\":\"2026-10-14T10:00:03Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"reviewer\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"design\"}",
+    "{\"ts\":\"2026-10-14T10:00:04Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"security\",\"model\":\"opus\",\"topic\":\"feat-x\"}",
+    "{\"ts\":\"2026-10-14T10:00:05Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"techlead\",\"model\":\"opus\",\"topic\":\"feat-x\"}",
+    "{\"ts\":\"2026-10-14T10:00:06Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"coder\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"build\",\"worker\":\"w1\"}",
+    "{\"ts\":\"2026-10-14T10:00:07Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"yes\",\"door\":\"no\",\"prod\":\"no\",\"track\":\"full review\",\"files\":[\".github/workflows/ci.yml\",\"src/a.go\"],\"trigger\":\"asked\"}",
+    "{\"ts\":\"2026-10-14T10:00:08Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"ci_run\",\"branch\":\"feat-x\",\"sha\":\"1111111111111111111111111111111111111111\",\"workflow\":\"checks\",\"conclusion\":\"success\"}",
+    "{\"ts\":\"2026-10-14T10:00:09Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"reviewer\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"delivery\"}",
+    "{\"ts\":\"2026-10-14T10:00:10Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"review_start\",\"branch\":\"feat-x\",\"sha\":\"1111111111111111111111111111111111111111\",\"ci_state\":\"green\"}",
+    "{\"ts\":\"2026-10-14T10:00:11Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"coder\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"fix\",\"worker\":\"w1\",\"fix_scope\":\"code\",\"files\":[\"src/a.go\"],\"resumed\":true}",
+    "{\"ts\":\"2026-10-14T10:00:12Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"yes\",\"door\":\"no\",\"prod\":\"no\",\"track\":\"full review\",\"files\":[\".github/workflows/ci.yml\",\"src/a.go\"],\"trigger\":\"asked\"}",
+    "{\"ts\":\"2026-10-14T10:00:13Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"ci_run\",\"branch\":\"feat-x\",\"sha\":\"2222222222222222222222222222222222222222\",\"workflow\":\"checks\",\"conclusion\":\"cancelled\"}",
+    "{\"ts\":\"2026-10-14T10:00:14Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"agent_start\",\"role\":\"coder\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"ci-fix\",\"worker\":\"w1\",\"fix_scope\":\"code\",\"files\":[\"src/a.go\"],\"resumed\":true}",
+    "{\"ts\":\"2026-10-14T10:00:15Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"yes\",\"door\":\"no\",\"prod\":\"no\",\"track\":\"full review\",\"files\":[\".github/workflows/ci.yml\",\"src/a.go\"],\"trigger\":\"asked\"}",
+    "{\"ts\":\"2026-10-14T10:00:16Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"ci_run\",\"branch\":\"feat-x\",\"sha\":\"4444444444444444444444444444444444444444\",\"workflow\":\"checks\",\"conclusion\":\"success\"}",
+    "{\"ts\":\"2026-10-14T10:00:17Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"ci_run\",\"sha\":\"8888888888888888888888888888888888888888\",\"workflow\":\"checks\",\"conclusion\":\"success\"}",
+    "{\"ts\":\"2026-10-14T10:00:18Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.6.0\",\"operator\":\"1.6.0\",\"rules\":\"1.12.1\"},\"kind\":\"merge_built\",\"branch\":\"feat-x\",\"merge_sha\":\"9999999999999999999999999999999999999999\",\"tree_equal\":true,\"ci_state\":\"green\",\"catchup_sha\":\"8888888888888888888888888888888888888888\"}",
+    ""
+  ]
+}

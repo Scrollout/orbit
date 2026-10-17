@@ -6,14 +6,14 @@
 // Also appends `outward` (class, subcommand, refs, session kind, agent_id, exit code) for each shared or destructive action the
 // guard's classifier finds in the call, read again after it ran; never the command line or a token. Nothing reads it as an authorisation.
 // Under an unattended go, the go's own action (the pinned base push, a merged branch delete) is recorded as class `go`, with the sha
-// pushed: the owner's night log.
-import { readFileSync } from "node:fs";
+// pushed: the owner's night log; and to the go log under ~/.claude (goLog below), which the audit trusts for DEC-06.
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { loadProfile } from "../scripts/profile.mjs";
 import { FAIL, classifyOutward, isOperator, parseShell, realCtx, safe } from "./guard.mjs";
-import { goForm, goState } from "./go.mjs";
+import { goForm, goState, stateDir } from "./go.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REF_SRC = /^\+?[\w./@^~-]+$/;
@@ -110,7 +110,7 @@ export function outwardEvents(event, getCtx, env = {}) {
   if (g && goState(event, env)) {
     const dir = g.dir === null ? cwd : resolve(cwd, g.dir);
     const ref = g.kind === "base" ? g.dst : g.name;
-    return [{ dir, argv: ["outward", "class=go", `subcommand=${g.kind === "base" ? "push" : "push --delete"}`, `refs:=${JSON.stringify([`origin/${safe(ref)}`])}`,
+    return [{ dir, go: { subcommand: g.kind === "base" ? "push" : "push --delete", ref, ...(g.kind === "base" ? { sha: g.sha } : {}), exit_code: code }, argv: ["outward", "class=go", `subcommand=${g.kind === "base" ? "push" : "push --delete"}`, `refs:=${JSON.stringify([`origin/${safe(ref)}`])}`,
       ...(g.kind === "base" ? [`sha=${g.sha}`] : []), `session_kind=${kind}`, `exit_code:=${code}`] }];
   }
   return classifyOutward(cmds, text, cwd, env, after).findings.filter((f) => f.cls === "shared" || f.cls === "destructive").map((f) => ({
@@ -118,6 +118,15 @@ export function outwardEvents(event, getCtx, env = {}) {
     argv: ["outward", `class=${f.cls}`, `subcommand=${String(f.sub ?? "?").split(" ").map(safe).join(" ")}`, `refs:=${JSON.stringify((f.refs ?? []).map((x) => String(x)))}`,
       `session_kind=${kind}`, ...(typeof event.agent_id === "string" ? [`agent_id=${safe(event.agent_id)}`] : []), `exit_code:=${code}`],
   }));
+}
+
+// The go's own actions also go to ~/.claude/orbit/unattended/go-log.jsonl, which the guard keeps agents from writing: the audit
+// counts a go base push as the owner's only with a matching record there (a ledger line alone is agent-writable).
+export function goLog(event, outs, env, now = new Date()) {
+  const dir = stateDir(env), lines = outs.filter((o) => o.go).map((o) => JSON.stringify({ ts: now.toISOString(), session: event.session_id, ...o.go }));
+  if (!dir || !lines.length) return;
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  appendFileSync(join(dir, "go-log.jsonl"), lines.join("\n") + "\n", { mode: 0o600 });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -132,7 +141,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     let ctx = null;
     const cwd = resolve(event.cwd ?? process.cwd());
-    for (const o of outwardEvents(event, () => (ctx ??= realCtx(cwd, process.env)), process.env)) {
+    const outs = outwardEvents(event, () => (ctx ??= realCtx(cwd, process.env)), process.env);
+    try { goLog(event, outs, process.env); } catch { /* fail-open; the audit then finds no owner push */ }
+    for (const o of outs) {
       const root = mainRoot(o.dir, git);
       if (!root || !loadProfile(root).data) continue;
       spawnSync("node", [join(here, "..", "scripts", "ledger.mjs"), "--root", root, "--session", session, ...o.argv], { timeout: 5000, stdio: "ignore" });

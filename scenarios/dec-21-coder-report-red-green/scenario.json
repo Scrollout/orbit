@@ -1,9 +1,0 @@
-{
-  "description": "coder report with red-then-green lines for the proof test and a reasoned CANNOT FAIL FIRST for the docs part: passes",
-  "report": {
-    "role": "coder",
-    "tests": [
-      "TestCartTotal"
-    ]
-  }
-}

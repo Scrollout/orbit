@@ -1,0 +1,17 @@
+{
+  "description": "coder report shows the proof test passing only, never failing without the change, and an exemption without a reason: proof gaps",
+  "report": {
+    "role": "coder",
+    "tests": [
+      "TestCartTotal"
+    ]
+  },
+  "expect": {
+    "report_exit": 2,
+    "report_gaps": [
+      "TestCartEmpty: CANNOT FAIL FIRST needs a reason",
+      "TestCartTotal: no RED line (the test failing without the change)"
+    ]
+  },
+  "report_md": "Files changed: src/cart.go, src/cart_test.go.\n\nGREEN TestCartTotal -- --- PASS: TestCartTotal (0.00s)\nCANNOT FAIL FIRST TestCartEmpty --\n"
+}

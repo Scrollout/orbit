@@ -11,7 +11,7 @@
 // Outward (every session, every git, gh and GitHub MCP call): destructive actions are denied, shared ones ask where the
 // permission mode prompts and are denied elsewhere or when not alone in their call (see "outward actions" below).
 // A guardrail against slips, not a sandbox: it does not model every way a program can write a file.
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -277,16 +277,32 @@ const HELPER_BUDGET_MS = 7000;   // every helper git call of one hook run shares
 const HELPER_CALL_MS = 3000;     // one helper git call
 const todo = (v) => typeof v !== "string" || !v.trim() || /^TODO\b/i.test(v.trim());
 
-// The path with symlinks resolved, for the part of it that exists.
-export function real(f) {
-  const rest = [];
-  for (let cur = f; ; cur = dirname(cur)) {
-    try { return join(realpathSync(cur), ...rest); } catch {
-      if (dirname(cur) === cur) return f;
+// The path with symlinks resolved, for the part of it that exists; a dangling link is followed to where it points (so a
+// write through it lands there). null: a link it cannot resolve (a loop, more than 40 hops, unreadable); callers that
+// protect a directory treat null as inside it.
+const LINK_HOPS = 40;
+export function realOrNull(f) {
+  let path = f;
+  for (let hops = 0; ;) {
+    const rest = [];
+    let next = null;
+    for (let cur = path; ; cur = dirname(cur)) {
+      try { return join(realpathSync(cur), ...rest); } catch { /* a missing part or a dangling link: look at it below */ }
+      let st = null;
+      try { st = lstatSync(cur); } catch { /* missing: go up */ }
+      if (st?.isSymbolicLink()) {
+        if (++hops > LINK_HOPS) return null;
+        try { next = join(resolve(dirname(cur), readlinkSync(cur)), ...rest); } catch { return null; }
+        break;
+      }
+      if (st) return null;   // it exists, yet realpath failed
+      if (dirname(cur) === cur) return path;
       rest.unshift(basename(cur));
     }
+    path = next;
   }
 }
+export const real = (f) => realOrNull(f) ?? f;
 
 export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
   const deadline = Date.now() + budgetMs;
@@ -320,6 +336,7 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
             pusher: ["agent", "owner"].includes(data.base_pusher) ? data.base_pusher : null,
             trailer: todo(data.review_trailer) || data.review_trailer === "none" ? null : data.review_trailer,
             protected: (Array.isArray(data.protected_branches) ? data.protected_branches : []).filter((b) => !todo(b)),
+            checks: (Array.isArray(data.required_checks) ? data.required_checks : []).filter((b) => !todo(b)),
           };
         };
         const floor = read(main) ?? (project && project !== main ? read(project) : null);
@@ -333,6 +350,7 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
             pusher: floor?.pusher ?? null,
             trailer,
             protected: [...new Set([...(floor?.protected ?? []), ...wt.protected, ...(wt.base ? [wt.base] : [])])],
+            checks: floor?.checks ?? [],
           };
         }
         profiles.set(key, p);
@@ -368,13 +386,16 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
       if (r === FAIL) return FAIL;
       return r.code === 0 && r.out.startsWith("origin/") ? r.out.slice(7) : null;
     },
-    // The unattended go's evidence calls (git in that repo, gh api): one deadline of 6 s, inside the hook's budget.
+    // The unattended go's evidence calls (git in that repo, gh api): one deadline of 6 s, inside the hook's budget. Each runs
+    // in its own process group, killed with SIGKILL at the deadline and after it returns, so neither a child that ignores
+    // SIGTERM nor a grandchild (ssh) holding its output keeps the hook waiting or outlives the call.
     evidence() {
       const end = Math.min(Date.now() + EVIDENCE_MS, deadline);
       const call = (cmd, args) => {
         const left = end - Date.now();
         if (left < 50) return FAIL;
-        const r = spawnSync(cmd, args, { encoding: "utf8", timeout: left, maxBuffer: 64 << 20 });
+        const r = spawnSync(cmd, args, { encoding: "utf8", timeout: left, killSignal: "SIGKILL", detached: true, maxBuffer: 64 << 20 });
+        if (r.pid) { try { process.kill(-r.pid, "SIGKILL"); } catch { /* the group is gone */ } }
         return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
       };
       return { git: (d, ...a) => call("git", ["-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
@@ -1094,6 +1115,7 @@ export function gitCmdEnv(w) {
   return !HARMLESS_CMD.has(w.lit.slice(w.lit.indexOf("=") + 1).trim());
 }
 
+const REMOTE_WRITES = new Set(["add", "set-url", "set-head", "set-branches", "rename", "remove", "rm"]);
 // loose: a git word found among another program's arguments; an unknown subcommand there is no git call.
 function gitOut(r, st, getCtx, add, depth, loose = false) {
   const g = gitSplit(r.args, st.cwd, false);
@@ -1115,6 +1137,11 @@ function gitOut(r, st, getCtx, add, depth, loose = false) {
     if (lits.includes(null) || lits.some((x) => x === "-e" || x === "--edit") || lits.some((x) => riskyKey(x))) return shared("git config that can redirect a command");
     return;
   }
+  if (sub === "remote") {
+    // Where `git push origin` goes: adding, renaming, removing a remote or changing its URL or HEAD is shared.
+    const op = rest.map((w) => w.lit).find((x) => x === null || !x.startsWith("-"));
+    if (op === null || REMOTE_WRITES.has(op)) return shared("git remote change (where a push goes)");
+  }
   if ((sub === "submodule" || sub === "rebase" || sub === "bisect") && GITGH.test(rest.map((w) => w.raw).join(" "))) return shared("git running a command");
   if (commandOption(sub, rest)) return shared("git running a command");
   if (GIT_BUILTINS.has(sub)) return;
@@ -1125,6 +1152,32 @@ function gitOut(r, st, getCtx, add, depth, loose = false) {
   if (a.trim().startsWith("!")) return shared("git shell alias");
   const words = a.trim().split(/\s+/).map((lit) => ({ lit, exp: lit, raw: lit, vars: [] }));
   return gitOut({ ...r, redirect, args: [...(g.dir !== st.cwd ? [{ lit: "-C", raw: "-C" }, { lit: g.dir, exp: g.dir, raw: g.dir }] : []), ...words, ...rest] }, st, getCtx, add, depth + 1);
+}
+
+// The tracker's GraphQL writes (#14): issue type, Project create, link, item add and Status move. Silent when they are the
+// only top-level fields of the one mutation.
+const TRACKER_MUTATIONS = new Set(["updateIssueIssueType", "createProjectV2", "linkProjectV2ToRepository", "addProjectV2ItemById", "updateProjectV2ItemFieldValue"]);
+// The top-level field names of a single GraphQL mutation (aliases included as names), or null when it is anything else or
+// holds what this reader does not model (comments, block strings, fragments, directives, a second operation).
+export function mutationFields(q) {
+  if (q.includes('"""')) return null;
+  const t = q.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  if (/[#@]|\.\.\./.test(t) || !/^\s*mutation\b/.test(t)) return null;
+  const names = [];
+  let braces = 0, parens = 0, opened = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === "{") { braces++; opened = true; continue; }
+    if (c === "}") { if (--braces < 0) return null; if (braces === 0) return t.slice(i + 1).trim() ? null : names; continue; }
+    if (c === "(") { parens++; continue; }
+    if (c === ")") { if (--parens < 0) return null; continue; }
+    if (opened && braces === 1 && parens === 0 && /[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < t.length && /\w/.test(t[j])) j++;
+      names.push(t.slice(i, j)); i = j - 1;
+    }
+  }
+  return null;
 }
 
 function ghOut(r, add, loose = false) {
@@ -1170,6 +1223,7 @@ function ghOut(r, add, loose = false) {
     return;
   }
   if (p0 === "run" && p1 === "delete") return f("destructive", "run delete");
+  if ((p0 === "project" && ["delete", "item-delete", "field-delete"].includes(p1)) || ((p0 === "issue" || p0 === "label") && p1 === "delete")) return f("destructive", `${p0} ${p1}`);
   if (p0 === "run" && (p1 === "cancel" || p1 === "rerun")) return f("shared", `run ${p1}`);
   if (p0 === "workflow" && p1 === "run") return f("shared", "workflow dispatch");
   if (p0 !== "api") return;
@@ -1183,6 +1237,9 @@ function ghOut(r, add, loose = false) {
     if (unread || !/\bmutation\b/.test(body)) return unread ? f("shared", "GraphQL mutation", "gh api graphql") : undefined;
     if (/\b(createCheckRun|updateCheckRun|createCheckSuite)\b/.test(body)) return f("destructive", "GraphQL check run write", "gh api graphql");
     if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(body) || (/\bupdateRefs?\b/.test(body) && /\bforce\s*[:=]\s*true\b/.test(body))) return f("destructive", "GraphQL delete, archive or forced ref update", "gh api graphql");
+    const queries = p.fields.filter((x) => x.lit.startsWith("query="));
+    const top = queries.length === 1 ? mutationFields(queries[0].lit.slice(6)) : null;
+    if (top && top.length && top.every((x) => TRACKER_MUTATIONS.has(x))) return;
     return f("shared", "GraphQL mutation", "gh api graphql");
   }
   if (m === "GET" || m === "HEAD") return;
@@ -1200,6 +1257,8 @@ function ghOut(r, add, loose = false) {
     if (seg[0] === "transfer") return f("destructive", "repo transfer", action);
     if (seg.includes("statuses") || seg[0] === "check-runs" || seg[0] === "check-suites") return f("destructive", "commit status or check run write", action);
     if (seg[0] === "issues") return;
+    // Tracker metadata (#14): creating or editing a milestone or a label.
+    if ((seg[0] === "milestones" || seg[0] === "labels") && ((m === "POST" && seg.length === 1) || (m === "PATCH" && seg.length === 2))) return;
     if (seg[0] === "pulls" && (seg.length === 1 || (seg.length === 2 && n(seg[1])) || seg[1] === "comments" || (n(seg[1]) && seg[2] === "comments"))) return;
     return f("shared", "repo write", action);
   }
@@ -1392,8 +1451,8 @@ function claudeWrite(cmds, st, dirs) {
   const hit = (w) => {
     const e = expOf(w, st);
     if (e == null || (!isAbsolute(e) && !st.cwd)) return w.raw.includes(".claude") ? w.raw : null;
-    const f = real(resolve(st.cwd ?? "/", e));
-    return dirs.some((d) => inside(d, f)) ? w.raw : null;
+    const f = realOrNull(resolve(st.cwd ?? "/", e));
+    return f === null || dirs.some((d) => inside(d, f)) ? w.raw : null;
   };
   for (const cmd of cmds) {
     for (const { target } of cmd.redirs) { const h = hit(target); if (h) return h; }
@@ -1421,13 +1480,17 @@ function claudeWrite(cmds, st, dirs) {
     const targets = writeTargets(r.name, r.args);
     if (r.xargs && (targets.length || r.name in WRITERS) && text.includes(".claude")) return r.name;
     for (const t of targets) { const h = hit(t); if (h) return h; }
+    // A link to a ~/.claude path (ln in any mode, cp -s or -l) is a way to write it later: every operand counts.
+    if (r.name === "ln" || (r.name === "cp" && r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit)))) {
+      for (const t of positionals(r.args, WRITERS[r.name].opts)) { const h = hit(t); if (h) return h; }
+    }
   }
   return null;
 }
 
 // While a code is pending: a read of a ~/.claude path, the transcripts, a pane capture or a pty, by any tool.
 function pendingRead(tool, ti, cwd, dirs, env) {
-  const inDirs = (p) => typeof p === "string" && p && dirs.some((d) => inside(d, real(resolve(cwd ?? "/", p))));
+  const inDirs = (p) => { if (typeof p !== "string" || !p) return false; const f = realOrNull(resolve(cwd ?? "/", p)); return f === null || dirs.some((d) => inside(d, f)); };
   if (tool === "Read" || tool === "NotebookRead") return inDirs(ti.file_path ?? ti.notebook_path) || (typeof ti.file_path === "string" && ti.file_path.includes(".claude"));
   if (tool === "Grep" || tool === "Glob") return inDirs(ti.path ?? cwd ?? "/") || JSON.stringify(ti).includes(".claude");
   if (tool !== "Bash") return false;
@@ -1444,16 +1507,19 @@ function goAction(cmds, cwd, input, getCtx) {
   const g = goForm(cmds);
   if (!g) return null;
   const dir = g.dir === null ? cwd : isAbsolute(g.dir) ? g.dir : cwd && resolve(cwd, g.dir);
-  const c = getCtx(), base = dir ? c.originHead(dir) : FAIL;
+  const c = getCtx(), base = dir ? c.originHead(dir) : FAIL, floor = c.profile(null);
   const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha.slice(0, 12)}` : `git push --delete → origin/${safe(g.name)}`;
   const no = (why) => outwardReason("DENY", { what: g.kind === "base" ? "unattended base push" : "unattended branch delete", action }, input, { note: why, do: "leave it for the owner" });
   if (!dir) return no("the directory is unknown");
   if (base === FAIL || !base || !/^[\w./-]+$/.test(base)) return no("origin/HEAD cannot be read");
+  // The base, the review trailer and the required checks come from the main checkout's profile (an agent can edit a worktree's).
+  if (!floor?.base || floor.base !== base) return no(`origin/HEAD (${safe(base)}) is not the main checkout profile's base_branch`);
   const p = c.profile(dir);
   if (g.kind === "base") {
     if (g.dst !== base) return no(`the go pushes only origin/HEAD's branch (${safe(base)})`);
-    const keys = ["Reviewed-by", ...(p?.trailer && !["co-authored-by", "signed-off-by"].includes(p.trailer.toLowerCase()) ? [p.trailer] : [])];
-    const why = baseEvidence(c.evidence(dir), dir, g.sha, base, keys);
+    const key = floor.trailer ?? "Reviewed-by";
+    if (["co-authored-by", "signed-off-by"].includes(key.toLowerCase())) return no("the profile's review_trailer is not a review");
+    const why = baseEvidence(c.evidence(dir), dir, g.sha, base, key, floor.checks ?? []);
     return why ? no(why) : { allow: true };
   }
   if (FLOOR(g.name) || g.name === base || p?.base === g.name || (p?.protected ?? []).some((x) => x === g.name || (x.endsWith("*") && g.name.startsWith(x.slice(0, -1))))) return null;
@@ -1473,8 +1539,8 @@ export function guard(input, env = {}, ctx = null) {
   if (EDIT_TOOLS.includes(tool)) {
     const fp = ti.file_path ?? ti.notebook_path;
     if (typeof fp === "string" && fp) {
-      const abs = real(resolve(cwd ?? "/", fp)), d = dirs.find((x) => inside(x, abs));
-      if ((d && !noteFile(relative(d, abs))) || (!d && !isAbsolute(fp) && !cwd && fp.includes(".claude"))) return stateDeny("write to ~/.claude", `${safe(tool)} ${safe(fp)}`, input);
+      const abs = realOrNull(resolve(cwd ?? "/", fp)), d = abs === null ? null : dirs.find((x) => inside(x, abs));
+      if (abs === null || (d && !noteFile(relative(d, abs))) || (!d && !isAbsolute(fp) && !cwd && fp.includes(".claude"))) return stateDeny("write to ~/.claude", `${safe(tool)} ${safe(fp)}`, input);
     }
     if (!op) return null;
     const f = ti.file_path ?? ti.notebook_path;

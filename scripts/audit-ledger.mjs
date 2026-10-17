@@ -1,5 +1,6 @@
 // Replays a session ledger against the `script`-tagged rules and prints violations by rule id. Zero dependencies.
-//   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md]
+//   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md] [--go-log <file>]
+//   --go-log: the capture hook's go log (default ~/.claude/orbit/unattended/go-log.jsonl, which the guard keeps agents from writing).
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
 //   triage{topic,sec,door,prod,track,files?,tdd?,trigger?,why?,decision_topic?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
@@ -14,7 +15,7 @@
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
 //   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.1)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
-//   outward{class,subcommand,refs?,sha?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run (class go: the unattended go's own action, with the sha pushed); recorded, never an authorisation, except that a go base push is the owner's push for DEC-06
+//   outward{class,subcommand,refs?,sha?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run (class go: the unattended go's own action, with the sha pushed); recorded, never an authorisation, except that a go base push with a matching go log record is the owner's push for DEC-06
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
@@ -88,10 +89,18 @@ const tagSha = dict(), releasedTags = new Set(), releasedShas = new Set();
 let pendingRelease = null;            // change-set mode without a release tool: the last base-pushed merge awaiting its release
 const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
 let n = 0, events = 0;
-// The unattended go is the owner's approval (threat model): a base push its `go` event records (same session, sha, exit 0) is the owner's push for DEC-06.
+// The unattended go is the owner's approval (threat model): a base push its `go` event records (same session, sha, exit 0) is the
+// owner's push for DEC-06, only when the go log (written by the capture hook under ~/.claude, guard-protected) has the same record.
+const goLogFile = flag("go-log") ?? (process.env.HOME ? join(process.env.HOME, ".claude", "orbit", "unattended", "go-log.jsonl") : null);
+const goLogged = new Set();
+if (goLogFile && existsSync(goLogFile)) {
+  for (const raw of readFileSync(goLogFile, "utf8").split("\n")) {
+    try { const e = JSON.parse(raw); if (e?.subcommand === "push" && e.exit_code === 0 && typeof e.sha === "string") goLogged.add(`${e.session} ${e.sha}`); } catch { /* a torn line counts for nothing */ }
+  }
+}
 const goPushes = new Set();
 for (const raw of readFileSync(file, "utf8").split("\n")) {
-  try { const e = JSON.parse(raw); if (e?.kind === "outward" && e.class === "go" && e.subcommand === "push" && e.exit_code === 0 && e.sha) goPushes.add(`${e.session} ${e.sha}`); } catch { /* reported below */ }
+  try { const e = JSON.parse(raw); if (e?.kind === "outward" && e.class === "go" && e.subcommand === "push" && e.exit_code === 0 && e.sha && goLogged.has(`${e.session} ${e.sha}`)) goPushes.add(`${e.session} ${e.sha}`); } catch { /* reported below */ }
 }
 
 for (const raw of readFileSync(file, "utf8").split("\n")) {

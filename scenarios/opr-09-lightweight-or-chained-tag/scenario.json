@@ -1,7 +1,0 @@
-{
-  "description": "a lightweight tag pushed chained after another command",
-  "profile_extra": [
-    "release_when: change-set",
-    "release_via: session"
-  ]
-}

@@ -1,3 +1,0 @@
-{
-  "description": "after the re-reviewer accepted and CI failed, a coder run with phase fix (not ci-fix) still needs the owner_go"
-}
