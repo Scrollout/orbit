@@ -519,8 +519,8 @@ export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
         if (r.pid) { try { process.kill(-r.pid, "SIGKILL"); } catch { /* the group is gone */ } }
         return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
       };
-      // The push sends the real objects: the evidence reads them too, past replace refs and grafts (GIT_GRAFT_FILE; #41 review 5).
-      return { git: (d, ...a) => call("git", ["--no-replace-objects", "-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
+      // The push sends the real objects: the evidence reads them too, past replace refs, grafts (GIT_GRAFT_FILE) and the commit-graph file (core.commitGraph=false), which the agent can write (#41 review 5).
+      return { git: (d, ...a) => call("git", ["--no-replace-objects", "-c", "core.commitGraph=false", "-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
     },
     commit(dir, rev) {
       if (rev.startsWith("-") || !/^[\w./@{}^~-]+$/.test(rev)) return null;

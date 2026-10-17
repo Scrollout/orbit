@@ -2,5 +2,5 @@
   "note": "Versions the scenarios were last reviewed against. A rule, script or skill edit bumps its version (npm test checks the manifest); the pin then fails until you re-read the scenarios, fix the ones whose outcome changed on purpose, and update this file.",
   "decide": "1.7.7",
   "operator": "1.10.2",
-  "rules": "1.15.20"
+  "rules": "1.15.21"
 }
