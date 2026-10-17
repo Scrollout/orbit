@@ -109,9 +109,13 @@ export function outwardEvents(event, getCtx, env = {}) {
   const g = goForm(cmds);
   if (g && goState(event, env)) {
     const dir = g.dir === null ? cwd : resolve(cwd, g.dir);
-    const ref = g.kind === "base" ? g.dst : g.name;
-    return [{ dir, go: { subcommand: g.kind === "base" ? "push" : "push --delete", ref, ...(g.kind === "base" ? { sha: g.sha } : {}), exit_code: code }, argv: ["outward", "class=go", `subcommand=${g.kind === "base" ? "push" : "push --delete"}`, `refs:=${JSON.stringify([`origin/${safe(ref)}`])}`,
-      ...(g.kind === "base" ? [`sha=${g.sha}`] : []), `session_kind=${kind}`, `exit_code:=${code}`] }];
+    // Only a pinned <sha>^{object} push is the go's (a ref form or a bare sha was denied, so if it ran it was not by the go); its sha is what was pushed.
+    if ((g.kind !== "base" && g.kind !== "tag") || g.sha) {
+      const sub = { base: "push", delete: "push --delete", tag: "push tag", release: "release create" }[g.kind], sha = g.sha;
+      const ref = g.kind === "base" ? `origin/${safe(g.dst)}` : g.kind === "delete" ? `origin/${safe(g.name)}` : g.tag;
+      return [{ dir, go: { subcommand: sub, ref: g.kind === "base" ? g.dst : g.kind === "delete" ? g.name : g.tag, ...(sha ? { sha } : {}), exit_code: code }, argv: ["outward", "class=go", `subcommand=${sub}`, `refs:=${JSON.stringify([ref])}`,
+        ...(sha ? [`sha=${sha}`] : []), `session_kind=${kind}`, `exit_code:=${code}`] }];
+    }
   }
   return classifyOutward(cmds, text, cwd, env, after).findings.filter((f) => f.cls === "shared" || f.cls === "destructive").map((f) => ({
     dir: f.dir ?? cwd,
