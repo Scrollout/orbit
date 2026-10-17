@@ -675,7 +675,11 @@ test("#25 fix 1: an extglob group holding a substitution, a backtick or a quote 
 });
 
 test("#25 fix 2: a push target holding an extglob group is unreadable (shared)", () => {
-  withGo((env) => attendedAsk(env, ["git push origin @(main)", "git push origin HEAD:@(main)", "git push origin +(main)"]));
+  withGo((env) => {
+    attendedAsk(env, ["git push origin @(main)", "git push origin HEAD:@(main)"]);
+    // +(main) starts with +: it may be passed as a +refspec, so it fails closed as a force push (0.21.1 fix round).
+    assert.equal(kind(guard(bash("git push origin +(main)", { ...MAIN, permission_mode: "default" }), env, ctx())), "deny");
+  });
 });
 
 test("#25 fix 5: an escaped, quoted or expanded glob character before ( is no extglob group (fails closed)", () => {
@@ -706,5 +710,17 @@ test("#28: a push refspec with an unquoted { is unreadable (shared): bash may ex
     for (const c of ["git push origin feat", "git push origin 'x{y}'", "git push origin x\\{y\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
     // Braces outside a push refspec keep their result.
     for (const c of ["echo {a,b}", "find . -name '*.go' -exec gofmt -l {} +", "mkdir -p x/{a,b}", "git log --format=%H -n1 HEAD@{1}"]) assert.equal(guard(bash(c, { ...MAIN, cwd: h, permission_mode: "default" }), env, ctx()), null, `stays silent: ${c}`);
+  });
+});
+
+test("#27/#28 fix round: a glob word that may be a force option or a +refspec is a force push (deny in every mode)", () => {
+  withGo((env) => {
+    const force = ["git push origin +ma?n", "git push origin +feat*", "git push origin +HEAD:{feat,x}", "git push origin -- +feat*", "git push -f* origin feat", "git push -{f,} origin feat", "git push --force-with-lease={a,b} origin feat", "git push --force-with-lease=feat:{abc} origin feat", "git push origin {+feat,x}"];
+    for (const m of ["default", "bypassPermissions", "dontAsk", undefined]) {
+      const who = { ...MAIN, ...(m ? { permission_mode: m } : {}) };
+      for (const c of force) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+    }
+    attendedAsk(env, ["git push origin m?in", "git push origin {main,feat}"]);
+    assert.equal(guard(bash("git push origin feat", { ...MAIN, permission_mode: "default" }), env, ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } })), null, "a plain feature branch stays silent");
   });
 });

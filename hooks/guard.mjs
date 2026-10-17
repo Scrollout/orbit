@@ -1037,11 +1037,15 @@ const short = (s) => (s === "@" ? "HEAD" : /^(heads|tags)\//.test(s) ? `refs/${s
 function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   let force = false, del = false, wide = false, other = false, unknown = false;
   const pos = [];
+  // A glob word that may expand to an option or a +refspec (-f*, -{f,}, +ma?n, {+feat,x}) fails closed as a force push.
+  const globForce = (w) => { const t = w.lit ?? w.raw; return /^[+-]/.test(t) || t.includes("{+") || t.includes(",+"); };
+  const globPos = (w) => { if (globForce(w)) force = true; return null; };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;
     // A word with an unquoted glob character or { is a target it cannot read: bash may expand it to any name (#27, #28).
-    if (a === null || rest[i].glob) { pos.push(null); continue; }
-    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => (w.glob ? null : w.lit))); break; }
+    if (rest[i].glob) { pos.push(globPos(rest[i])); continue; }
+    if (a === null) { pos.push(null); continue; }
+    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => (w.glob ? globPos(w) : w.lit))); break; }
     if (a.startsWith("--")) {
       const eq = a.indexOf("="), n = pushLong(a.slice(2, eq < 0 ? undefined : eq));
       if (n === null) { unknown = true; continue; }
