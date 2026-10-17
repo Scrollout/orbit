@@ -424,7 +424,8 @@ test("#20 row 4: attached -f/-F query forms are read; a gh api graphql whose que
       assert.equal(kind(guard(bash(c), env, ctx())), "deny", `under the go: ${c}`);
     }
     assert.equal(kind(guard(bash("gh api graphql -fquery='mutation{deleteRef(input:{refId:\"x\"}){clientMutationId}}'", attended), env, ctx())), "deny", "attached form reaches the deleteRef denial");
-    assert.equal(guard(bash("gh api graphql -fquery='query{viewer{login}}'", attended), env, ctx()), null, "a read query stays silent");
+    assert.equal(kind(guard(bash("gh api graphql -fquery='query{viewer{login}}'", attended), env, ctx())), "ask", "an attached field is not an exact shape (#21)");
+    assert.equal(guard(bash("gh api graphql -f query='query{viewer{login}}'", attended), env, ctx()), null, "a read query stays silent");
   });
 });
 
@@ -440,7 +441,68 @@ test("#20 row 2: a link hop resolves against the link's real directory; an ln -s
       for (const c of ["echo x > a/l", `printf x > ${w}/a/l`]) assert.equal(kind(t(c)), "deny", `${mode} ${c}`);
       assert.equal(kind(t(`ln -s ../.claude/orbit/unattended/go-${SID}.json ${h}/proj/l`)), "deny", `${mode} ln -s from another cwd`);
       assert.equal(kind(t(`ln -s ../.claude/orbit/unattended/go-${SID}.json ${h}/proj`)), "deny", `${mode} ln -s into a directory`);
-      assert.equal(t(`ln -s ../notes.md ${h}/proj/l`), null, `${mode} a relative link outside ~/.claude stays allowed`);
+      assert.equal(kind(t(`ln -s ../notes.md ${h}/proj/l`)), "ask", `${mode} a relative target with .. is shared (#21)`);
     }
   } finally { rmSync(h, { recursive: true, force: true }); rmSync(w, { recursive: true, force: true }); }
+});
+
+// ---------- fix-round 3 re-review of 0.21.0 (Orbit #21): allowlists that fail closed ----------
+const MERGE_PR = "{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}";
+const DEL_REF = "(input:{refId:\"x\"}){clientMutationId}}";
+const attendedAsk = (env, cmds, who = { ...MAIN, permission_mode: "default" }) => {
+  for (const c of cmds) {
+    assert.equal(kind(guard(bash(c, who), env, ctx())), "ask", `attended: ${c}`);
+    assert.match(guard(bash(c, { ...who, permission_mode: "bypassPermissions" }), env, ctx()), /needs the owner/, `under the go: ${c}`);
+  }
+};
+
+test("#21 row 1: a gh placeholder that supplies mutation or deleteRef is shared, never silent", () => {
+  withGo((env) => attendedAsk(env, [
+    `GH_REPO=mutation/x gh api graphql -F query='{owner}${MERGE_PR}'`,
+    `GH_REPO=mutation/x gh api graphql -F query=':owner${MERGE_PR}'`,
+    `GH_REPO=x/mutation gh api graphql -F query='{repo}${MERGE_PR}'`,
+    `gh api graphql -F query='{branch}${MERGE_PR}'`,
+    `GH_REPO=mutation/deleteRef gh api graphql -F query='{owner}{{repo}${DEL_REF}'`,
+    `GH_REPO=x/deleteRef gh api graphql -F query='mutation{{repo}${DEL_REF}'`,
+    `gh api graphql -F query=':owner{{branch}${DEL_REF}'`,
+  ]));
+});
+
+test("#21 row 2: ln -s with a target directory in any spelling, or a relative target with .., is shared", () => {
+  const h = home(), env = { HOME: h }, w = realpathSync(mkdtempSync(join(tmpdir(), "orbit-wt-")));
+  try {
+    mkdirSync(join(h, "proj"));
+    mkdirSync(stateDir(h), { recursive: true });
+    writeFileSync(join(stateDir(h), `go-${SID}.json`), JSON.stringify({ session_id: SID, opened: Date.now() - 1000, until: Date.now() + 3600_000 }));
+    const g = `../.claude/orbit/unattended/go-${SID}.json`, d = `${h}/proj`;
+    attendedAsk(env, [`ln -s --target-directory ${d} ${g}`, `ln -s -t${d} ${g}`, `ln -st ${d} ${g}`, `ln -s --target=${d} ${g}`, `cp -s --target-directory ${d} ${g}`,
+      `ln -s ../notes.md ${d}/l`], { session_id: SID, cwd: w, permission_mode: "default" });
+    assert.equal(kind(guard(bash(`ln -s -t ${d} ${g}`, { session_id: SID, cwd: w, permission_mode: "default" }), env, ctx())), "deny", "-t DIR resolves into ~/.claude");
+  } finally { rmSync(h, { recursive: true, force: true }); rmSync(w, { recursive: true, force: true }); }
+});
+
+test("#21 row 3: a clustered short flag carrying the query beside a decoy read is shared", () => {
+  withGo((env) => {
+    attendedAsk(env, [`gh api graphql -iFquery='mutation${MERGE_PR}' -f query='query{viewer{login}}'`, `gh api graphql -f query='query{viewer{login}}' -iFquery='mutation${MERGE_PR}'`]);
+    assert.equal(kind(guard(bash(`gh api graphql -iFquery='mutation{deleteRef${DEL_REF}' -f query='query{viewer{login}}'`, { ...MAIN, permission_mode: "default" }), env, ctx())), "deny", "a destructive name keeps its class");
+  });
+});
+
+test("#21 row 4: /graphql, the full URL and GRAPHQL are the GraphQL endpoint", () => {
+  withGo((env) => {
+    const eps = ["/graphql", "https://api.github.com/graphql", "GRAPHQL"];
+    attendedAsk(env, eps.map((e) => `gh api ${e} -f query='mutation${MERGE_PR}'`));
+    for (const e of eps) assert.equal(kind(guard(bash(`gh api ${e} -f query='mutation{deleteRef${DEL_REF}'`, { ...MAIN, permission_mode: "default" }), env, ctx())), "deny", `deleteRef via ${e}`);
+  });
+});
+
+test("#21: the tracker --plan lines, a plain read query and a plain link in the repo stay silent", () => {
+  withGo((env) => {
+    const who = { ...MAIN, permission_mode: "default" };
+    const all = { issues: true, labels: true, milestones: true, issue_types: true, projects: true };
+    const cmds = plan({ repo: "o/r" }, all, "M1 plan", ["core"]).filter((l) => l.startsWith("gh ")).map((l) => l.replace(/<[^>]*>/g, "X"));
+    assert.ok(cmds.length >= 4 && cmds.some((c) => c.includes("graphql")));
+    for (const c of [...cmds, "gh api graphql -f query='query{viewer{login}}'"]) assert.equal(guard(bash(c, who), env, ctx()), null, c);
+    assert.equal(guard(bash("ln -s a b", { ...who, cwd: repo }), env, ctx()), null, "ln -s a b in the repo");
+  });
 });

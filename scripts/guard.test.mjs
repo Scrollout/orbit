@@ -441,6 +441,14 @@ test("round 2 graphql: a query from a file or --input is denied", () => {
   allowedOp("gh api graphql -f query='{ viewer { login } }' -F n=3");
 });
 
+test("#21 OPR-01: ghDeny reads GraphQL with the same allowlist (placeholder, clustered flag, endpoint spellings)", () => {
+  const m = "{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}";
+  for (const c of [`gh api graphql -F query='{owner}${m}'`, `gh api graphql -F query=':owner${m}'`, `gh api graphql -F query='{branch}${m}'`,
+    `gh api graphql -iFquery='mutation${m}' -f query='query{viewer{login}}'`,
+    `gh api /graphql -f query='mutation${m}'`, `gh api https://api.github.com/graphql -f query='mutation${m}'`, `gh api GRAPHQL -f query='mutation${m}'`]) deniedOp(c);
+  allowedOp("gh api graphql -f query='query{viewer{login}}'");
+});
+
 test("round 2 DEC-08: global -c and -C do not hide a worker's merge", () => {
   const w = { agent_id: "w1", agent_type: "orbit:coder", cwd: "/r/main" };
   for (const c of ["git -c user.name=x merge --no-ff -m x topic", "git -C \"$DIR\" merge --no-ff -m x topic", "git -C /r/main-topic -c a.b=c merge --no-ff topic"]) {

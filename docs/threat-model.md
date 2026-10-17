@@ -31,4 +31,5 @@ The owner approves in two forms: an answer to a prompt, or **the go** (`/orbit:u
 - The owner may approve a prompt without reading it; the reason is short and fixed-shape to make that less likely, never suppressed.
 - A night merge under the go is proven by CI as the agent left it, not by a reviewer: the review trailer is agent text, and changes to `scripts/**` or weakened tests outside the guard's path and skip checks pass if CI passes. An empty commit re-run to get a first-attempt green shows in the night log.
 - The go state and the go log can be forged by a program the agent runs (a script file or a compiled tool; the guard denies only the writes it parses); the evidence gates hold either way, the audit's DEC-06 grant does not.
+- The audit reads the go log under the OS user's home while capture writes it under `HOME`: a `HOME` override makes go pushes report as violations (fails safe).
 - While a code is pending, a script file the agent runs can read the owner's terminal (`tmux capture-pane`); the guard denies only the reads it parses.

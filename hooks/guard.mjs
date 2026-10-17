@@ -598,8 +598,9 @@ function ghDeny(args) {
   if (p0 === "pr" && (p1 === "merge" || p1 === "checkout")) return `run "gh pr ${p1}" (the merge is the verified local --no-ff merge a worker builds)`;
   if (p0 !== "api") return null;
   const endpoint = p1;
-  if (endpoint === "graphql") {
-    if (input || fields.some((f) => f.lit === null || /\bmutation\b/.test(f.lit) || /^[^=]*=@/.test(f.lit))) return `run a GraphQL mutation, or a query it cannot read (a variable, @file or --input), through "gh api graphql"`;
+  if (gqlEndpoint(endpoint)) {
+    const g = graphqlRead(args);
+    if (g.cls || g.tracker) return `run a GraphQL mutation, or a call it cannot read (a variable, placeholder, @file, --input or another argument shape), through "gh api graphql"`;
     return null;
   }
   const m = (method ?? (fields.length || input ? "POST" : "GET")).toUpperCase();
@@ -1182,6 +1183,71 @@ export function mutationFields(q) {
   return null;
 }
 
+// The placeholders gh fills in an endpoint or a -F value (gh 2.46 fills only these three names).
+const GH_PLACEHOLDER = /:(?:owner|repo|branch)\b|\{(?:owner|repo|branch)\}/i;
+// Whether a gh api endpoint is (or a placeholder may make it) the GraphQL endpoint: normalised like the REST path
+// (scheme and host, leading slashes, a GHES api/ prefix, query, trailing slashes, case).
+function gqlEndpoint(ep) {
+  if (ep == null) return false;
+  const n = ep.toLowerCase().replace(/^https?:\/\/[^/]*/, "").replace(/^\/+/, "").replace(/^api\//, "").split(/[?#]/)[0].replace(/\/+$/, "");
+  if (n === "graphql") return true;
+  const k = n.search(GH_PLACEHOLDER);
+  return k >= 0 && "graphql".startsWith(n.slice(0, k));
+}
+// A GraphQL document with its strings and comments blanked, or null when a block string holds an escaped delimiter or a
+// string does not close.
+function gqlStrip(q) {
+  let out = "";
+  for (let i = 0; i < q.length;) {
+    if (q.startsWith('"""', i)) {
+      const j = q.indexOf('"""', i + 3);
+      if (j < 0 || q[j - 1] === "\\") return null;
+      out += '""'; i = j + 3; continue;
+    }
+    if (q[i] === '"') {
+      let j = i + 1;
+      while (j < q.length && q[j] !== '"' && q[j] !== "\n") j += q[j] === "\\" ? 2 : 1;
+      if (q[j] !== '"') return null;
+      out += '""'; i = j + 1; continue;
+    }
+    if (q[i] === "#") { while (i < q.length && q[i] !== "\n") i++; continue; }
+    out += q[i++];
+  }
+  return out;
+}
+// The GraphQL reader (#21), for ghOut and ghDeny alike: an allowlist of exact argument shapes that fails closed.
+// { cls: null } for a read or a tracker mutation (tracker: true), else { cls, what }. A destructive mutation name in any
+// argument is destructive whatever the shape; anything outside the shapes is shared.
+export function graphqlRead(args) {
+  const lits = args.map((w) => w.lit), all = lits.filter((x) => x !== null).join("\n");
+  if (/\b(createCheckRun|updateCheckRun|createCheckSuite)\b/.test(all)) return { cls: "destructive", what: "GraphQL check run write" };
+  if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(all) || (/\bupdateRefs?\b/.test(all) && /\bforce\s*[:=]\s*true\b/.test(all))) return { cls: "destructive", what: "GraphQL delete, archive or forced ref update" };
+  const no = { cls: "shared", what: "GraphQL mutation (or a call it cannot read)" };
+  if (lits.some((x) => x === null || GH_PLACEHOLDER.test(x))) return no;
+  const queries = [];
+  let pos = 0;
+  for (let i = 0; i < lits.length; i++) {
+    const a = lits[i];
+    if (["-f", "-F", "--field", "--raw-field"].includes(a)) {
+      const v = lits[++i];
+      if (v === undefined || !/^[A-Za-z_]\w*=/.test(v) || /^[^=]*=@/.test(v)) return no;
+      if (v.startsWith("query=")) queries.push(v.slice(6));
+      continue;
+    }
+    if (a === "-q" || a === "--jq") { if (lits[++i] === undefined) return no; continue; }
+    if (a === "-H" || a === "--header") { if (!/^accept:/i.test(lits[++i] ?? "")) return no; continue; }
+    if (a === "--paginate" || a === "--silent") continue;
+    if (a.startsWith("-") || ++pos > 2) return no;
+  }
+  if (queries.length !== 1) return no;
+  const t = gqlStrip(queries[0]);
+  if (t === null) return no;
+  if (!/\bmutation\b/i.test(t) && /^\s*(?:query\b|\{)/.test(t)) return { cls: null };
+  const top = mutationFields(queries[0]);
+  if (top && top.length && top.every((x) => TRACKER_MUTATIONS.has(x))) return { cls: null, tracker: true };
+  return { cls: "shared", what: "GraphQL mutation" };
+}
+
 function ghOut(r, add, loose = false) {
   const p = ghParse(r.args), [p0, p1] = p.pos.map((w) => w.lit);
   const where = p.repo === undefined ? "" : ` in ${safe(p.repo)}`;
@@ -1234,16 +1300,9 @@ function ghOut(r, add, loose = false) {
   const m = (p.method ?? (p.fields.length || p.input ? "POST" : "GET")).toUpperCase();
   if (m === "DELETE") return f("destructive", "gh api DELETE", `gh api DELETE ${epShow}`);
   const unread = p.input || p.fields.some((x) => x.lit === null || /^[^=]*=@/.test(x.lit));
-  const body = p.fields.map((x) => x.lit ?? "").join("\n");
-  if (ep === "graphql") {
-    const queries = p.fields.filter((x) => x.lit?.startsWith("query="));
-    if (unread || !queries.length) return f("shared", "GraphQL mutation (or a query it cannot read)", "gh api graphql");
-    if (!/\bmutation\b/.test(body)) return;
-    if (/\b(createCheckRun|updateCheckRun|createCheckSuite)\b/.test(body)) return f("destructive", "GraphQL check run write", "gh api graphql");
-    if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(body) || (/\bupdateRefs?\b/.test(body) && /\bforce\s*[:=]\s*true\b/.test(body))) return f("destructive", "GraphQL delete, archive or forced ref update", "gh api graphql");
-    const top = queries.length === 1 ? mutationFields(queries[0].lit.slice(6)) : null;
-    if (top && top.length && top.every((x) => TRACKER_MUTATIONS.has(x))) return;
-    return f("shared", "GraphQL mutation", "gh api graphql");
+  if (gqlEndpoint(ep)) {
+    const g = graphqlRead(r.args);
+    return g.cls ? f(g.cls, g.what, "gh api graphql") : undefined;
   }
   if (m === "GET" || m === "HEAD") return;
   const path = ep === null ? null : ep.replace(/^https?:\/\/[^/]+/, "").replace(/^\//, "").split("?")[0];
@@ -1498,6 +1557,18 @@ function claudeWrite(cmds, st, dirs) {
           for (const t of pos) { if (t === dw) continue; const h = hit(t, base); if (h) return h; }
         }
       }
+      // Outside ~/.claude, a link is silent only in exact shapes (#21): options from a fixed set (clustered or not, no -t),
+      // operands with no .. or .claude that resolve against a known cwd. Anything else is shared.
+      const ok = r.name === "ln" ? /^-[sfnvrT]+$/ : /^-[sfnvrTl]+$/;
+      // cp counts only with a literal -s or -l: a cp word it cannot read stays the plain copy it was before.
+      const link = r.name === "ln" || r.args.some((w) => w.lit !== null && /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit));
+      const odd = link && (r.xargs || r.args.some((w) => {
+        const e = expOf(w, st);
+        if (e == null) return true;
+        if (e.startsWith("-") && e !== "-") return !ok.test(e);
+        return e.includes("..") || e.includes(".claude") || (!isAbsolute(e) && !st.cwd);
+      }));
+      if (odd) st.links?.push({ cls: "shared", what: "link it cannot read (an option, operand or cwd outside its exact shapes)", sub: r.name, action: `${r.name} ${r.args.map(argShow).join(" ")}`, refs: [], cmd: null });
     }
   }
   return null;
@@ -1575,10 +1646,12 @@ export function guard(input, env = {}, ctx = null) {
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
-  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex }, dirs);
+  const links = [];
+  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links }, dirs);
   if (w) return stateDeny("write to ~/.claude", safe(w), input);
   const go = goSession(input, env);
   const out = classifyOutward(cmds, ti.command, cwd, env, getCtx);
+  out.findings.push(...links);
   const withCommit = (f) => {
     if (!f.rev || !f.dir) return f;
     const c = getCtx().commit(f.dir, f.rev);
