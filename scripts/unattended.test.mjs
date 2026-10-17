@@ -675,12 +675,17 @@ test("#25 fix 1: an extglob group holding a substitution, a backtick or a quote 
   });
 });
 
-test("#25 fix 2: a push target holding an extglob group is unreadable (shared)", () => {
-  withGo((env) => {
-    attendedAsk(env, ["git push origin @(main)", "git push origin HEAD:@(main)"]);
-    // +(main) starts with +: it may be passed as a +refspec, so it fails closed as a force push (0.21.1 fix round).
-    assert.equal(kind(guard(bash("git push origin +(main)", { ...MAIN, permission_mode: "default" }), env, ctx())), "deny");
-  });
+// #29: a git push word with an unquoted glob character, { or extglob group may expand to any option or refspec; a push never
+// needs one, so it is denied in every mode (0.21.1 changed the ask for m?in, {main,feat} and @(main) to a deny).
+const denyEvery = (env, cmds) => {
+  for (const m of ["default", "bypassPermissions", "dontAsk", undefined]) {
+    const who = { ...MAIN, ...(m ? { permission_mode: m } : {}) };
+    for (const c of cmds) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+  }
+};
+
+test("#25 fix 2: a push target holding an extglob group is a glob word: denied in every mode (#29)", () => {
+  withGo((env) => denyEvery(env, ["git push origin @(main)", "git push origin HEAD:@(main)", "git push origin +(main)"]));
 });
 
 test("#25 fix 5: an escaped, quoted or expanded glob character before ( is no extglob group (fails closed)", () => {
@@ -697,69 +702,67 @@ test("#25 fix 3: set (any -o/+o or short flags) does not share globs; shopt stil
   });
 });
 
-test("#27: a push refspec with an unquoted glob character is unreadable (shared), like ma*", () => {
-  withGo((env) => {
-    attendedAsk(env, ["git push origin m?in", "git push origin ma[i]n", "git push origin HEAD:m?in", "git push origin ma*", "git push origin -- m?in"]);
-    assert.equal(guard(bash("git push origin feat", { ...MAIN, permission_mode: "default" }), env, ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } })), null, "a plain feature branch stays silent");
-  });
-});
-
-test("#28: a push refspec with an unquoted { is unreadable (shared): bash may expand it to a protected branch", () => {
+test("#27/#28/#29: any unquoted glob or brace word in git push is denied in every mode; quoted or escaped ones stay names", () => {
   withGo((env, h) => {
-    attendedAsk(env, ["git push origin {main,feat}", "git push origin {main..main}", "git push origin HEAD:{main,x}", "git push origin -- {main,x}"]);
+    denyEvery(env, [
+      "git push origin m?in", "git push origin ma[i]n", "git push origin HEAD:m?in", "git push origin ma*", "git push origin -- m?in",
+      "git push origin {main,feat}", "git push origin {main..main}", "git push origin HEAD:{main,x}", "git push origin -- {main,x}",
+      "git push origin +ma?n", "git push origin +feat*", "git push origin +HEAD:{feat,x}", "git push origin -- +feat*", "git push -f* origin feat",
+      "git push -{f,} origin feat", "git push --force-with-lease={a,b} origin feat", "git push --force-with-lease=feat:{abc} origin feat", "git push origin {+feat,x}",
+      "git push origin {-f,feat}", "git push origin {feat,-f}", "git push origin {,-f}", "git push origin {x,{y,-f}}", "git push origin {--force,feat}",
+      "git push origin {\\-f,x}", "git push origin {x,\\-f}", "git push origin {x,\"-f\"}", "git push origin -- {-f,x}", "git -C /r/merge push origin {x,-f}",
+      "git push origin [+]main", "git push origin [-]f",
+      "git push origin {,}-f feat", "git push origin {,}+main", "git push origin {x,{,}-f}", "git push origin {x,$'\\x2df'}", "git push origin []+]main",
+      "git push origin [!a]main", "git push origin [[:punct:]]main", "git push origin ?main", "git push origin --delete ma?n", "git push -o {a,b} origin feat",
+    ]);
     const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
-    for (const c of ["git push origin feat", "git push origin 'x{y}'", "git push origin x\\{y\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
-    // Braces outside a push refspec keep their result.
+    for (const c of ["git push origin feat", "git push -u origin feat", "git push origin HEAD:refs/heads/feat", "git push origin '{-f,x}'", "git push origin \"{-f,x}\"", "git push origin \\{-f,x\\}", "git push origin 'x{y}'", "git push origin x\\{y\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
+    // Braces outside git push keep their result.
     for (const c of ["echo {a,b}", "find . -name '*.go' -exec gofmt -l {} +", "mkdir -p x/{a,b}", "git log --format=%H -n1 HEAD@{1}"]) assert.equal(guard(bash(c, { ...MAIN, cwd: h, permission_mode: "default" }), env, ctx()), null, `stays silent: ${c}`);
   });
 });
 
-test("#27/#28 fix round: a glob word that may be a force option or a +refspec is a force push (deny in every mode)", () => {
+test("#31: $'...' decodes every ANSI-C escape as bash does, so a force option or +refspec spelled with escapes is denied", () => {
   withGo((env) => {
-    const force = ["git push origin +ma?n", "git push origin +feat*", "git push origin +HEAD:{feat,x}", "git push origin -- +feat*", "git push -f* origin feat", "git push -{f,} origin feat", "git push --force-with-lease={a,b} origin feat", "git push --force-with-lease=feat:{abc} origin feat", "git push origin {+feat,x}"];
-    for (const m of ["default", "bypassPermissions", "dontAsk", undefined]) {
-      const who = { ...MAIN, ...(m ? { permission_mode: m } : {}) };
-      for (const c of force) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
-    }
-    attendedAsk(env, ["git push origin m?in", "git push origin {main,feat}"]);
-    assert.equal(guard(bash("git push origin feat", { ...MAIN, permission_mode: "default" }), env, ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } })), null, "a plain feature branch stays silent");
-  });
-});
-
-test("#29: a brace word holding {- or ,-, or a leading bracket set with + or -, is a force push (deny in every mode)", () => {
-  withGo((env) => {
-    const force = ["git push origin {-f,feat}", "git push origin {feat,-f}", "git push origin {,-f}", "git push origin {x,{y,-f}}", "git push origin {--force,feat}", "git push origin {\\-f,x}", "git push origin {x,\\-f}", "git push origin {x,\"-f\"}", "git push origin -- {-f,x}", "git -C /r/merge push origin {x,-f}", "git push origin [+]main", "git push origin [-]f"];
-    for (const m of ["default", "bypassPermissions", "dontAsk", undefined]) {
-      const who = { ...MAIN, ...(m ? { permission_mode: m } : {}) };
-      for (const c of force) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
-    }
-    attendedAsk(env, ["git push origin m?in", "git push origin {main,feat}"]);
+    denyEvery(env, ["git push origin $'\\x2df'", "git push origin $'-f'", "git push origin $'\\053main'", "git push $'\\055\\055force' origin feat", "git push origin $'\\u002bmain'", "git push origin $'\\U0000002Bmain'", "git push origin $'\\0'-f"]);
     const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
-    for (const c of ["git push origin feat", "git push -u origin feat", "git push origin HEAD:refs/heads/feat", "git push origin '{-f,x}'", "git push origin \"{-f,x}\"", "git push origin \\{-f,x\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
+    assert.equal(guard(bash("git push origin $'feat'", { ...MAIN, permission_mode: "default" }), env, branch), null, "a plain $'feat' stays silent");
   });
 });
 
-// #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2] }; devs: path -> { char, uid }.
+// #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2], opens?: [target0, ...] } (opens: what opening the fd
+// yields, when it changed after the readlink); devs: path -> { char, uid }. parentTerminal returns an open fd: pt maps it back.
 function fakeProc(procs, devs) {
   const no = () => { throw new Error("ENOENT"); };
+  const open = [], dev = (fd) => devs[open[fd - 100]] ?? no();
   return {
-    readlinkSync: (p) => { const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d)$/.exec(p) ?? []; return procs[pid]?.fd[fd] ?? no(); },
+    readlinkSync: (p) => {
+      const [, pid, fd] = /^\/proc\/(\d+|self)\/fd\/(\d+)$/.exec(p) ?? [];
+      return pid === "self" ? open[fd - 100] ?? no() : procs[pid]?.fd[fd] ?? no();
+    },
     readFileSync: (p) => { const pid = /^\/proc\/(\d+)\/stat$/.exec(p)?.[1]; return procs[pid] ? `${pid} (a) b) S ${procs[pid].ppid} 1 1 0 -1` : no(); },
-    statSync: (p) => (devs[p] ? { isCharacterDevice: () => devs[p].char, uid: devs[p].uid } : no()),
+    openSync: (p) => { const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d)$/.exec(p) ?? []; const t = procs[pid]?.opens?.[fd] ?? procs[pid]?.fd[fd] ?? no(); return open.push(t) + 99; },
+    fstatSync: (fd) => { const d = dev(fd); return { isCharacterDevice: () => d.char, uid: d.uid }; },
+    isatty: (fd) => dev(fd).char,
+    closeSync: () => {},
+    open,
   };
 }
+const pt = (procs, devs, pid, uid) => { const f = fakeProc(procs, devs), fd = parentTerminal(f, pid, uid); return fd === null ? null : f.open[fd - 100]; };
 
-test("#30: parentTerminal takes the first parent's own pts or tty; pipes, files, /dev/null, other users and deep or looping chains give none", () => {
+test("#30: parentTerminal opens the first parent's own pts or tty; pipes, files, /dev/null, other users, swapped fds and deep or looping chains give none", () => {
   const devs = { "/dev/pts/3": { char: true, uid: 7 }, "/dev/pts/4": { char: true, uid: 7 }, "/dev/pts/9": { char: true, uid: 0 }, "/dev/null": { char: true, uid: 7 }, "/home/u/f": { char: false, uid: 7 }, "/dev/tty2": { char: true, uid: 7 } };
   const chain = { 40: { ppid: 30, fd: ["pipe:[5]", "/dev/null", "/home/u/f"] }, 30: { ppid: 20, fd: ["socket:[6]", "/dev/pts/9", "/dev/ptmx"] }, 20: { ppid: 10, fd: ["/dev/null", "/dev/pts/3"] }, 10: { ppid: 1, fd: ["/dev/pts/4"] } };
-  assert.equal(parentTerminal(fakeProc(chain, devs), 40, 7), "/dev/pts/3", "the nearest parent with a terminal of this user");
-  assert.equal(parentTerminal(fakeProc({ 5: { ppid: 1, fd: ["/dev/tty2"] } }, devs), 5, 7), "/dev/tty2");
-  assert.equal(parentTerminal(fakeProc({ 5: { ppid: 1, fd: ["/dev/pts/3"] } }, { "/dev/pts/3": { char: false, uid: 7 } }), 5, 7), null, "not a character device");
-  assert.equal(parentTerminal(fakeProc({ 40: chain[40], 30: { ...chain[30], ppid: 1 } }, devs), 40, 7), null, "pipe, file, /dev/null, socket, ptmx, another user's pts");
+  assert.equal(pt(chain, devs, 40, 7), "/dev/pts/3", "the nearest parent with a terminal of this user");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/tty2"] } }, devs, 5, 7), "/dev/tty2");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"] } }, { "/dev/pts/3": { char: false, uid: 7 } }, 5, 7), null, "not a character device");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"], opens: ["/home/u/f"] } }, devs, 5, 7), null, "the fd changed to a file after the readlink: the opened fd is checked");
+  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"], opens: ["/dev/null"] } }, devs, 5, 7), null, "the fd changed to /dev/null after the readlink");
+  assert.equal(pt({ 40: chain[40], 30: { ...chain[30], ppid: 1 } }, devs, 40, 7), null, "pipe, file, /dev/null, socket, ptmx, another user's pts");
   const deep = { 50: { ppid: 49, fd: [] }, 49: { ppid: 48, fd: [] }, 48: { ppid: 47, fd: [] }, 47: { ppid: 46, fd: [] }, 46: { ppid: 1, fd: ["/dev/pts/3"] } };
-  assert.equal(parentTerminal(fakeProc(deep, devs), 50, 7), null, "at most 4 parents");
-  assert.equal(parentTerminal(fakeProc({ 8: { ppid: 8, fd: ["pipe:[1]"] } }, devs), 8, 7), null, "a loop ends");
-  assert.equal(parentTerminal(fakeProc({}, devs), 8, 7), null, "no /proc (macOS)");
+  assert.equal(pt(deep, devs, 50, 7), null, "at most 4 parents");
+  assert.equal(pt({ 8: { ppid: 8, fd: ["pipe:[1]"] } }, devs, 8, 7), null, "a loop ends");
+  assert.equal(pt({}, devs, 8, 7), null, "no /proc (macOS)");
 });
 
 // #30: Claude Code runs the hook with no controlling terminal (new session, stdio piped), so /dev/tty fails. A real pty plays the

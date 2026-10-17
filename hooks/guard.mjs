@@ -198,10 +198,24 @@ function word(p, depth) {
     }
     if (c === "$" && s[p.i + 1] === "'") {
       let j = p.i + 2, t = "";
-      const esc = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"', e: "\x1b", a: "\x07", "0": "\0" };
-      for (; j < s.length && s[j] !== "'"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; t += esc[s[j]] ?? "\\" + s[j]; } else t += s[j]; }
+      // Every ANSI-C escape decoded as bash does (#31): an unknown one (\z, \x without a digit) stays as written; a NUL ends the
+      // segment. \c before a backslash or quote, or a code point beyond Unicode, is a parse error.
+      const esc = { a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
+      for (; j < s.length && s[j] !== "'"; j++) {
+        if (s[j] !== "\\" || j + 1 >= s.length) { t += s[j]; continue; }
+        const m = /^(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|c(.))/s.exec(s.slice(j + 1, j + 10));
+        if (!m) { j++; t += esc[s[j]] ?? "\\" + s[j]; continue; }
+        j += m[0].length;
+        if (m[5] !== undefined) {
+          if ("\\'".includes(m[5])) throw new ParseError("\\c before a backslash or quote in $'");
+          t += m[5] === "?" ? "\x7f" : String.fromCharCode(m[5].toUpperCase().charCodeAt(0) & 31); continue;
+        }
+        const n = parseInt(m[1] ?? m[2] ?? m[3] ?? m[4], m[1] ? 8 : 16);
+        if (n > 0x10ffff) throw new ParseError("code point beyond Unicode in $'");
+        t += m[1] || m[2] ? String.fromCharCode(n & 255) : String.fromCodePoint(n);
+      }
       if (j >= s.length) throw new ParseError("unclosed $'");
-      add(t); p.i = j + 1; continue;
+      add(t.split("\0")[0]); p.i = j + 1; continue;
     }
     if (c === '"') {
       p.i++;
@@ -1037,15 +1051,13 @@ const short = (s) => (s === "@" ? "HEAD" : /^(heads|tags)\//.test(s) ? `refs/${s
 function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   let force = false, del = false, wide = false, other = false, unknown = false;
   const pos = [];
-  // A glob word that may expand to an option or a +refspec (-f*, -{f,}, +ma?n, {+feat,x}, {-f,x}, [+]main) fails closed as a force push.
-  const globForce = (w) => { const t = w.lit ?? w.raw; return /^[+-]|[{,][+-]/.test(t) || /^\[[^\]]*[+-]/.test(t); };
-  const globPos = (w) => { if (globForce(w)) force = true; return null; };
+  // A word with an unquoted glob character, { or extglob group may expand to any option or refspec (-f, +main, main); a push
+  // never needs one, so it is denied in every mode (#27, #28, #29).
+  const glob = rest.some((w) => w.glob);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;
-    // A word with an unquoted glob character or { is a target it cannot read: bash may expand it to any name (#27, #28).
-    if (rest[i].glob) { pos.push(globPos(rest[i])); continue; }
     if (a === null) { pos.push(null); continue; }
-    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => (w.glob ? globPos(w) : w.lit))); break; }
+    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => w.lit)); break; }
     if (a.startsWith("--")) {
       const eq = a.indexOf("="), n = pushLong(a.slice(2, eq < 0 ? undefined : eq));
       if (n === null) { unknown = true; continue; }
@@ -1071,6 +1083,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   const flag = force ? " --force" : del ? " --delete" : "";
   const f = (cls, what, dst, more = {}) => add({ cls, what, sub: "push", action: `git push${flag} → ${rs}/${safe(dst ?? "?")}`, refs: [`${rs}/${safe(dst ?? "?")}`], dst, cmd, dir, ...more });
   const dstOf = (s) => (s == null ? null : s.includes(":") ? s.slice(s.indexOf(":") + 1) : s.replace(/^\+/, ""));
+  if (glob) return f("destructive", "push with a glob or brace word", null);
   if (force || specs.some((s) => s?.startsWith("+"))) return f("destructive", "force push", dstOf(specs.find((s) => s !== "") ?? null));
   const dels = (del ? specs : specs.filter((s) => s !== null && s.startsWith(":")).map((s) => s.slice(1))).map((s) => (s === null ? s : short(s)));
   if (del || dels.length) {
