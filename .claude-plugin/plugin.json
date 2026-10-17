@@ -1,6 +1,6 @@
 {
   "name": "orbit",
-  "version": "0.21.1",
+  "version": "0.21.2",
   "description": "Personal team workflow for Claude Code: six role agents, a /decide PM command, and an operator that keeps worker subagents (or peer sessions) in constant progress across compactions. An intent skill plans big goals as approved OKF milestones; OKF docs automation keeps docs small. A PreToolUse guard enforces the operator's no-write rule (OPR-01) and the merge review trailer (DEC-08), denies destructive git, gh and GitHub MCP actions, and has the owner approve shared ones (protected-branch and tag pushes, releases, merges) in a prompt; an owner-typed unattended go lets only a CI-proven, pinned base push and merged-branch deletes run while the owner is away. Coders show each proof test failing, then passing, checked by a script (DEC-21, DEC-22); numbered rules, versioned skills, a session ledger and its audit keep sessions from drifting. Project facts live in .agents/project.md.",
   "author": {
     "name": "Marius Gologan"

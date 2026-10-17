@@ -1,5 +1,5 @@
 {
-  "description": "Before Bash, file edits, reads, MCP, scheduler and message tool calls (hooks/guard.mjs): deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer; classify outward git, gh and GitHub MCP actions for every session (destructive denied, shared asked where the permission mode prompts, else denied; under an unattended go only the pinned base push and a merged branch delete pass, with GitHub evidence); deny writes to ~/.claude, commit status and check run writes, and scheduler or message tools carrying /orbit:unattended in every mode, and reads of ~/.claude while a go code is pending. On UserPromptSubmit, handle /orbit:unattended (hooks/unattended.mjs: a one-time code on the owner's terminal, never in the conversation). After Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); after a successful `git push`, append a push event, and an outward event for each shared or destructive action (class go for the go's own), to the session ledger (hooks/capture.mjs, fail-open, silent without a profile); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator with one line of the tracker features on from the cache (scripts/tracker.mjs --cached: a missing or stale cache is re-detected in the background for the next session; silent without it). A guard timeout or crash blocks the call (onFailure: block)",
+  "description": "Before Bash, file edits, reads, MCP, scheduler and message tool calls (hooks/guard.mjs): deny OPR-01 breaches in the operator session and DEC-08 merge messages without the review trailer; classify outward git, gh and GitHub MCP actions for every session (destructive denied, shared asked where the permission mode prompts, else denied; under an unattended go only the pinned base push and a merged branch delete pass, with GitHub evidence); deny writes to ~/.claude, commit status and check run writes, and scheduler or message tools carrying /orbit:unattended in every mode; ask in every mode for the one command that opens an unattended go (node <plugin root>/hooks/unattended.mjs on [dur]: the owner's answer is the proof), deny any other command naming that script. After Write/Edit under the OKF bundle, run validate-okf (silent without a bundle or node); after a successful `git push`, append a push event, and an outward event for each shared or destructive action (class go for the go's own), to the session ledger (hooks/capture.mjs, fail-open, silent without a profile); at session start, resume, clear or compaction in the main checkout, hand .agents/operator.md to the operator with one line of the tracker features on from the cache (scripts/tracker.mjs --cached: a missing or stale cache is re-detected in the background for the next session; silent without it). A guard timeout or crash blocks the call (onFailure: block)",
   "hooks": {
     "PreToolUse": [
       {
@@ -10,17 +10,6 @@
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh\"",
             "timeout": 10,
             "onFailure": "block"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/unattended.sh\"",
-            "timeout": 10
           }
         ]
       }

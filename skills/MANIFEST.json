@@ -20,8 +20,8 @@
       ]
     },
     "commands/unattended.md": {
-      "version": "1.0.1",
-      "hash": "cef1fba87429f7f4ad4f0494932b196d85fa818437b4206b8a47061a5398192d",
+      "version": "1.1.1",
+      "hash": "028d96e35e338599b1d98422935c6166120208d626d43a20b286471fe4590d66",
       "files": [
         "commands/unattended.md"
       ]
@@ -61,8 +61,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.15.7",
-      "hash": "de52f2778461268774cc9475a7bf364a5bb1f15e34b601d2c8065082cf6c0bb4",
+      "version": "1.15.15",
+      "hash": "018a7e61d4d6edd82950306911bc4aec04c480ab651816dac6eb48568aa0b3d1",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -99,7 +99,6 @@
         "hooks/okf-hook.mjs",
         "hooks/operator-context.sh",
         "hooks/unattended.mjs",
-        "hooks/unattended.sh",
         "agents/architect.md",
         "agents/coder.md",
         "agents/designer.md",

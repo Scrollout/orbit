@@ -14,9 +14,10 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
-import { EVIDENCE_MS, anyPending, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
+import { EVIDENCE_MS, GO_MAX_MS, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
+import { USAGE, duration } from "./unattended.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
 const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -1656,9 +1657,8 @@ function unreadableDecision(input, env = {}) {
 
 // ---------- the unattended go's own state, in every mode ----------
 // ~/.claude (and CLAUDE_CONFIG_DIR) holds Claude Code's settings, plugins and transcripts and Orbit's go state: no session
-// writes it (memory and plan notes excepted), and while a confirm code is pending no session reads it.
+// writes it (memory and plan notes excepted).
 const CORE_TOOLS = new Set(["Bash", ...EDIT_TOOLS, "Read", "Grep", "Glob", "Agent", "Task"]);
-const PENDING_TEXT = [".claude", "capture-pane", "hardcopy", "/proc/", "/dev/pts", "/dev/tty", "CLAUDE_CONFIG_DIR"];
 function claudeDirs(env) {
   const d = [];
   if (typeof env.HOME === "string" && isAbsolute(env.HOME)) d.push(real(join(env.HOME, ".claude")));
@@ -1671,6 +1671,86 @@ const noteFile = (rel) => {
   return (seg[0] === "projects" && seg[2] === "memory" && seg.length >= 4) || (seg[0] === "plans" && seg.length === 2);
 };
 const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
+
+// The go's one opening command, `node <plugin root>/hooks/unattended.mjs on [dur]`, alone and literal: ask in every mode, the
+// owner's answer is the proof. `off`, `status` or no argument (the usage) in the same shape: allowed; a duration out of range:
+// denied with the usage. Any other command that may run the script: denied. undefined: the command does not name it.
+// A command names it (#38) when its text does, when a word (after the guard's expansion) does or resolves to it, when a glob
+// word can match it, when node, nodejs, bun or deno (also through xargs) has a glob word whose last segment can match
+// unattended.mjs, when a find whose -name or -path can match it (or that has none) runs one of them by -exec or into xargs,
+// or when the command inside sh -c, bash -c or eval does, or when a text the guard cannot parse has a runtime word and a token that is or can match unattended.mjs. A name held in a variable, a program the model writes first or
+// another interpreter is not seen: the go is intent, the evidence gates carry the safety there.
+const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "hooks", "unattended.mjs"));
+const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
+const goGlob = (e) => (braces(e) ?? [null]).some((a) => a === null || segMatch(a.split("/").pop(), basename(GO_SCRIPT)));
+const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+// A text the guard cannot parse (#38): denied when it has a runtime word and names the plugin's hooks folder (the segment
+// hooks as a path part), contains unatt, or runs with its cwd inside the hooks folder. No tokens, stems or globs: the text is
+// only cleaned first (line continuations removed, $'...' escapes decoded, quotes and backslashes removed). Cost: such a
+// command that merely mentions hooks (a=(1); node --check hooks/guard.mjs) is denied too.
+const RUNTIME_WORD = /(?<![\w.-])(node|nodejs|bun|deno)(?![\w.-])/;
+const ansiC = (b) => b.replace(/\\(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|([\s\S]))/g, (m, o, x, u, U, c) =>
+  o ? String.fromCharCode(parseInt(o, 8) & 255) : x ? String.fromCharCode(parseInt(x, 16)) : u || U ? String.fromCodePoint(Math.min(parseInt(u || U, 16), 0x10ffff)) : c);
+function unparsedGo(text, cwd) {
+  const t = text.replace(/\\\n/g, "").replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_, b) => ansiC(b)).replace(/\$'|['"\\]/g, "");
+  const hooks = dirname(GO_SCRIPT);
+  // Also denied: a script word (.mjs, .js, .cjs; not *.test.*) with a glob character or an expansion, whatever it spells: no matching.
+  const globbed = t.split(/[\s;&<>]+/).some((w) => /\.[cm]?js$/.test(w) && !/\.test\.[cm]?js$/.test(w) && /[*?[{]|[+@!]\(|[$`]/.test(w));
+  return RUNTIME_WORD.test(t) && (globbed || /(?<![\w.-])hooks(?![\w.-])/.test(t) || t.includes("unatt") || (typeof cwd === "string" && cwd !== "" && inside(hooks, real(resolve(cwd)))));
+}
+// A word whose last segment holds an expansion ($(...), backtick, $"...") and, with each expansion read as *, can match unattended.mjs.
+const expGo = (raw) => {
+  const seg = raw.split("/").pop();
+  if (!/\$\(|`|\$"/.test(seg)) return false;
+  const m = seg.replace(/\$\([^)]*\)?|`[^`]*`?|\$"[^"]*"/g, "*");
+  return /[^*]/.test(m) && segMatch(m, basename(GO_SCRIPT));
+};
+const FIND_OPS = new Set(["-o", "-or", ",", "!", "-not", "-prune"]);
+function namesGo(cmds, text, cwd, env) {
+  if (text.includes("unattended.mjs")) return true;
+  // nocaseglob changes what every glob matches: any command that sets it and has a runtime word is the script (#38).
+  if (text.includes("nocaseglob") && RUNTIME_WORD.test(text)) return true;
+  const runs = (c) => { const r = resolveCmd(c.words); return RUNTIMES.has(r?.name) && r; };
+  return cmds.some((c) => {
+    const r = resolveCmd(c.words);
+    if (r && "inner" in r && r.inner !== null) {
+      try { if (namesGo(parseShell(r.inner, env), r.inner, cwd, env)) return true; } catch { if (unparsedGo(r.inner, cwd)) return true; }
+    }
+    if (r?.name === "find") {
+      const a = r.args.map((x) => x.lit);
+      const pats = a.some((x) => FIND_OPS.has(x)) ? [] : a.flatMap((x, i) => (/^-i?(name|path|wholename|regex)$/.test(x ?? "") ? [[x, a[i + 1]]] : []));
+      const exec = a.some((x, i) => {
+        if (!FIND_EXEC.has(x)) return false;
+        const end = a.findIndex((y, j) => j > i && (y === ";" || y === "+"));
+        return RUNTIMES.has(resolveCmd(r.args.slice(i + 1, end < 0 ? undefined : end))?.name);
+      });
+      const can = !pats.length || pats.some(([o, p]) => !/name$/.test(o) || p == null || segMatch(o === "-iname" ? p.toLowerCase() : p, "unattended.mjs"));
+      if (can && (exec || cmds.some((d) => runs(d)?.xargs))) return true;
+    }
+    return c.words.some((x) => {
+      const e = x.exp ?? x.lit;
+      if (e !== null && (e.includes("unattended.mjs") || (!x.glob && (isAbsolute(e) || cwd) && realOrNull(resolve(cwd ?? "/", e)) === GO_SCRIPT))) return true;
+      if (x.glob && e !== null && globUnder(e, cwd, [GO_SCRIPT])) return true;
+      if (RUNTIMES.has(r?.name) && expGo(x.raw)) return true;
+      return Boolean(x.glob && RUNTIMES.has(r?.name) && ((e !== null && goGlob(e)) || (x.ext && goGlob(x.raw))));
+    });
+  });
+}
+function goCommand(cmds, text, input, cwd, env) {
+  if (!namesGo(cmds, text, cwd, env)) return undefined;
+  const c = cmds.length === 1 && !cmds.complex ? cmds[0] : null;
+  const w = c && !c.depth && !c.redirs.length && c.heredoc === null && c.words.every((x) => x.lit !== null && !x.raw.includes('$"')) ? c.words.map((x) => x.lit) : [];
+  if (w[0] === "node" && isAbsolute(w[1] ?? "") && realOrNull(w[1]) === GO_SCRIPT) {
+    if (w.length === 2 || ((w[2] === "off" || w[2] === "status") && w.length === 3)) return null;
+    if (w[2] === "on" && w.length <= 4) {
+      const ms = duration(w[3]);
+      if (ms === null || ms < 60_000 || ms > GO_MAX_MS) return outwardReason("DENY", { what: "an unattended go of that duration", action: `/orbit:unattended on ${safe(w[3])}` }, input, { note: "the duration must be from 1m to 24 h", do: USAGE });
+      return { ask: outwardReason("ASK", { what: `open an unattended go of ${ms / 60_000} minutes for this session`, action: `/orbit:unattended on${w[3] ? ` ${w[3]}` : ""}` }, input, { do: "approve only if you typed /orbit:unattended on" }) };
+    }
+  }
+  return goDeny(input);
+}
+const goDeny = (input) => stateDeny("a command naming the unattended go's script, or a word that can match it", "only the exact /orbit:unattended command runs it", input);
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
 // An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
@@ -1715,6 +1795,25 @@ function globExact(s) {
 // Whether one path segment matches a glob segment: *, ?, [...] (with ! or ^ and ranges); a [ without ] is literal.
 function segMatch(p, s, i = 0, k = 0) {
   for (; i < p.length; i++, k++) {
+    // An extglob group @( ) + ( ) ? ( ) * ( ) ! ( ) with | alternatives (#38): each alternative, then the rest of the pattern.
+    if ("@+?*!".includes(p[i]) && p[i + 1] === "(") {
+      let d = 0, e = i + 1;
+      for (; e < p.length; e++) { if (p[e] === "(") d++; else if (p[e] === ")" && --d === 0) break; }
+      if (e < p.length) {
+        const inner = p.slice(i + 2, e), rest = p.slice(e + 1), alts = [];
+        for (let a = 0, q = 0, j = 0; j <= inner.length; j++) {
+          if (inner[j] === "(") q++; else if (inner[j] === ")") q--;
+          if (j === inner.length || (inner[j] === "|" && q === 0)) { alts.push(inner.slice(a, j)); a = j + 1; }
+        }
+        const one = alts.some((a) => segMatch(a + rest, s, 0, k));
+        if (p[i] === "@") return one;
+        if (p[i] === "?") return one || segMatch(rest, s, 0, k);
+        if (p[i] === "+") return alts.some((a) => segMatch(`${a}*(${inner})${rest}`, s, 0, k));
+        if (p[i] === "*") return segMatch(rest, s, 0, k) || alts.some((a) => segMatch(`${a}*(${inner})${rest}`, s, 0, k));
+        for (let x = k; x <= s.length; x++) if (!alts.some((a) => segMatch(a, s.slice(k, x))) && segMatch(rest, s, 0, x)) return true;
+        return false;
+      }
+    }
     if (p[i] === "*") { for (let x = k; x <= s.length; x++) if (segMatch(p, s, i + 1, x)) return true; return false; }
     if (k >= s.length) return false;
     if (p[i] === "?") continue;
@@ -1841,19 +1940,6 @@ function claudeWrite(cmds, st, dirs) {
   return null;
 }
 
-// While a code is pending: a read of a ~/.claude path, the transcripts, a pane capture or a pty, by any tool.
-function pendingRead(tool, ti, cwd, dirs, env) {
-  const inDirs = (p) => { if (typeof p !== "string" || !p) return false; const f = realOrNull(resolve(cwd ?? "/", p)); return f === null || dirs.some((d) => inside(d, f)); };
-  if (tool === "Read" || tool === "NotebookRead") return inDirs(ti.file_path ?? ti.notebook_path) || (typeof ti.file_path === "string" && ti.file_path.includes(".claude"));
-  if (tool === "Grep" || tool === "Glob") return inDirs(ti.path ?? cwd ?? "/") || JSON.stringify(ti).includes(".claude");
-  if (tool !== "Bash") return false;
-  const text = typeof ti.command === "string" ? ti.command : "";
-  if (!text || PENDING_TEXT.some((x) => text.includes(x)) || inDirs(cwd)) return true;
-  let cmds;
-  try { cmds = parseShell(text, env); } catch { return true; }
-  return cmds.some((c) => [...c.words, ...c.redirs.map((x) => x.target)].some((w) => w.exp === null || (isAbsolute(w.exp) && inDirs(w.exp))));
-}
-
 // Under the go: the pinned base push and the literal delete of a merged topic branch. null: not one of them (classify as
 // usual); { allow: true }; or the deny reason naming the check that failed.
 function goAction(cmds, cwd, input, getCtx) {
@@ -1887,7 +1973,6 @@ export function guard(input, env = {}, ctx = null) {
   const cwd = typeof input?.cwd === "string" && input.cwd ? resolve(input.cwd) : null;
   const getCtx = () => ctx ?? (ctx = realCtx(cwd ?? env.CLAUDE_PROJECT_DIR ?? process.cwd(), env));
   const dirs = claudeDirs(env);
-  if (anyPending(env) && pendingRead(tool, ti, cwd, dirs, env)) return stateDeny("read while an unattended code is pending", `${safe(String(tool))} of a Claude Code file, a pane or a pty`, input);
   if (typeof tool === "string" && !CORE_TOOLS.has(tool) && JSON.stringify(ti).toLowerCase().includes("orbit:unattended")) return stateDeny("a scheduled or sent /orbit:unattended", safe(tool), input);
   if (EDIT_TOOLS.includes(tool)) {
     const fp = ti.file_path ?? ti.notebook_path;
@@ -1910,9 +1995,13 @@ export function guard(input, env = {}, ctx = null) {
   if (typeof ti.command !== "string") return op ? `OPR-01: the operator session does not run a Bash call without a command string; ${DELEGATE}.` : null;
   let cmds;
   try { cmds = parseShell(ti.command, env); } catch (e) {
+    if (ti.command.includes("unattended.mjs")) return goCommand([], ti.command, input);
+    if (unparsedGo(ti.command, cwd)) return goDeny(input);
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
+  const gc = goCommand(cmds, ti.command, input, cwd, env);
+  if (gc !== undefined) return gc;
   const links = [];
   const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links, globOpts: GLOB_OPTS.test(ti.command) }, dirs);
   if (w) return stateDeny("write to ~/.claude", safe(w), input);
