@@ -41,8 +41,8 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.10.1",
-      "hash": "d3c572d1f9d14e104891b7d120cdbbfe638467ae506e5b243e7d3c0d17cfb2b7",
+      "version": "1.10.2",
+      "hash": "9522969a8a3b8d47caeaef4543654ab1f9a4680f54691229853dfca9fc8cc49b",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
@@ -61,8 +61,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.15.15",
-      "hash": "018a7e61d4d6edd82950306911bc4aec04c480ab651816dac6eb48568aa0b3d1",
+      "version": "1.15.16",
+      "hash": "0cf394827a73d8f4c95a3cfca512550759e114daab8a0e791fac27a9d27fb2c0",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",

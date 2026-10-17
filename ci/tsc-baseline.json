@@ -1,0 +1,81 @@
+{
+  "entries": [
+    {
+      "file": "ci/scripts/report.mjs",
+      "counts": {
+        "TS2345": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "hooks/capture.mjs",
+      "counts": {
+        "TS2339": 2
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "hooks/guard.mjs",
+      "counts": {
+        "TS2339": 27,
+        "TS2769": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/audit.test.mjs",
+      "counts": {
+        "TS2339": 12,
+        "TS2488": 1,
+        "TS2345": 1,
+        "TS2554": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/decide-triage.mjs",
+      "counts": {
+        "TS2339": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/decision-lint.mjs",
+      "counts": {
+        "TS2339": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/intent-plan.test.mjs",
+      "counts": {
+        "TS2339": 1,
+        "TS2353": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/rules.test.mjs",
+      "counts": {
+        "TS2345": 3
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/tracker.test.mjs",
+      "counts": {
+        "TS2322": 3,
+        "TS2741": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    },
+    {
+      "file": "scripts/unattended.test.mjs",
+      "counts": {
+        "TS2353": 1
+      },
+      "reason": "existing finding when the check landed; fix it and lower the count"
+    }
+  ],
+  "skip": []
+}

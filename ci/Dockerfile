@@ -62,7 +62,7 @@ RUN touch /etc/orbit-ci-toolbox
 # Versions the report records (ci/scripts/lib.sh).
 ENV HOME=/tmp \
     SHELLCHECK_VERSION=0.11.0 GITLEAKS_VERSION=8.30.1 ACTIONLINT_VERSION=1.7.12 HADOLINT_VERSION=2.14.0 \
-    ESLINT_VERSION=9.39.5 ESLINT_PLUGIN_SECURITY_VERSION=4.0.1 CLAUDE_CODE_VERSION=2.1.288
+    ESLINT_VERSION=9.39.5 ESLINT_PLUGIN_SECURITY_VERSION=4.0.1 CLAUDE_CODE_VERSION=2.1.288 TYPESCRIPT_VERSION=6.0.3
 # A fixed non-root user; make runs the container with the caller's uid instead (ci/scripts/in-toolbox.sh).
 RUN useradd --system --uid 10001 --no-create-home ci
 USER 10001

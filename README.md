@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.21.2 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.22.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -123,6 +123,8 @@ The ledger is self-reported: it finds drift, it does not prove honesty.
 - `node scripts/decision-lint.mjs <record|-> [--json]` reads the step 8 table: the seven columns, a PM row, the verdict word for each call (security `accept|conditions|block`, PM and tech lead `adopt|reject <proposal>`, engineers and reviewers `for|against <proposal>`), a Conditions cell for `conditions`, no empty or placeholder cell, and, after the table, the three triage lines (`Security paths:`, `One-way door:`, `Touches real:`, exact labels at the start of a line) answered yes or no. Exit 2 with `decision gap:` lines, 64 bad usage. It checks the shape, not the judgment. Tests: `scripts/decision-lint.test.mjs`.
 
 ## Releases
+- **Review loop cost.** Adversarial review stops at 2 fix rounds per bypass-spelling class: then ship with documented residuals and one issue per class. Fix a class in one commit and have the re-reviewer attack the class; use a cheaper model for re-reviews after the first on a class. Batch related changes in one branch, write code while CI runs, open no micro-issues.
+- **Release notes** are the changelog section and the compare link; a token or cost line is optional.
 Every project that sets `release_when` releases like a team with a release process: operator rule OPR-09, steps in [the merge protocol](skills/operator/refs/merge-protocol.md#releases), checked by the audit.
 - **Version in the change.** SemVer, bumped with the change (or on a milestone's release branch) and reviewed with it, the changelog's `## X.Y.Z` section beside it; a `release_tool` (release-please, changesets, ...) owns that step when the profile names one.
 - **Tag on the pushed merge.** Annotated (signed when a key is configured), on the merge commit once it is on the base with green CI, pushed alone by its full ref by the profile's `base_pusher`; never moved or deleted: a bad release is fixed forward and deprecated or yanked where it was published.
