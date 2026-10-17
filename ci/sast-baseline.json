@@ -1,3 +1,10 @@
 {
-  "entries": []
+  "entries": [
+    {
+      "rule": "CKV_DOCKER_2",
+      "file": "ci/Dockerfile",
+      "count": 1,
+      "reason": "no HEALTHCHECK: the toolbox image is a short-lived CI job container, not a service, so a health check has no consumer"
+    }
+  ]
 }

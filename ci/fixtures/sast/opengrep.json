@@ -1,0 +1,10 @@
+{
+  "paths": { "scanned": ["hooks/a.mjs", "scripts/b.mjs"] },
+  "results": [
+    { "check_id": "javascript.lang.security.x", "path": "hooks/a.mjs", "start": { "line": 7 }, "extra": { "message": "a finding" } }
+  ],
+  "errors": [
+    { "code": 3, "level": "warn", "type": ["PartialParsing", [{ "path": "scripts/b.mjs" }]], "message": "Syntax error", "path": "scripts/b.mjs", "spans": [{ "file": "scripts/b.mjs", "start": { "line": 4 } }] },
+    { "code": 2, "level": "error", "type": "Timeout", "message": "rule timed out", "path": "hooks/a.mjs" }
+  ]
+}

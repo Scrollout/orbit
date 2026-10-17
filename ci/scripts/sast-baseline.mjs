@@ -3,12 +3,16 @@
 // findings printed; lower: stale), so fixing a finding shrinks the list. An entry is { rule, file, count, reason } and
 // needs a non-empty reason. On a failure it ends with the proposed baseline: every current finding grouped by rule and file,
 // with the reason of the matching entry or an empty one to write. Either result missing or empty also fails.
-// Usage: node ci/scripts/sast-baseline.mjs <opengrep.json> <checkov results_json.json>
+// Two kinds count as findings so that only a reasoned baseline entry lets them pass: each Opengrep scanner error (it exits
+// 0 on a parse error or a rule timeout, so a file may be scanned in part or not at all), as rule `opengrep-error/<type>`
+// on its file, and each Checkov inline skip (`# checkov:skip=`), as rule `checkov-skip/<check id>`. Opengrep runs with
+// --disable-nosem (ci/scripts/sast.sh), so a `nosemgrep` comment hides nothing.
+// Usage: node ci/scripts/sast-baseline.mjs <opengrep.json> <checkov results_json.json> [baseline.json, default ci/sast-baseline.json]
 import { readFileSync } from "node:fs";
 
-const [ogFile, ckFile] = process.argv.slice(2);
+const [ogFile, ckFile, blFile] = process.argv.slice(2);
 const FRAMEWORKS = ["dockerfile", "github_actions"]; // as in ci/scripts/sast.sh: each must report, so none passes on nothing
-const { entries = [] } = JSON.parse(readFileSync(new URL("../sast-baseline.json", import.meta.url), "utf8"));
+const { entries = [] } = JSON.parse(readFileSync(blFile ?? new URL("../sast-baseline.json", import.meta.url), "utf8"));
 const one = (s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
 const rel = (p) => String(p ?? "").replace(/^\.?\//, "");
 const key = (rule, file) => `${rule}\0${file}`;
@@ -21,7 +25,10 @@ try {
   const og = JSON.parse(readFileSync(ogFile, "utf8"));
   if (!og.paths?.scanned?.length) fail(`${ogFile}:1 opengrep: no file scanned`);
   for (const r of og.results ?? []) findings.push({ file: rel(r.path), line: r.start?.line ?? 1, rule: r.check_id, message: one(r.extra?.message) });
-  for (const e of og.errors ?? []) console.log(`note: opengrep ${e.level ?? "error"} ${one(e.type)}: ${one(e.message)}`);
+  for (const e of og.errors ?? []) {
+    const type = one(Array.isArray(e.type) ? e.type[0] : e.type) || "unknown";
+    findings.push({ file: rel(e.path ?? e.spans?.[0]?.file) || "(no file)", line: e.spans?.[0]?.start?.line ?? 1, rule: `opengrep-error/${type}`, message: `${one(e.level) || "error"}: ${one(e.message)}` });
+  }
 } catch (e) { fail(`${ogFile}:1 no Opengrep result: ${one(/** @type {Error} */ (e).message)}`); }
 try {
   const ck = JSON.parse(readFileSync(ckFile, "utf8"));
@@ -29,6 +36,7 @@ try {
   for (const f of FRAMEWORKS) if (!reports.some((r) => r.check_type === f)) fail(`${ckFile}:1 checkov: no ${f} report (no file scanned?)`);
   for (const r of reports) {
     for (const c of r.results?.failed_checks ?? []) findings.push({ file: rel(c.repo_file_path ?? c.file_path), line: c.file_line_range?.[0] || 1, rule: c.check_id, message: one(c.check_name) });
+    for (const c of r.results?.skipped_checks ?? []) findings.push({ file: rel(c.repo_file_path ?? c.file_path), line: c.file_line_range?.[0] || 1, rule: `checkov-skip/${c.check_id}`, message: one(c.suppress_comment) || "inline skip" });
     for (const p of r.results?.parsing_errors ?? []) fail(`${rel(p)}:1 checkov: ${r.check_type} parsing error`);
   }
 } catch (e) { fail(`${ckFile}:1 no Checkov result: ${one(/** @type {Error} */ (e).message)}`); }
