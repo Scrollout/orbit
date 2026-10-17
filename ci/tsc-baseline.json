@@ -17,7 +17,7 @@
     {
       "file": "hooks/guard.mjs",
       "counts": {
-        "TS2339": 57,
+        "TS2339": 55,
         "TS2769": 1
       },
       "reason": "existing finding when the check landed; fix it and lower the count"
