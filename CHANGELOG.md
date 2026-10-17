@@ -2,6 +2,7 @@
 
 ## 0.22.1
 The unattended go runs a whole release without a prompt, every step bound to the verified merge and pushed only as the object it checked (rules 1.15.18, command `unattended` 1.1.3; scenario pin and manifest updated). Fixes #41.
+- **Docs** (`refs/decide/team-tracks.md`): Haiku is for read-only lookups (find or quote lines, docs, web) and never writes or edits docs or files.
 - **Pinned pushes only** (`hooks/go.mjs`, `hooks/guard.mjs`): git resolves a ref again at push time (a background job can move it after the check), so the go allows only `<40-hex>:refs/heads/<base>` and `<40-hex>:refs/tags/vX.Y.Z`. A ref form (`<base>`, `HEAD:<base>`, `<base>:<base>`, `vX.Y.Z`, `refs/tags/vX.Y.Z`) is denied, and the deny names the pinned command to run with the object the ref names now. A ref-form push to another branch is classified as before.
 - **Tag push**: `git [-C <dir>] push origin <tag object or commit sha>:refs/tags/vX.Y.Z`, alone, one literal semver tag, when that object peels to such a merge, the next base push or already the remote base tip. `--tags`, `--all`, `--follow-tags`, force, delete, a second refspec or another tag still need the owner.
 - **Push config**: every go push needs `remote.origin.push` unset, `push.followTags` and `submodule.recurse` off and `push.recurseSubmodules` unset or `no`, so nothing else is sent.
