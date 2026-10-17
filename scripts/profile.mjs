@@ -33,6 +33,11 @@ export const FIELDS = {
   // the targeted-test command (e.g. `make test-one PKG={pkg}`); required with tdd: yes or auto
   targeted_test: { required: false },
   test_first_commit: { required: false, enum: ["no", "yes"] },
+  // Tracker (scripts/tracker.mjs): a `no` or `off` beats detection; Projects only with github_projects: on.
+  milestones: { required: false, enum: ["yes", "no"] },
+  issue_types: { required: false, enum: ["yes", "no"] },
+  github_projects: { required: false, enum: ["off", "on"] },
+  areas: { required: false, list: true },   // area labels: one per issue when listed
 };
 export const RELEASE_FIELDS = ["release_when", "release_via", "release_tool", "changelog", "version_files"];
 

@@ -27,4 +27,4 @@ OPR-09, from the profile's `release_when`, `release_via`, `release_tool`, `versi
 `Fixes #N` only for issues the commit fully closes; otherwise `Refs #N`. Closing keywords fire when the branch reaches the default branch.
 
 ## Issues
-Every finding, red run, carried or deferred item gets an issue with at least one type label and, when the tracker has them, an issue type (both mapped in the profile) and the milestone it is targeted at.
+Every finding round (one issue per round, not per finding), red run, carried or deferred item gets an issue with at least one type label and, when the tracker has them, an area label, an issue type (mapped in the profile) and the milestone it is targeted at. What is on, Projects: `${CLAUDE_PLUGIN_ROOT}/skills/operator/refs/tracker.md`.

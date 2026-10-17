@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.7.4",
-      "hash": "5b5a257bd80d5dae5a7903e2a2a756a5678ef4154c429122bd0eece567fa4664",
+      "version": "1.7.5",
+      "hash": "6b6e1eccabf9a9133dd7e58b2cc44f23dd4b78f32da009da91785f40f8a8a376",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -27,8 +27,8 @@
       ]
     },
     "skills/intent/SKILL.md": {
-      "version": "1.2.1",
-      "hash": "190c876a2b64d7d1849f374a5699fe6540838f9d03480d21fdeb5bf7ee9b28ef",
+      "version": "1.3.0",
+      "hash": "f8ace9e8c1ef92ae4a7ebcd6b45bbb47bca1ce26a7a2977c528e9ebb2a50e4af",
       "files": [
         "skills/intent/SKILL.md"
       ]
@@ -41,14 +41,15 @@
       ]
     },
     "skills/operator/SKILL.md": {
-      "version": "1.9.0",
-      "hash": "f6914938fc97b4f335c5960958b9bc32c9275c21300b13ee82d866c60c6a058a",
+      "version": "1.10.0",
+      "hash": "ea3bd154709d5f3641ac47b780963c759da263df097bfc24fe31bcac815a1c6f",
       "files": [
         "skills/operator/SKILL.md",
         "skills/operator/refs/handoff-budget.md",
         "skills/operator/refs/merge-protocol.md",
         "skills/operator/refs/pull-requests.md",
         "skills/operator/refs/push-queue.md",
+        "skills/operator/refs/tracker.md",
         "skills/operator/refs/workers.md"
       ]
     },
@@ -60,8 +61,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.14.0",
-      "hash": "ee29d27a1099058448dd22f98a049fc2790a630fa6b4644317533c7d8edf11e1",
+      "version": "1.15.0",
+      "hash": "711c3525d6ca20e5c15827d209ca478223d2a7949cfcb91dc5e21970ffb8a175",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
@@ -86,6 +87,7 @@
         "scripts/rx.mjs",
         "scripts/scenarios.mjs",
         "scripts/tdd-suggest.mjs",
+        "scripts/tracker.mjs",
         "scripts/validate-okf.mjs",
         "hooks/capture.mjs",
         "hooks/capture.sh",
@@ -165,6 +167,9 @@
         "scenarios/dec-06-base-push-without-merge-built/expect.json",
         "scenarios/dec-06-base-push-without-merge-built/ledger.jsonl",
         "scenarios/dec-06-base-push-without-merge-built/scenario.json",
+        "scenarios/dec-06-go-base-push-owner-ok/expect.json",
+        "scenarios/dec-06-go-base-push-owner-ok/ledger.jsonl",
+        "scenarios/dec-06-go-base-push-owner-ok/scenario.json",
         "scenarios/dec-07-close-before-origin-equals-merge/expect.json",
         "scenarios/dec-07-close-before-origin-equals-merge/ledger.jsonl",
         "scenarios/dec-07-close-before-origin-equals-merge/scenario.json",

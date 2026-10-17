@@ -14,7 +14,7 @@
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
 //   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.1)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
-//   outward{class,subcommand,refs?,sha?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run (class go: the unattended go's own action, with the sha pushed); recorded, never an authorisation
+//   outward{class,subcommand,refs?,sha?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run (class go: the unattended go's own action, with the sha pushed); recorded, never an authorisation, except that a go base push is the owner's push for DEC-06
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
@@ -88,6 +88,11 @@ const tagSha = dict(), releasedTags = new Set(), releasedShas = new Set();
 let pendingRelease = null;            // change-set mode without a release tool: the last base-pushed merge awaiting its release
 const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
 let n = 0, events = 0;
+// The unattended go is the owner's approval (threat model): a base push its `go` event records (same session, sha, exit 0) is the owner's push for DEC-06.
+const goPushes = new Set();
+for (const raw of readFileSync(file, "utf8").split("\n")) {
+  try { const e = JSON.parse(raw); if (e?.kind === "outward" && e.class === "go" && e.subcommand === "push" && e.exit_code === 0 && e.sha) goPushes.add(`${e.session} ${e.sha}`); } catch { /* reported below */ }
+}
 
 for (const raw of readFileSync(file, "utf8").split("\n")) {
   n++;
@@ -288,7 +293,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (/^release\//.test(norm(e.ref)) && e.chained === false && e.by === profile.base_pusher) linePushes.add(e.sha);
       if (norm(e.ref) !== base) { if (e.sha) bs(norm(e.ref)).headSha = e.sha; break; }
       if (e.chained !== false) v(["DEC-06", "OPR-03"], n, `base ${base} pushed chained after another command`);
-      if (e.by !== profile.base_pusher) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
+      if (e.by !== profile.base_pusher && !(profile.base_pusher === "owner" && goPushes.has(`${e.session} ${e.sha}`))) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
       if (!merges[e.sha]) v(["DEC-06", "OPR-03"], n, `base ${base} pushed at ${short(e.sha)} with no merge_built for that sha before it`);
       basePushes.add(e.sha);
       if (relWhen === "change-set" && !relTool) {

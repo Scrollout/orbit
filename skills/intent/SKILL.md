@@ -1,7 +1,7 @@
 ---
 name: intent
 description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue unless /decide or the operator hands it over as too big for one worker, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
-version: 1.2.1
+version: 1.3.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. A field marked TODO is a gap: say so, never invent. The plan's units are then built through the usual flow: `/orbit:decide` per unit, or the operator's dispatch.
 
@@ -43,7 +43,8 @@ Pipe the rendered doc to `node "${CLAUDE_PLUGIN_ROOT}/scripts/intent-plan.mjs" -
 - Order: the plan doc; its line in `roadmap/index.md` (`* [M<n> plan](m<n>.md) - <description> Load when working on M<n>.`); `roadmap/milestones.md` (`## M<n> <Title> - planned` with a link, unless the milestone exists; set its `generated` to `{ by: claude-code/<model id>, at: <now> }`); a `**Creation**` bullet under today's `## YYYY-MM-DD` in `log.md`. The docs hook fails between these writes (not yet indexed); act only on the final `node "${CLAUDE_PLUGIN_ROOT}/scripts/validate-okf.mjs" --root .`.
 - Without an operator session: write in place and do not commit unless the owner says so.
 - With an operator session: the operator writes nothing in the repo. The writes are one docs-only task through the normal worker path (branch, commit, review or the profile's docs waiver, merge).
-- With the owner's go only: create the tracker milestone `M<n> <Title>` if it is missing, then one issue per step (type label, milestone, a link to the plan doc, the step's Files, Proof and Hint). A `decide-first` step becomes a question issue for `/orbit:decide`.
+- With the owner's go only: run what `node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" --plan "M<n> <Title>"` prints: the tracker milestone if it is missing, then one issue per step (type label, area label, milestone and issue type, whichever are on; a link to the plan doc, the step's Files, Proof and Hint). A `decide-first` step becomes a question issue for `/orbit:decide`.
+- A GitHub Project only for a large, complex plan (several waves), never for a single change set: with the profile's `github_projects: off` (default), offer one in a single line; on the owner's yes add `--project` (with `on`, it is included). Projects unavailable: skip silently. The operator moves its items (`${CLAUDE_PLUGIN_ROOT}/skills/operator/refs/tracker.md`).
 
 ## 9. Hand off
 Append `intent ... phase=written` once the docs are written.
