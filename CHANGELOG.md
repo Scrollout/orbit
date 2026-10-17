@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.22.2
+Plugin-guideline compliance batch, and the unattended go in every permission mode but plan (rules 1.15.24, command `decide` 1.7.8, command `unattended` 1.1.6, skill `peer` 1.1.2; scenario pin and manifest updated).
+- **Unattended go in every mode but plan** (`hooks/go.mjs`, `hooks/guard.mjs`, `hooks/unattended.mjs`, `hooks/capture.mjs`): the go no longer needs `bypassPermissions`; for its session's main thread the guard answers the verified pinned base push, tag push, `gh release create` and merged-branch delete with the hook's `allow`, so `/orbit:unattended on` removes their prompts in any mode but `plan` (there they ask or deny as without a go). Nothing else is ever allowed; other shared actions and failed checks keep their mode's ask or deny. A word the shell expands (glob, brace, `~`, `$VAR`, `$(...)`) is no go shape, so `-t`/`-n` cannot upload files; capture logs class `go` only for a call the guard allowed. Docs: a hook `allow` does not override a settings deny rule and may skip the owner's settings `ask` rules for `git push`.
+- **Paths**: the plugin's own scripts and templates are referenced as `${CLAUDE_PLUGIN_ROOT}/...` in `agents/operator.md`, `agents/reviewer.md`, `skills/peer/SKILL.md` and `commands/decide.md`.
+- **Hooks** (`hooks/hooks.json`): a short `description`; the PreToolUse matcher drops the stale `SlashCommand` and keeps its `.*X.*` patterns, so renamed or new scheduler and message tools stay guarded.
+- **Manifest** (`.claude-plugin/plugin.json`): short description, `homepage`, `repository`, `keywords`. README: `onFailure` hooks need Claude Code 2.1.295 or later.
+- **Models** (`refs/decide/team-tracks.md`): by the importance of the fact: low Haiku (read-only find or quote lookups, never writes a file), medium Sonnet, high (drives a decision or a security call) Opus.
+- **Makefile**: `make help` prints an aligned name column with one short line per target; the detail moved to `ci/README.md`. `make bump` refuses a `V` or `RULES` that is not `X.Y.Z`.
+- **CI**: `ci/scripts/tsc-baseline.mjs` counts global tsc errors (no file position) as findings instead of ignoring them.
+
 ## 0.22.1
 The unattended go runs a whole release without a prompt, every step bound to the verified merge and pushed only as the object it checked (rules 1.15.20, command `unattended` 1.1.4; scenario pin and manifest updated). Fixes #41.
 - **Docs** (`refs/decide/team-tracks.md`): Haiku is for read-only lookups (find or quote lines, docs, web) and never writes or edits docs or files.

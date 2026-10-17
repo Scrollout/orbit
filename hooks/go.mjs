@@ -1,8 +1,10 @@
 // The unattended go (Orbit 0.21.0): its state, and the evidence for the shared actions it allows (base push, release tag and release since 0.22.1, merged branch delete). Zero dependencies.
 // The owner opens a go with `/orbit:unattended on [dur]` (hooks/unattended.mjs, behind a permission prompt). The state file is
 // forgeable by any program the agent runs, so the go is intent only: safety rests on the evidence below, checked on GitHub and
-// in git for the exact object pushed. A go counts only for its own session's main thread under bypassPermissions, at most 24 h.
-import { readFileSync } from "node:fs";
+// in git for the exact object pushed. A go counts only for its own session's main thread, at most 24 h, in any permission mode
+// but plan (0.22.2): the guard then answers its verified pinned shapes with "allow", so no mode prompts for them.
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
 export const GO_MAX_MS = 24 * 3600_000;
@@ -13,22 +15,48 @@ export const stateDir = (env) => (typeof env?.HOME === "string" && isAbsolute(en
 export const validSession = (sid) => typeof sid === "string" && SID.test(sid);
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 
-// The session is unattended: a valid go file for its session_id and the bypassPermissions mode, any thread. Then every
-// shared action is denied (nobody answers a prompt), a subagent's too.
-export function goSession(input, env, now = Date.now()) {
+// A valid go file for the input's session_id: its own session, opened, unexpired, at most 24 h. Any permission mode.
+function goFile(input, env, now) {
   const sid = input?.session_id, dir = stateDir(env);
-  if (!validSession(sid) || !dir || input.permission_mode !== "bypassPermissions") return null;
+  if (!validSession(sid) || !dir) return null;
   const s = readJson(join(dir, `go-${sid}.json`));
   if (!s || s.session_id !== sid || !Number.isFinite(s.opened) || !Number.isFinite(s.until)) return null;
   if (s.opened > now || s.until <= now || s.until - s.opened > GO_MAX_MS) return null;
   return { opened: s.opened, until: s.until };
 }
 
-// The go itself, which allows its actions: the unattended session's main thread only (no agent_id). Any missing or
-// unexpected field means no go (the attended behaviour).
+// The session is unattended: a valid go file and the bypassPermissions mode, any thread. Then every other shared action is
+// denied (nobody answers a prompt), a subagent's too. In a mode that prompts they still ask, as attended.
+export function goSession(input, env, now = Date.now()) {
+  return input?.permission_mode === "bypassPermissions" ? goFile(input, env, now) : null;
+}
+
+// The go itself, which allows its verified pinned shapes in every permission mode but plan: the session's main thread only
+// (no agent_id). A missing session_id or HOME, an agent_id or the plan mode means no go (the attended behaviour).
 export function goState(input, env, now = Date.now()) {
-  if (!input || (input.agent_id !== undefined && input.agent_id !== null)) return null;
-  return goSession(input, env, now);
+  if (!input || (input.agent_id !== undefined && input.agent_id !== null) || input.permission_mode === "plan") return null;
+  return goFile(input, env, now);
+}
+
+// The guard's allow, handed to capture: a marker file in the state dir (which the guard keeps agents from writing) per
+// session, tool_use_id and command. The guard sets it when it allows a go shape and clears it when it does not; capture
+// logs class go only when it can take it, so a go shape that asked and ran on the owner's answer is an ordinary push.
+const allowMarker = (input, env) => {
+  const dir = stateDir(env), sid = input?.session_id, cmd = input?.tool_input?.command;
+  if (!dir || !validSession(sid) || typeof cmd !== "string") return null;
+  return join(dir, `allowed-${sid}-${createHash("sha256").update(JSON.stringify([input.tool_use_id ?? null, cmd])).digest("hex").slice(0, 32)}`);
+};
+export function markAllowed(input, env, on) {
+  try {
+    const f = allowMarker(input, env);
+    if (f && on) { mkdirSync(stateDir(env), { recursive: true, mode: 0o700 }); writeFileSync(f, "", { mode: 0o600 }); }
+    else if (f) rmSync(f, { force: true });
+  } catch { /* fail-safe: without the marker capture logs an ordinary push */ }
+}
+export function takeAllowed(input, env) {
+  const f = allowMarker(input, env);
+  if (!f || !existsSync(f)) return false;
+  try { rmSync(f); return true; } catch { return false; }
 }
 
 // DEC-08's trailer rule: the key's line in the last paragraph, with every Co-Authored-By line.
@@ -50,11 +78,13 @@ export function trailerOk(msg, key) {
 // - delete: `git [-C <dir>] push origin --delete <branch>`;
 // - release: `gh release create <vX.Y.Z>` with only -R/--repo, -t/--title, -n/--notes, --verify-tag, --latest, --target (all
 //   literal; the guard checks repo, target and the tag). No -F/--notes-file: gh would read any path (/proc/self/environ, /dev/stdin).
+// Every word is literal in every shape: no glob, brace, extglob, tilde, variable or substitution (the shell would expand it).
 export const SEMVER_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export function goForm(cmds) {
   if (cmds.length !== 1 || cmds.complex) return null;
   const c = cmds[0];
-  if (c.depth || c.redirs.length || c.heredoc !== null || c.words.some((w) => w.lit === null)) return null;
+  const expands = (w) => w.lit === null || w.glob || w.ext || w.exp !== w.lit || w.subs.length > 0 || w.vars.length > 0;
+  if (c.depth || c.redirs.length || c.heredoc !== null || c.words.some(expands)) return null;
   const w = c.words.map((x) => x.lit);
   if (w[0] === "gh") return releaseForm(w);
   let i = 1, dir = null;

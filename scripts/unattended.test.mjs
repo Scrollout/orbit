@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { FAIL, guard, parseShell, realCtx } from "../hooks/guard.mjs";
+import { FAIL, guard, hookMain, parseShell, realCtx } from "../hooks/guard.mjs";
 import { EVIDENCE_MS, goForm, goState } from "../hooks/go.mjs";
 import { unattended } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
@@ -20,7 +20,8 @@ const SID = "sess-1";
 const home = () => realpathSync(mkdtempSync(join(tmpdir(), "orbit-home-")));
 const stateDir = (h) => join(h, ".claude/orbit/unattended");
 const files = (h) => (existsSync(stateDir(h)) ? readdirSync(stateDir(h)) : []);
-const kind = (r) => (r === null ? "allow" : typeof r === "string" ? "deny" : "ask");
+// "allow": no decision (silent); "go": the hook's explicit allow, only for a go's verified pinned shape.
+const kind = (r) => (r === null ? "allow" : typeof r === "string" ? "deny" : typeof r.allow === "string" ? "go" : "ask");
 const SCRIPT = realpathSync(join(repo, "hooks/unattended.mjs"));
 
 test("the one test, part 1: only the exact on command opens a go, and it asks in every mode for every session kind", () => {
@@ -114,7 +115,7 @@ test("the script: on writes the go bound to the session (default 12 h, at most 2
     assert.equal(statSync(join(stateDir(h), `go-${SID}.json`)).mode & 0o777, 0o600);
     assert.ok(go(), "open for its session");
     assert.equal(goState({ session_id: "other", permission_mode: "bypassPermissions" }, env, now + 1000), null, "not for another session");
-    assert.equal(goState({ session_id: SID, permission_mode: "default" }, env, now + 1000), null, "not outside bypassPermissions");
+    assert.ok(goState({ session_id: SID, permission_mode: "default" }, env, now + 1000), "any permission mode");
     assert.match(unattended(["status"], env, now + 1000), /open until 13:00 UTC/);
     assert.match(unattended(["off"], env, now + 2000), /closed/);
     assert.equal(go(), null, "off closes it");
@@ -152,11 +153,11 @@ function withGo(fn, over = {}) {
   try { return fn({ HOME: h }, h); } finally { rmSync(h, { recursive: true, force: true }); }
 }
 
-test("goState: session match, at most 24 h, unexpired, no agent_id, bypassPermissions; any missing field is no go", () => {
+test("goState: session match, at most 24 h, unexpired, no agent_id, any permission mode but plan; a missing session field is no go", () => {
   withGo((env) => {
     const ok = { session_id: SID, permission_mode: "bypassPermissions" };
-    assert.ok(goState(ok, env));
-    for (const bad of [{ ...ok, session_id: "x" }, { ...ok, agent_id: "a1" }, { ...ok, permission_mode: "default" }, { session_id: SID }, { permission_mode: "bypassPermissions" }, null]) assert.equal(goState(bad, env), null, JSON.stringify(bad));
+    for (const m of ["default", "acceptEdits", "auto", "bypassPermissions", "dontAsk", undefined]) assert.ok(goState({ ...ok, permission_mode: m }, env), `mode ${m}`);
+    for (const bad of [{ ...ok, permission_mode: "plan" }, { ...ok, session_id: "x" }, { ...ok, agent_id: "a1" }, { ...ok, permission_mode: "default", agent_id: "a1" }, { permission_mode: "bypassPermissions" }, null]) assert.equal(goState(bad, env), null, JSON.stringify(bad));
     assert.equal(goState(ok, {}), null, "no HOME");
   });
   withGo((env) => assert.equal(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env), null, "expired"), { until: Date.now() - 1 });
@@ -210,9 +211,9 @@ const PINNED = `git push origin ${M}^{object}:refs/heads/main`;
 
 test("the one test, part 2: under a hand-written go, the pinned sha with full evidence is allowed; every spelling or fact that lacks it is denied", () => {
   withGo((env) => {
-    assert.equal(guard(bash(PINNED), env, ctx()), null, "full evidence: allowed");
-    assert.equal(guard(bash(`git -C /r/merge push origin ${M}^{object}:refs/heads/main`), env, ctx()), null, "git -C from the merge worktree");
-    assert.equal(guard(bash(`git -C /r/merge push origin ${M}^{object}:refs/heads/main`, { ...MAIN, agent_type: "orbit:operator" }), env, ctx()), null, "the operator main thread");
+    assert.equal(kind(guard(bash(PINNED), env, ctx())), "go", "full evidence: allowed");
+    assert.equal(kind(guard(bash(`git -C /r/merge push origin ${M}^{object}:refs/heads/main`), env, ctx())), "go", "git -C from the merge worktree");
+    assert.equal(kind(guard(bash(`git -C /r/merge push origin ${M}^{object}:refs/heads/main`, { ...MAIN, agent_type: "orbit:operator" }), env, ctx())), "go", "the operator main thread");
     const deny = (label, command, over = {}, who = MAIN) => {
       const r = guard(bash(command, who), env, ctx(over));
       assert.equal(kind(r), "deny", `${label}: ${JSON.stringify(r)}`);
@@ -255,7 +256,7 @@ test("the one test, part 2: under a hand-written go, the pinned sha with full ev
 
 test("under the go: a literal delete of a merged topic branch is allowed; everything else shared needs the owner; destructive stays denied", () => {
   withGo((env) => {
-    assert.equal(guard(bash("git push origin --delete old-topic"), env, ctx()), null);
+    assert.equal(kind(guard(bash("git push origin --delete old-topic"), env, ctx())), "go");
     assert.equal(kind(guard(bash("git push origin --delete old-topic"), env, ctx({ git: { [`merge-base --is-ancestor ${TIP} ${P1}`]: null } }))), "deny", "not merged");
     assert.equal(kind(guard(bash("git push origin --delete old-topic", { ...MAIN, agent_id: "a1" }), env, ctx())), "deny", "a subagent has no go, and nobody answers its prompt");
     for (const c of ["gh release create v1.0", "gh pr merge 4", "git push origin v1.0", "gh run rerun 1", "git push --tags", "gh pr review 4 --approve"]) {
@@ -311,10 +312,13 @@ test("every mode: writes to ~/.claude are denied (memory and plan notes excepted
 test("capture: an allowed go action is recorded as class go with the sha; without a go it stays shared", () => {
   withGo((env) => {
     const ev = { ...MAIN, tool_name: "Bash", tool_input: { command: PINNED }, tool_response: { exit_code: 0 } };
+    assert.equal(kind(guard(ev, env, ctx())), "go");
     const [e, ...rest] = outwardEvents(ev, () => ctx(), env);
     assert.deepEqual(rest, []);
     assert.ok(e.argv.includes("class=go") && e.argv.includes(`sha=${M}`), e.argv.join(" "));
-    const del = outwardEvents({ ...ev, tool_input: { command: "git push origin --delete old-topic" } }, () => ctx(), env);
+    const dev = { ...ev, tool_input: { command: "git push origin --delete old-topic" } };
+    assert.equal(kind(guard(dev, env, ctx())), "go");
+    const del = outwardEvents(dev, () => ctx(), env);
     assert.ok(del[0].argv.includes("class=go"), del[0].argv.join(" "));
     const sub = outwardEvents({ ...ev, agent_id: "a1" }, () => ctx(), env);
     assert.ok(sub[0].argv.includes("class=shared"), "a subagent never has a go");
@@ -325,21 +329,26 @@ test("hooks.json: no prompt hook; the guard matcher covers reads, schedulers and
   const h = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks;
   assert.equal(h.UserPromptSubmit, undefined);
   const m = h.PreToolUse.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard"))).matcher.split("|");
-  for (const name of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob", "mcp__.*", ".*Cron.*", ".*Schedule.*", ".*Wakeup.*", ".*Trigger.*", ".*Message.*", ".*Skill.*", "SlashCommand"]) assert.ok(m.includes(name), name);
+  for (const name of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob", "mcp__.*", ".*Cron.*", ".*Schedule.*", ".*Wakeup.*", ".*Trigger.*", ".*Loop.*", ".*Message.*", ".*Send.*", ".*Notif.*", ".*Skill.*"]) assert.ok(m.includes(name), name);
+  assert.ok(!m.includes("SlashCommand"), "SlashCommand is no longer a tool name");
+  // A matcher entry is a tool name, optionally with `.*` wildcards; match without building a RegExp from data.
+  const hit = (t) => m.some((p) => { const parts = p.split(".*"); let i = 0; return parts.every((s, k) => { const j = t.indexOf(s, i); if (j < 0 || (k === 0 && j !== 0)) return false; i = j + s.length; return true; }) && t.endsWith(parts.at(-1)); });
+  for (const t of ["CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "SendMessage", "PushNotification", "Skill", "LoopStart"]) assert.ok(hit(t), t);
+  assert.ok(!hit("SlashCommand") && !hit("BashX"));
   assert.ok(existsSync(join(repo, "commands/unattended.md")), "the command file exists");
 });
 
 // ---------- full review of 0.21.0 (Orbit #16) ----------
 test("#16 finding 1: the go's evidence reads the URL the push uses; a pushurl or pushInsteadOf that differs denies", () => {
   withGo((env) => {
-    assert.equal(guard(bash(PINNED), env, ctx()), null, "same URL: allowed");
+    assert.equal(kind(guard(bash(PINNED), env, ctx())), "go", "same URL: allowed");
     for (const u of ["git@github.com:evil/r.git", "https://github.com/o/r.git", "https://example.com/o/r.git"]) {
       assert.equal(kind(guard(bash(PINNED), env, ctx({ git: { "remote get-url --push --all origin": u } }))), "deny", u);
     }
     assert.equal(kind(guard(bash(PINNED), env, ctx({ git: { "remote get-url --push --all origin": FAIL } }))), "deny", "push URL unreadable");
     // The base tip is read through the name origin (one url.insteadOf rewrite, as the push), never from the rewritten URL (#41 review 3).
     assert.equal(kind(guard(bash(PINNED), env, ctx({ git: { "ls-remote origin refs/heads/main": undefined, [`ls-remote ${ORIGIN} refs/heads/main`]: `${P1}\trefs/heads/main` } }))), "deny");
-    assert.equal(guard(bash("git push origin --delete old-topic"), env, ctx()), null);
+    assert.equal(kind(guard(bash("git push origin --delete old-topic"), env, ctx())), "go");
     assert.equal(kind(guard(bash("git push origin --delete old-topic"), env, ctx({ git: { "remote get-url --push --all origin": "git@github.com:evil/r.git" } }))), "deny", "delete: push URL differs");
   });
 });
@@ -410,14 +419,14 @@ test("#16 findings 6, 7, 8: the go's base, trailer key and required checks come 
     deny("profile without a base", P({ base: null }));
     // 7: the trailer key is the profile's; Reviewed-by only when it names none.
     deny("profile names Security-Review, message has Reviewed-by", P({ trailer: "Security-Review" }));
-    assert.equal(guard(bash(PINNED), env, ctx({ ...P({ trailer: "Security-Review" }), git: msg("Security-Review") })), null, "the profile's key passes");
-    assert.equal(guard(bash(PINNED), env, ctx(P({ trailer: null }))), null, "no profile trailer: Reviewed-by");
+    assert.equal(kind(guard(bash(PINNED), env, ctx({ ...P({ trailer: "Security-Review" }), git: msg("Security-Review") }))), "go", "the profile's key passes");
+    assert.equal(kind(guard(bash(PINNED), env, ctx(P({ trailer: null })))), "go", "no profile trailer: Reviewed-by");
     // 8: the base tip needs at least one green workflow; HEAD^2 also covers the profile's required checks.
     const tip = (o) => ({ [`repos/o/r/actions/runs?head_sha=${P1}&per_page=100`]: o });
     deny("base tip without runs", { gh: tip({ total_count: 0, workflow_runs: [] }) });
     deny("base tip without a green run", { gh: tip({ total_count: 1, workflow_runs: [run("ci", { head_sha: P1, conclusion: "failure" })] }) });
     deny("a required check missing on HEAD^2", P({ checks: ["lint"] }));
-    assert.equal(guard(bash(PINNED), env, ctx(P({ checks: ["codeql"] }))), null, "a required check green on HEAD^2");
+    assert.equal(kind(guard(bash(PINNED), env, ctx(P({ checks: ["codeql"] })))), "go", "a required check green on HEAD^2");
   });
 });
 
@@ -425,8 +434,10 @@ test("#16 finding 9: capture writes the go's actions to the go log under ~/.clau
   withGo((env, h) => {
     const log = join(stateDir(h), "go-log.jsonl");
     const ev = { ...MAIN, tool_name: "Bash", tool_input: { command: PINNED }, tool_response: { exit_code: 0 } };
+    assert.equal(kind(guard(ev, env, ctx())), "go");
     goLog(ev, outwardEvents(ev, () => ctx(), env), env);
     const sub = { ...ev, agent_id: "a1" };
+    guard(sub, env, ctx());
     goLog(sub, outwardEvents(sub, () => ctx(), env), env);
     const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.equal(lines.length, 1, "a subagent's push is no go action");
@@ -899,8 +910,8 @@ test("#41 a: under the go, the base push runs only pinned; <base>, HEAD:<base> a
       assert.ok(r.includes(pin), r);
     }
     assert.match(guard(bash("git push origin main"), env, ctx(ok41({ "rev-parse --verify -q refs/heads/main^{commit}": undefined }))), /git push origin <merge sha>\^\{object\}:refs\/heads\/main/, "unresolvable ref");
-    assert.equal(guard(bash(PINNED), env, ctx(ok41())), null, "the pinned form with its evidence");
-    assert.equal(guard(bash(PINNED), env, ctx(ok41({ "config --get-all push.recurseSubmodules": "no", "config --bool --get submodule.recurse": "false" }))), null, "submodules off");
+    assert.equal(kind(guard(bash(PINNED), env, ctx(ok41()))), "go", "the pinned form with its evidence");
+    assert.equal(kind(guard(bash(PINNED), env, ctx(ok41({ "config --get-all push.recurseSubmodules": "no", "config --bool --get submodule.recurse": "false" })))), "go", "submodules off");
     const deny = (label, c, over) => assert.equal(kind(guard(bash(c), env, ctx(over))), "deny", label);
     deny("push.followTags on (a pinned push still follows tags)", PINNED, ok41({ "config --bool --get push.followTags": "true" }));
     deny("push.recurseSubmodules on-demand (review 4)", PINNED, ok41({ "config --get-all push.recurseSubmodules": "on-demand" }));
@@ -919,7 +930,7 @@ test("#41 a: under the go, the base push runs only pinned; <base>, HEAD:<base> a
 test("#41 b: under the go, the tag push runs only pinned (<tag object>:refs/tags/vX.Y.Z) when it peels to the verified merge; any other shape needs the owner", () => {
   withGo((env) => {
     for (const git of [{}, PUSHED]) {
-      for (const c of [PTAG, `git push origin ${M}^{object}:refs/tags/v1.2.3`, `git -C /r/merge push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`]) assert.equal(guard(bash(c), env, ctx(ok41(git))), null, c);
+      for (const c of [PTAG, `git push origin ${M}^{object}:refs/tags/v1.2.3`, `git -C /r/merge push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`]) assert.equal(kind(guard(bash(c), env, ctx(ok41(git)))), "go", c);
     }
     for (const [c, pin] of [["git push origin v1.2.3", PTAG], ["git push origin refs/tags/v1.2.3", PTAG], ["git -C /r/merge push origin v1.2.3", `git -C /r/merge push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`]]) {
       const r = guard(bash(c), env, ctx(ok41(PUSHED)));
@@ -946,7 +957,7 @@ test("#41 c: under the go, gh release create <tag> passes when the tag is on ori
     for (const tagGit of [LIGHT, ANNOT]) {
       for (const c of ["gh release create v1.2.3", `gh release create v1.2.3 -R o/r --title "Orbit 0.22.1" --notes 'x' --verify-tag --latest`,
         "gh release create v1.2.3 --repo=o/r --notes 'fixes #41'", `gh release create --target ${M} v1.2.3 -n 'x'`]) {
-        assert.equal(guard(bash(c), env, ctx(ok41({ ...PUSHED, ...tagGit }))), null, c);
+        assert.equal(kind(guard(bash(c), env, ctx(ok41({ ...PUSHED, ...tagGit })))), "go", c);
       }
     }
     const deny = (label, c, over = ok41(PUSHED), e = env) => assert.equal(kind(guard(bash(c), e, ctx(over))), "deny", label);
@@ -1009,13 +1020,101 @@ test("#41: without a valid go for this session the release steps are as before (
   try { check({ HOME: h }, MAIN, "no go"); } finally { rmSync(h, { recursive: true, force: true }); }
   withGo((env) => check(env, MAIN, "expired go"), { until: Date.now() - 1 });
   withGo((env) => check(env, MAIN, "another session's go"), { session_id: "other" });
-  withGo((env) => check(env, { ...MAIN, permission_mode: "default" }, "not bypassPermissions"));
+  withGo((env) => check(env, { ...MAIN, agent_id: "a1", permission_mode: "default" }, "a subagent thread"));
   withGo((env) => { for (const c of ["gh release delete v1.2.3", "git push -f origin main", "git push origin --delete main"]) assert.equal(kind(guard(bash(c), env, ctx(ok41(PUSHED)))), "deny", c); });
+});
+
+// Each pinned shape with a word the shell expands: a brace, *, ?, [, ~, $VAR or $(...) (0.22.2 review).
+const EXPANDED = [
+  ...["{/r/merge,/r/main}", "/r/merg?", "/r/m*", "/r/[m]erge", "~/r", "~", "$D", "$(pwd)"].flatMap((d) => [`git -C ${d} push origin ${M}^{object}:refs/heads/main`,
+    `git -C ${d} push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`, `git -C ${d} push origin --delete old-topic`]),
+  ...["{T,/home/u/.config/gh/hosts.yml}", "*", "?", "[ab]", "~", "~/x", "$T", "$(cat x)", "x{a,b}"].flatMap((v) => [`gh release create v1.2.3 -t ${v}`, `gh release create v1.2.3 -n ${v}`,
+    // bash leaves a ~ after --notes= as it is (not an assignment word): that form is literal.
+    ...(v.startsWith("~") ? [] : [`gh release create v1.2.3 --notes=${v}`]), `gh release create v1.2.3 --title ${v} --latest`]),
+  `gh release create v1.2.3 -R {o/r,x/y}`, `gh release create v1.2.3 --target ${M}*`, `gh release create v1.2.?`];
+
+test("0.22.2 review: goForm refuses every shape with a word the shell expands; a quoted one stays literal", () => {
+  for (const env of [{}, { HOME: "/home/u", T: "t", D: "/r/merge" }]) {
+    for (const c of EXPANDED) assert.equal(goForm(parseShell(c, env)), null, c);
+    for (const c of ["gh release create v1.2.3 -t '{T,x}' -n '*'", "gh release create v1.2.3 --notes='~/x'", `git -C '/r/merge' push origin ${M}^{object}:refs/heads/main`]) assert.ok(goForm(parseShell(c, env)), c);
+  }
+});
+
+test("0.22.2: under a valid go the verified pinned shapes are the hook's allow in every permission mode but plan; nothing else is, and allow never leaves a go", () => {
+  const MODES = ["default", "acceptEdits", "plan", "auto", "bypassPermissions", "dontAsk"], ALLOW_MODES = MODES.filter((m) => m !== "plan");
+  const PDEL = "git push origin --delete old-topic";
+  // Each pinned shape with the evidence that verifies it.
+  const SHAPES = [[PINNED, ok41()], [`git -C /r/merge push origin ${M}^{object}:refs/heads/main`, ok41()], [PTAG, ok41(PUSHED)],
+    ["gh release create v1.2.3", ok41(PUSHED)], [`gh release create v1.2.3 -R o/r --notes 'x' --verify-tag --latest --target ${M}`, ok41({ ...PUSHED, ...ANNOT })], [PDEL, ok41()]];
+  const hook = (input, env, c) => JSON.parse(hookMain(JSON.stringify(input), env, (i, e) => guard(i, e, c)).stdout || "null")?.hookSpecificOutput ?? null;
+  withGo((env) => {
+    for (const mode of ALLOW_MODES) {
+      const who = { ...MAIN, permission_mode: mode };
+      for (const [c, over] of SHAPES) {
+        const r = guard(bash(c, who), env, ctx(over));
+        assert.equal(kind(r), "go", `${mode}: ${c}: ${JSON.stringify(r)}`);
+        assert.match(r.allow, /^orbit · ALLOW · unattended (base push|tag push|release|branch delete)\n[\s\S]*verified pinned shape: (git push origin|gh release create)/, `${mode}: ${c}`);
+        const o = hook(bash(c, who), env, ctx(over));
+        assert.equal(o.permissionDecision, "allow", `${mode}: hook: ${c}`);
+        assert.equal(o.permissionDecisionReason, r.allow);
+        // A subagent thread of the same session has no go: never allow.
+        const sub = guard(bash(c, { ...who, agent_id: "a1", agent_type: "orbit:coder" }), env, ctx(over));
+        assert.ok(["ask", "deny"].includes(kind(sub)), `${mode} subagent: ${c}: ${JSON.stringify(sub)}`);
+        assert.notEqual(hook(bash(c, { ...who, agent_id: "a1" }), env, ctx(over))?.permissionDecision, "allow");
+      }
+      // Unpinned, chained, extra-argument and evidence-failing forms are never allowed; destructive ones stay denied.
+      const never = [["git push origin HEAD:main", ok41()], ["git push origin main", ok41()], [`git push origin ${M}:refs/heads/main`, ok41()], ["git push origin v1.2.3", ok41(PUSHED)],
+        [`${PINNED} && echo ok`, ok41()], [`${PINNED}; git push origin v1.2.3`, ok41()], [`echo ok; ${PINNED}`, ok41()], [`${PINNED} | cat`, ok41()], [`FOO=1 ${PINNED}`, ok41()],
+        [`git push -u origin ${M}^{object}:refs/heads/main`, ok41()], [`${PINNED} --follow-tags`, ok41()], [`${PTAG} ${M}:refs/tags/v1.2.4`, ok41(PUSHED)], [`bash -c '${PINNED}'`, ok41()],
+        ["gh release create v1.2.3 --draft", ok41(PUSHED)], ["gh release create v1.2.3 -F notes.md", ok41(PUSHED)], [`${PDEL} other-topic`, ok41()],
+        [PINNED, ok41({ "config --bool --get push.followTags": "true" })], [PINNED, ok41({ [`rev-list --parents -n 1 ${M}`]: `${M} ${P1}` })],
+        [PTAG, ok41({ ...PUSHED, [`rev-parse --verify -q ${TAGOBJ}^{commit}`]: P1 })], ["gh release create v1.2.3", ok41({ ...PUSHED, "ls-remote origin refs/tags/v1.2.3": "" })],
+        [PDEL, ok41({ [`merge-base --is-ancestor ${TIP} ${P1}`]: null })], ["gh pr merge 4", ok41()], ["git push origin HEAD:my-topic", { ...ok41(), ctx: { ...ok41().ctx, head: () => "my-topic" } }],
+        // A word the shell expands (brace, *, ?, [, ~, $VAR, $(...)) is no go form in any shape: gh would upload what -t or -n expands to.
+        ...EXPANDED.map((c) => [c, c.startsWith("gh") || c.includes("refs/tags/") ? ok41(PUSHED) : ok41()])];
+      for (const [c, over] of never) {
+        const r = guard(bash(c, who), env, ctx(over));
+        assert.notEqual(kind(r), "go", `${mode}: ${c}: ${JSON.stringify(r)}`);
+        assert.notEqual(hook(bash(c, who), env, ctx(over))?.permissionDecision, "allow", `${mode} hook: ${c}`);
+      }
+      for (const c of ["git push -f origin main", "git push origin --delete main", "gh release delete v1.2.3", `git push origin +${M}^{object}:refs/heads/main`]) {
+        assert.equal(kind(guard(bash(c, who), env, ctx(ok41(PUSHED)))), "deny", `${mode}: ${c}`);
+      }
+      // Everything else keeps its mode's answer: shared asks where the mode prompts, is denied in bypassPermissions (the go) and dontAsk.
+      assert.equal(kind(guard(bash("gh pr merge 4", who), env, ctx())), mode === "bypassPermissions" || mode === "dontAsk" ? "deny" : "ask", `${mode}: gh pr merge`);
+      assert.equal(kind(guard(bash("git push origin HEAD:main", who), env, ctx(ok41()))), mode === "bypassPermissions" || mode === "dontAsk" ? "deny" : "ask", `${mode}: ref form`);
+    }
+  });
+  // Plan mode: the go never allows; each pinned shape answers exactly as without a go.
+  withGo((env) => {
+    const h0 = home(), inPlan = { ...MAIN, permission_mode: "plan" };
+    try {
+      for (const [c, over] of SHAPES) assert.deepEqual(guard(bash(c, inPlan), env, ctx(over)), guard(bash(c, inPlan), { HOME: h0 }, ctx(over)), `plan: ${c}`);
+    } finally { rmSync(h0, { recursive: true, force: true }); }
+  });
+  // No go, an expired one, another session's, one over 24 h, a missing session_id: no allow in any mode.
+  const nogo = (env, label, who = MAIN) => {
+    for (const mode of MODES) for (const [c, over] of SHAPES) {
+      const r = guard(bash(c, { ...who, permission_mode: mode }), env, ctx(over));
+      assert.notEqual(kind(r), "go", `${label} ${mode}: ${c}`);
+      assert.notEqual(hook(bash(c, { ...who, permission_mode: mode }), env, ctx(over))?.permissionDecision, "allow", `${label} ${mode} hook: ${c}`);
+    }
+  };
+  const h = home();
+  try { nogo({ HOME: h }, "no go"); } finally { rmSync(h, { recursive: true, force: true }); }
+  withGo((env) => nogo(env, "expired"), { until: Date.now() - 1 });
+  withGo((env) => nogo(env, "another session's file"), { session_id: "other" });
+  withGo((env) => nogo(env, "over 24 h"), { opened: Date.now() - 1000, until: Date.now() + 25 * 3600_000 });
+  withGo((env) => nogo(env, "opened in the future"), { opened: Date.now() + 3600_000 });
+  withGo((env) => nogo(env, "another session's thread", { ...MAIN, session_id: "sess-2" }));
+  withGo((env) => nogo(env, "no session_id", { cwd: MAIN.cwd }));
+  nogo({}, "no HOME");
 });
 
 test("#41 capture: the go's pinned pushes are class go with the sha they sent; a ref-form push is not a go action", () => {
   withGo((env) => {
     const ev = (command) => ({ ...MAIN, tool_name: "Bash", tool_input: { command }, tool_response: { exit_code: 0 } });
+    for (const [c, over] of [[PINNED, ok41()], [PTAG, ok41(PUSHED)], ["gh release create v1.2.3", ok41(PUSHED)]]) assert.equal(kind(guard(ev(c), env, ctx(over))), "go", c);
     const [b] = outwardEvents(ev(PINNED), () => ctx(ok41()), env);
     assert.ok(b.argv.includes("class=go") && b.argv.includes(`sha=${M}`), b.argv.join(" "));
     const [t] = outwardEvents(ev(PTAG), () => ctx(ok41()), env);
@@ -1026,6 +1125,30 @@ test("#41 capture: the go's pinned pushes are class go with the sha they sent; a
       const e = outwardEvents(ev(c), () => ctx(ok41()), env);
       assert.ok(e.every((x) => !x.argv.includes("class=go")), `${c}: ${JSON.stringify(e)}`);
     }
+  });
+});
+
+test("0.22.2 review: capture logs class go only for a call the guard allowed; an asked go shape the owner approved is an ordinary push", () => {
+  withGo((env, h) => {
+    const who = { ...MAIN, permission_mode: "default" }, log = join(stateDir(h), "go-log.jsonl");
+    const ev = (command) => ({ ...who, tool_name: "Bash", tool_input: { command }, tool_response: { exit_code: 0 } });
+    const isGo = (e) => outwardEvents(e, () => ctx(ok41()), env).some((x) => x.argv.includes("class=go"));
+    const failed = ok41({ "config --bool --get push.followTags": "true" });
+    // A failed check asks in default mode; the owner approves, the push runs: not the go's.
+    assert.equal(kind(guard(ev(PINNED), env, ctx(failed))), "ask");
+    const outs = outwardEvents(ev(PINNED), () => ctx(ok41()), env);
+    assert.ok(outs.length && outs.every((x) => !x.argv.includes("class=go")) && outs.some((x) => x.argv.includes("class=shared")), JSON.stringify(outs));
+    goLog(ev(PINNED), outs, env);
+    assert.equal(existsSync(log), false, "nothing in the go log");
+    // No guard run at all: not the go's either.
+    assert.equal(isGo(ev("git push origin --delete old-topic")), false);
+    // Allowed: class go, once; a later call of the same command that the guard asks for clears it.
+    assert.equal(kind(guard(ev(PINNED), env, ctx(ok41()))), "go");
+    assert.equal(isGo(ev(PINNED)), true);
+    assert.equal(isGo(ev(PINNED)), false, "one allow, one go record");
+    assert.equal(kind(guard(ev(PINNED), env, ctx(ok41()))), "go");
+    assert.equal(kind(guard(ev(PINNED), env, ctx(failed))), "ask");
+    assert.equal(isGo(ev(PINNED)), false, "the later ask clears the earlier allow");
   });
 });
 
@@ -1069,8 +1192,8 @@ test("#41 review 5: every pinned push the go accepts sends exactly the object it
 test("#41 review 5: under the go, a bare <sha>: push and every other source spelling are denied; the deny names the ^{object} form", () => {
   withGo((env) => {
     const PIN = `git push origin ${M}^{object}:refs/heads/main`, TPIN = `git push origin ${TAGOBJ}^{object}:refs/tags/v1.2.3`;
-    assert.equal(guard(bash(PIN), env, ctx(ok41())), null, "the ^{object} base push");
-    assert.equal(guard(bash(TPIN), env, ctx(ok41(PUSHED))), null, "the ^{object} tag push");
+    assert.equal(kind(guard(bash(PIN), env, ctx(ok41()))), "go", "the ^{object} base push");
+    assert.equal(kind(guard(bash(TPIN), env, ctx(ok41(PUSHED)))), "go", "the ^{object} tag push");
     for (const [c, pin, git] of [[`git push origin ${M}:refs/heads/main`, PIN, {}], [`git push origin ${TAGOBJ}:refs/tags/v1.2.3`, TPIN, PUSHED],
       [`git -C /r/merge push origin ${M}:refs/heads/main`, `git -C /r/merge push origin ${M}^{object}:refs/heads/main`, {}]]) {
       const res = guard(bash(c), env, ctx(ok41(git)));

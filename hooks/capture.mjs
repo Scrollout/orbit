@@ -5,7 +5,7 @@
 // worktree never loses events. Records only ref, sha, `chained` and `by: agent`: never the command line, the remote or an option.
 // Also appends `outward` (class, subcommand, refs, session kind, agent_id, exit code) for each shared or destructive action the
 // guard's classifier finds in the call, read again after it ran; never the command line or a token. Nothing reads it as an authorisation.
-// Under an unattended go, the go's own action (the pinned base push, a merged branch delete) is recorded as class `go`, with the sha
+// Under an unattended go, the go's own action the guard allowed (the pinned base push, a merged branch delete) is recorded as class `go`, with the sha
 // pushed: the owner's night log; and to the go log under ~/.claude (goLog below), which the audit trusts for DEC-06.
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { loadProfile } from "../scripts/profile.mjs";
 import { FAIL, classifyOutward, isOperator, parseShell, realCtx, safe } from "./guard.mjs";
-import { goForm, goState, stateDir } from "./go.mjs";
+import { goForm, goState, stateDir, takeAllowed } from "./go.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REF_SRC = /^\+?[\w./@^~-]+$/;
@@ -107,7 +107,8 @@ export function outwardEvents(event, getCtx, env = {}) {
   const r = event.tool_response;
   const code = [r?.exit_code, r?.exitCode, r?.returnCode].find((x) => typeof x === "number") ?? (failed(r) ? 1 : 0);
   const g = goForm(cmds);
-  if (g && goState(event, env)) {
+  // Only a call the guard allowed (its marker) is the go's; a go shape that asked and ran on the owner's answer is not.
+  if (g && goState(event, env) && takeAllowed(event, env)) {
     const dir = g.dir === null ? cwd : resolve(cwd, g.dir);
     // Only a pinned <sha>^{object} push is the go's (a ref form or a bare sha was denied, so if it ran it was not by the go); its sha is what was pushed.
     if ((g.kind !== "base" && g.kind !== "tag") || g.sha) {

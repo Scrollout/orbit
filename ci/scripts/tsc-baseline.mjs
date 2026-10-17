@@ -11,9 +11,14 @@ const { entries = [], skip = [] } = JSON.parse(readFileSync(new URL("../tsc-base
 const bin = process.env.TSC_BIN ?? "/opt/ci/node_modules/.bin/tsc";
 const run = spawnSync(bin, ["-p", ".", "--pretty", "false", "--typeRoots", join(dirname(bin), "..", "@types")], { encoding: "utf8", maxBuffer: 1 << 28 });
 const found = run.stdout.split("\n").map((l) => /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/.exec(l)).filter(Boolean);
-if (!found.length && run.status !== 0) { console.log(`tsc:1 no findings parsed from tsc (exit ${run.status}): ${(run.stdout + run.stderr).slice(0, 300)}`); process.exit(1); }
+if (!found.length && run.status !== 0 && !/error TS\d+: /.test(run.stdout)) { console.log(`tsc:1 no findings parsed from tsc (exit ${run.status}): ${(run.stdout + run.stderr).slice(0, 300)}`); process.exit(1); }
 const hits = new Map();
 let bad = 0;
+// Global errors (no file position, e.g. `error TS6053: File 'x' not found.`) are findings that no baseline entry covers.
+for (const l of run.stdout.split("\n")) {
+  const g = /error (TS\d+): (.*)$/.exec(l);
+  if (g && !/\(\d+,\d+\)/.test(l)) { bad++; console.log(`tsc:1 ${g[1]}: ${g[2]}`); }
+}
 for (const [, file, line, col, code, msg] of found) {
   if (skip.some((s) => s.file === file)) continue;
   if (entries.some((b) => b.file === file && code in b.counts)) { hits.set(`${file} ${code}`, (hits.get(`${file} ${code}`) ?? 0) + 1); continue; }

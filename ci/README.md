@@ -16,6 +16,8 @@
 | `make ci` | vet, quality, security; every check runs even after a failure; prints the report; exit status is the failure; clears `ci/out` first |
 | `make bump V=x.y.z [RULES=x.y.z]` | version ritual: `plugin.json`, optional `rules/rules.json` version, `manifest --update` |
 
+Details of the long-form targets: `make toolbox` rebuilds from the docker layer cache, and `SKIP_TOOLBOX_BUILD=1` reuses an already loaded image (the workflow's jobs do); `make plugin-validate` fails on any warning but `CLAUDE.md` at the root; `make ci` clears `ci/out`, runs vet, quality and security in that order even after a failure, prints the report and fails if any failed; `make bump` sets `plugin.json` (and `rules/rules.json` with `RULES=`), refuses a `V` or `RULES` that is not `X.Y.Z`, and runs `manifest --update`; `scenarios/pin.json` stays by hand.
+
 A check prints `<target>/<check>: pass|fail|skipped`, a target `PASS`/`FAIL`.
 
 ## The container
