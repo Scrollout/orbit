@@ -2,11 +2,16 @@
 //   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md]
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
-//   triage{topic,sec,door,prod,track,files?,tdd?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
-//   agent_start{role,model,topic,phase?,fix_scope?,cap_reason?,outside_cap?,resumed?,worker?,reason?}   phase: design | build | fix | delivery
+//   triage{topic,sec,door,prod,track,files?,tdd?,trigger?,why?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
+//                                              trigger: asked | unasked (unasked needs why), required from rules 1.11.0; files: the changed paths, re-recorded after every coder run (DEC-02)
+//   agent_start{role,model,topic,phase?,fix_scope?,files?,extra?,cap_reason?,outside_cap?,resumed?,worker?,reason?}   phase: design | build | fix | delivery
+//                                              extra: research | missing-fact | rebuttal | hypotheses (once per topic each; rebuttal only on a door=yes triage); files: a fix coder's changed paths, checked against fix_scope
+//   owner_go{topic,why?}                       the owner's go to a further fix round after a re-reviewer run (DEC-14)
+//   intent{milestone,phase}                    phase: questions | draft | checked | approved | written (approved needs checked, written needs approved)
+//   handoff{topic,from,to}                     from and to: decide | intent | operator; at most one handoff per direction per topic
 //   ci_run{branch?,sha,workflow?,state|conclusion}   branch (= topic) makes that topic's reviewers delivery reviewers by default; without it the run counts for no topic. green = state green or conclusion success
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
-//   merge_built{branch (required),merge_sha,tree_equal,ci_state,waived?,waiver_reason?,release_skip?}   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
+//   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.11.0)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
@@ -41,16 +46,21 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition", "intent", "handoff", "owner_go"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"], intent: ["milestone", "phase"], handoff: ["topic", "from", "to"], owner_go: ["topic"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 // DEC-21, DEC-22: only for events stamped with rules 1.7.0 or later
 const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };
 const verCmp = (a, b) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
 const tddRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 7, 0]) >= 0; };
+const newRules = (e) => { const r = semParts(e?.rule_version?.rules); return !!r && verCmp(r, [1, 11, 0]) >= 0; };   // trigger and catchup_sha required
+const ROLES = [...T.roles, "coder", "re-reviewer"], EXTRAS = ["research", "missing-fact", "rebuttal", "hypotheses"];
+const RANK = { analyst: 0, engineer: 1, reviewer: 2, security: 3, techlead: 4 };   // design-call order; incident: security first
+const INTENT_PHASES = ["questions", "draft", "checked", "approved", "written"], PARTIES = ["decide", "intent", "operator"];
+const made = dict(), extras = dict(), maxRank = dict(), lastFix = dict(), coderLine = dict(), triageFilesLine = dict(), handoffs = dict(), intentSeen = dict();
 const maxRules = dict();   // per tdd-on topic
 let maxRulesAll = null;    // ledger-wide, with the profile's tdd yes or auto
 const tddOn = new Set();   // topics whose triage recorded tdd: true
@@ -93,7 +103,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
   if (e.kind === "agent_start" && "worker" in e && (typeof e.worker !== "string" || e.worker === "")) { v("LEDGER", n, "agent_start worker must be a non-empty string"); continue; }
   if (missing.length) continue;
   if (e.rule_version) versions.add(Object.entries(e.rule_version).map(([k, x]) => `${k}=${x}`).join(","));
-  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false, evidence: null, coderEvent: null, report: null, required: null, checked: new Set(), blocked: new Set() });
+  const bs = (b) => (branchState[b] ??= { reviewed: new Set(), lastSha: null, fixSince: false, reReviews: 0, reviewed_any: false, evidence: null, coderEvent: null, report: null, required: null, checked: new Set(), blocked: new Set(), reRan: false, go: false });
 
   switch (e.kind) {
     case "triage": {
@@ -114,31 +124,70 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (sticky[e.topic] && e.sec !== "yes") v("DEC-02", n, `topic ${e.topic}: security was yes and a later triage says ${e.sec}`);
       if (e.sec === "yes" || forced) sticky[e.topic] = true;
       if (!T.tracks[e.track]) v("LEDGER", n, `unknown track ${e.track}`);
-      triage[e.topic] = { ...e, sec: sticky[e.topic] ? "yes" : e.sec };
+      const eff = { ...e, sec: sticky[e.topic] ? "yes" : e.sec };
+      if (T.tracks[e.track] && [eff.sec, eff.door, eff.prod].includes("yes") && !["full review", "incident"].includes(e.track)) v("DEC-03", n, `topic ${e.topic}: a triage line is yes, so the track is full review or incident, not ${e.track}`);
+      if ("trigger" in e && !["asked", "unasked"].includes(e.trigger)) v("LEDGER", n, `triage trigger must be asked or unasked, got ${JSON.stringify(e.trigger)}`);
+      else if (!("trigger" in e) && newRules(e)) v("LEDGER", n, "triage needs trigger (asked or unasked)");
+      else if (e.trigger === "unasked" && (typeof e.why !== "string" || !e.why.trim())) v("LEDGER", n, `triage of ${e.topic} started unasked, so it needs why (one line: why the question qualifies)`);
+      if (Array.isArray(e.files)) triageFilesLine[e.topic] = n;
+      triage[e.topic] = eff;
       break;
     }
     case "agent_start": {
       const tr = triage[e.topic];
       if (!tr) v("DEC-03", n, `${e.role} started on ${e.topic} with no triage event before it`);
+      if (!ROLES.includes(e.role)) v("LEDGER", n, `unknown role ${JSON.stringify(e.role)} (${ROLES.join(", ")})`);
+      if ("files" in e && !(Array.isArray(e.files) && e.files.every((f) => typeof f === "string"))) v("LEDGER", n, "agent_start files must be a list of paths");
+      const x = EXTRAS.includes(e.extra) ? e.extra : undefined;
+      if (e.extra !== undefined && !x) v("LEDGER", n, `agent_start extra must be ${EXTRAS.join(", ")}, got ${JSON.stringify(e.extra)}`);
+      if (x) {
+        const ex = (extras[e.topic] ??= dict());
+        ex[x] = (ex[x] ?? 0) + 1;
+        if (ex[x] > 1) v("DEC-03", n, `${e.topic}: second ${x} round (once per topic; a cap_reason does not excuse it)`);
+        if (x === "rebuttal") {
+          if (tr && tr.door !== "yes") v("DEC-13", n, `${e.topic}: rebuttal on a triage with door ${tr.door} (only a one-way door has a Contest)`);
+          if (e.role !== "techlead") v("DEC-13", n, `${e.topic}: the rebuttal is the same tech lead, got role ${e.role}`);
+        }
+      }
       if (e.role === "coder") {
         const prev = lastCoder[e.topic], wprev = e.worker !== undefined ? workerModel[e.worker] : undefined;
         if (e.resumed === true && prev && prev !== e.model) v("DEC-04", n, `resumed coder on ${e.topic} changed model ${prev} -> ${e.model}; a resumed worker keeps its model, start a fresh coder to change it`);
         else if (wprev && wprev !== e.model) v("DEC-04", n, `worker ${e.worker} on ${e.topic} changed model ${wprev} -> ${e.model}; a resumed worker keeps its model, start a fresh coder (new worker id) to change it`);
         if (e.worker !== undefined) workerModel[e.worker] ??= e.model;
+        if (tr?.track === "incident" && e.model !== "opus") v("DEC-04", n, `coder on ${e.model} for ${e.topic} on the incident track (needs opus)`);
+        if (e.phase === "fix" && e.fix_scope === "tests-docs" && Array.isArray(e.files) && codeFiles(e.files).length) v("DEC-04", n, `fix_scope tests-docs for ${e.topic}, but the fix's files include code (${codeFiles(e.files).slice(0, 5).join(", ")})`);
+        coderLine[e.topic] = n;
         if (e.reason === "ci-failed-twice" && e.model !== "opus") v("DEC-04", n, `coder re-run after CI failed twice on ${e.topic} needs opus, got ${e.model}`);
         lastCoder[e.topic] = e.model;
         bs(e.topic).evidence = null; bs(e.topic).report = null; bs(e.topic).coderEvent = e;   // DEC-21: each coder run needs its own report
-        if (e.phase === "fix") { bs(e.topic).fixSince = true; bs(e.topic).reReviews = 0; }
+        if (e.phase === "fix") {
+          const b = bs(e.topic);
+          if (b.reRan && !b.go) v("DEC-14", n, `a further fix round on ${e.topic} after the re-reviewer ran needs an owner_go event (still open after one fix round: stop and show the owner both positions)`);
+          b.fixSince = true; b.reReviews = 0; b.reRan = false; b.go = false; lastFix[e.topic] = e;
+        }
         if (tr && [tr.sec, tr.door, tr.prod].includes("yes") && e.model !== "opus" && !(e.phase === "fix" && e.fix_scope === "tests-docs"))
           v("DEC-04", n, `coder on ${e.model} for ${e.topic} with a triage line yes (needs opus)`);
       }
       if (e.role === "reviewer" && e.model !== "opus") v("DEC-19", n, `reviewer on ${e.model}, needs opus`);
       if (e.role === "re-reviewer" && e.model !== "opus" && !(e.model === "sonnet" && e.fix_scope === "tests-docs")) v("DEC-19", n, `re-reviewer on ${e.model} (sonnet only for a tests-or-docs-only fix round)`);
+      if (e.role === "re-reviewer") {
+        bs(e.topic).reRan = true;
+        const lf = lastFix[e.topic];
+        if (e.model === "sonnet" && e.fix_scope === "tests-docs" && (!lf || lf.fix_scope !== "tests-docs" || (Array.isArray(lf.files) && codeFiles(lf.files).length))) v("DEC-19", n, `re-reviewer on sonnet for ${e.topic}, but the fix round's coder did not record fix_scope tests-docs with no code files`);
+      }
       const phase = e.phase ?? (e.role === "reviewer" ? (sawCi.has(e.topic) ? "delivery" : "design") : undefined);
       const delivery = e.role === "reviewer" && phase === "delivery";
       if (delivery && e.phase === "delivery" && !sawCi.has(e.topic)) v("DEC-03", n, `${e.topic}: delivery reviewer with no ci_run for the topic before it`);
       if (e.outside_cap && !e.cap_reason) v("DEC-03", n, `${e.topic}: outside_cap without a cap_reason`);
-      if (T.roles.includes(e.role) && !delivery && !e.cap_reason && !e.outside_cap) {
+      if (T.roles.includes(e.role) && !delivery && !x) {
+        const m = (made[e.topic] ??= dict());
+        m[e.role] = (m[e.role] ?? 0) + 1;
+        const track = tr?.track, rk = track === "incident" && e.role === "security" ? 0 : RANK[e.role];
+        const hi = maxRank[e.topic];
+        if (T.tracks[track] && hi && rk < hi.rank) v("DEC-03", n, `${e.topic}: ${e.role} started after a ${hi.role} call (order: analysts, engineers, design reviewers, security, tech lead last${track === "incident" ? "; on an incident security goes first" : ""})`);
+        if (T.tracks[track] && (!hi || rk > hi.rank)) maxRank[e.topic] = { rank: rk, role: e.role };
+      }
+      if (T.roles.includes(e.role) && !delivery && !e.cap_reason && !e.outside_cap && !x) {
         const c = (counts[e.topic] ??= Object.assign(dict(), { total: 0 }));
         c[e.role] = (c[e.role] ?? 0) + 1;
         c.total++;
@@ -164,7 +213,9 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       // DEC-22: this review must proof-check the proved tests of the coder_report before it, on this sha
       b.required = tddOn.has(e.branch) && b.report && tddRules(b.report) ? { sha: e.sha, tests: b.report.tests } : null;
       b.reviewed_any = true;
+      if (triage[e.branch] && coderLine[e.branch] !== undefined && !(triageFilesLine[e.branch] > coderLine[e.branch])) v("DEC-02", n, `review of ${e.branch}@${short(e.sha)} started with no triage with files after the last coder run (line ${coderLine[e.branch]}); run decide-triage.mjs --branch again and record it`);
       if (role === "re-reviewer") {
+        b.reRan = true;
         if (!b.fixSince) v("DEC-14", n, `re-reviewer on ${e.branch} with no fix round since the last review`);
         if (++b.reReviews > 1) v("DEC-14", n, `re-reviewer ran more than once on ${e.branch} for one fix round`);
       }
@@ -177,6 +228,15 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       for (const id of ["DEC-05", "OPR-02"]) {
         if (e.tree_equal !== true) v(id, n, `merge ${short(e.merge_sha)}: merged tree not equal to the branch tree`);
         if (e.ci_state !== "green") v(id, n, `merge ${short(e.merge_sha)}: CI on the catch-up merge commit is ${e.ci_state}, not green`);
+      }
+      if ("catchup_sha" in e || newRules(e)) {
+        const runs = Object.values(ci[e.catchup_sha] ?? {});
+        if (!e.catchup_sha) v("DEC-05", n, `merge ${short(e.merge_sha)}: needs catchup_sha, the head of the catch-up merge whose CI run was green`);
+        else if (!runs.length || !runs.every((s) => s === "green")) v("DEC-05", n, `merge ${short(e.merge_sha)}: catchup_sha ${short(e.catchup_sha)} has no green ci_run on every recorded workflow in the ledger`);
+      }
+      {
+        const tr = triage[e.branch], caps = tr && T.tracks[tr.track];
+        if (caps) for (const role of ["security", "techlead"]) if ((made[e.branch]?.[role] ?? 0) < caps[role][0]) v("DEC-03", n, `merge of ${e.branch}: the ${tr.track} track needs at least ${caps[role][0]} ${role} call, the ledger has ${made[e.branch]?.[role] ?? 0}`);
       }
       if (!bs(e.branch).reviewed_any) {
         const standing = profile.standing_waivers ?? [];
@@ -254,6 +314,25 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       bs(e.branch).report = e;
       const code = codeFiles(triage[e.branch]?.files);
       if (tddOn.has(e.branch) && !e.tests.length && (e.exempt ?? []).length && code.length) warns.push(`warn: line ${n}: every test of ${e.branch}'s coder_report is exempt but the step touches production code (${code.slice(0, 5).join(", ")})`);
+      break;
+    }
+    case "owner_go": {
+      bs(e.topic).go = true;
+      break;
+    }
+    case "intent": {
+      if (!INTENT_PHASES.includes(e.phase)) { v("LEDGER", n, `intent phase must be ${INTENT_PHASES.join(", ")}, got ${JSON.stringify(e.phase)}`); break; }
+      const seen = (intentSeen[e.milestone] ??= new Set());
+      const need = { approved: "checked", written: "approved" }[e.phase];
+      if (need && !seen.has(need)) v("LEDGER", n, `intent ${e.milestone}: ${e.phase} with no ${need} event before it${need === "checked" ? " (intent-plan.mjs must pass before the owner approves)" : ""}`);
+      seen.add(e.phase);
+      break;
+    }
+    case "handoff": {
+      if (!PARTIES.includes(e.from) || !PARTIES.includes(e.to) || e.from === e.to) { v("LEDGER", n, `handoff from and to must be two of ${PARTIES.join(", ")}, got ${JSON.stringify(e.from)} -> ${JSON.stringify(e.to)}`); break; }
+      const k = `${e.topic} ${e.from}>${e.to}`;
+      handoffs[k] = (handoffs[k] ?? 0) + 1;
+      if (handoffs[k] > 1) v("DEC-03", n, `${e.topic}: second handoff ${e.from} -> ${e.to} (at most one each way per topic: stop and report)`);
       break;
     }
     case "condition": {

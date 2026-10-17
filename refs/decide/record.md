@@ -11,4 +11,6 @@ Detail of the `/decide` command (`commands/decide.md`); the numbered rules and t
 
    A row per call that ran, the rebuttal included. Then the three triage lines, **Decision**, **Track and why**, **Lenses** (yours, one line each: economics - build, run and token cost, owner time; risk and fit - blast radius, reversibility, fit with the decision records), **Actions taken**, **Open risks and revisit trigger**, and **Cost**: one line, the agents that ran, their models and the total tokens as the agent results report them.
 
-Check the shape before reporting: `node "${CLAUDE_PLUGIN_ROOT}/scripts/decision-lint.mjs" <record file|->` (exit 2 with `decision gap:` lines for a missing column or row, a verdict word that does not fit the role, `conditions` without conditions, a placeholder, or a missing triage line).
+When your verdict differs from the tech lead's, add the line `override tech lead: <reason>` (DEC-10); when you adopt a proposal security blocked, add `override security: <reason>` (DEC-12).
+
+Check the shape before reporting: `node "${CLAUDE_PLUGIN_ROOT}/scripts/decision-lint.mjs" <record file|->` (exit 2 with `decision gap:` lines for a missing column or row, a verdict word that does not fit the role, `conditions` without conditions, a placeholder, a missing triage line or one of the six sections, a differing PM and tech lead verdict without the `override tech lead:` line, or an adopted security `block` without the `override security:` line).

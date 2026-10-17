@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,4 +164,72 @@ test("a footnote without a definition or a source fails cleanly (no crash)", () 
   fails(r, /footnote \[\^s1\] has no definition/);
   assert.match(r.stderr, /footnote \[\^s1\] matches no sources id/);
   assert.doesNotMatch(r.stderr, /TypeError/);
+});
+
+// Bundle-level checks of validate-okf.mjs: each has a failing case. `edit(root)` changes a fresh okf-init bundle.
+function broken(edit, frontmatter, body) {
+  const root = bundle(frontmatter, body);
+  edit(root);
+  const r = validate(root);
+  rmSync(root, { recursive: true, force: true });
+  return r;
+}
+const rd = (root, f) => readFileSync(join(root, f), "utf8");
+const wr = (root, f, text) => writeFileSync(join(root, f), text);
+
+test("a doc missing from its folder's index fails", () => {
+  fails(broken((r) => wr(r, "docs/okf/index.md", rd(r, "docs/okf/index.md").replace(/^\* \[X\].*\n/m, "")), base), /x\.md: not listed in docs\/okf\/index\.md/);
+});
+
+test("a doc in a folder with no index.md fails", () => {
+  fails(broken((r) => { mkdirSync(join(r, "docs/okf/loose")); wr(r, "docs/okf/loose/y.md", `---\n${base}\n---\n**TL;DR:** Loose.\n`); }), /loose\/y\.md: its folder has no index\.md/);
+});
+
+test("a folder index not linked from its parent index fails", () => {
+  fails(broken((r) => wr(r, "docs/okf/index.md", rd(r, "docs/okf/index.md").replace(/^\* \[Roadmap\].*\n/m, ""))), /roadmap\/index\.md: not linked from docs\/okf\/index\.md/);
+});
+
+test("a broken link, bundle-relative or relative, fails; a link in code does not", () => {
+  fails(check(base, "**TL;DR:** See [gone](/nowhere.md).\n"), /x\.md: broken link \/nowhere\.md/);
+  fails(check(base, "**TL;DR:** See [gone](./also-gone.md).\n"), /x\.md: broken link \.\/also-gone\.md/);
+  ok(check(base, "**TL;DR:** See `[gone](/nowhere.md)` and [index](index.md) and [web](https://example.com/x).\n"));
+});
+
+test("a bad or unsorted log heading fails", () => {
+  fails(broken((r) => appendFileSync(join(r, "docs/okf/log.md"), "\n## October 2026\n* Entry.\n")), /log\.md: log heading 'October 2026' must be a YYYY-MM-DD date alone/);
+  fails(broken((r) => appendFileSync(join(r, "docs/okf/log.md"), "\n## 2026-10-18\n* Newer, but listed below.\n")), /log\.md: log dates must be newest first/);
+  fails(broken((r) => appendFileSync(join(r, "docs/okf/log.md"), "\n## 2026-10-17\n* Same date twice.\n")), /log\.md: log dates must be newest first, one heading per date/);
+});
+
+test("a missing root index or log fails; so does a missing bundle", () => {
+  fails(broken((r) => unlinkSync(join(r, "docs/okf/log.md"))), /missing root log\.md/);
+  fails(broken((r) => unlinkSync(join(r, "docs/okf/index.md"))), /missing root index\.md/);
+  const empty = mkdtempSync(join(tmpdir(), "okf-"));
+  const r = validate(empty);
+  rmSync(empty, { recursive: true, force: true });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /bundle docs\/okf is missing/);
+});
+
+test("root index frontmatter allows only okf_version, matching the version; a nested index takes none", () => {
+  fails(broken((r) => wr(r, "docs/okf/index.md", rd(r, "docs/okf/index.md").replace('okf_version: "0.2"', 'okf_version: "0.2"\ntitle: Root'))), /root index frontmatter allows only okf_version, found title/);
+  fails(broken((r) => wr(r, "docs/okf/index.md", rd(r, "docs/okf/index.md").replace('"0.2"', '"0.1"'))), /okf_version should be "0\.2"/);
+  fails(broken((r) => wr(r, "docs/okf/roadmap/index.md", `---\ntitle: R\n---\n${rd(r, "docs/okf/roadmap/index.md")}`)), /an index\.md below the root takes no frontmatter/);
+});
+
+test("a doc over the size cap, from the config, fails", () => {
+  fails(broken((r) => wr(r, ".agents/okf.json", JSON.stringify({ maxDocChars: 100 }))), /chars exceeds 100; split it/);
+});
+
+test("AGENTS.md: missing, over the line cap, or with a broken link fails", () => {
+  fails(broken((r) => unlinkSync(join(r, "AGENTS.md"))), /AGENTS\.md: missing/);
+  fails(broken((r) => wr(r, "AGENTS.md", Array.from({ length: 90 }, (_, i) => `line ${i}`).join("\n"))), /AGENTS\.md: over 80 lines/);
+  fails(broken((r) => wr(r, "AGENTS.md", `${rd(r, "AGENTS.md")}\nSee [gone](docs/okf/gone.md).\n`)), /AGENTS\.md: broken link docs\/okf\/gone\.md/);
+  fails(broken((r) => wr(r, ".agents/okf.json", JSON.stringify({ maxAgentsLines: 2 }))), /AGENTS\.md: over 2 lines/);
+});
+
+test("a pointer file that is missing, long, or does not name AGENTS.md fails", () => {
+  fails(broken((r) => unlinkSync(join(r, "CLAUDE.md"))), /CLAUDE\.md: missing pointer file/);
+  fails(broken((r) => wr(r, "CLAUDE.md", Array.from({ length: 10 }, (_, i) => `rule ${i}`).join("\n") + "\nAGENTS.md\n")), /CLAUDE\.md: must be a short pointer to AGENTS\.md/);
+  fails(broken((r) => wr(r, "CLAUDE.md", "Do everything this way.\n")), /CLAUDE\.md: must be a short pointer to AGENTS\.md/);
 });

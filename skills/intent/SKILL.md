@@ -1,7 +1,7 @@
 ---
 name: intent
 description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue unless /decide or the operator hands it over as too big for one worker, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
-version: 1.1.0
+version: 1.2.0
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. A field marked TODO is a gap: say so, never invent. The plan's units are then built through the usual flow: `/orbit:decide` per unit, or the operator's dispatch.
 
@@ -9,6 +9,8 @@ If the owner did not ask for it, say in one line why the goal is too big for one
 
 ## 1. Size gate
 If the goal fits one worker session (about 1,000 changed lines or less, one branch), say so and hand it to `/orbit:decide`, unless it came from `/decide` already (at most one handoff each way: then say so and stop). Stop here.
+
+Ledger: with a ledger in use, append each handoff and each step's end with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> handoff topic=<topic> from=<decide|intent|operator> to=<...>` and `... intent milestone=m<n> phase=<questions|draft|checked|approved|written>`; the audit allows one handoff per direction per topic, and `approved` only after `checked`, `written` only after `approved` (fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md`).
 
 ## 2. Where the plan goes
 - With an OKF bundle (profile "OKF docs", default `docs/okf`): `<bundle>/roadmap/m<n>.md`, the next free milestone number. If the milestone already exists with the placeholder plan (the scaffold's M1), replace that doc and keep its status line; never write a sibling.
@@ -29,13 +31,13 @@ The scaffold's `roadmap/m1.md` shape, filled in, under the cap (`maxDocChars`, d
 - Over the cap: split by track into `m<n>-<track>.md` docs, one plan; step ids stay unique across them.
 
 ## 6. Check it (free, deterministic)
-Pipe the rendered doc to `node "${CLAUDE_PLUGIN_ROOT}/scripts/intent-plan.mjs" --root . --plan -` (several docs: `--plan <file>` each, outside the repo in an operator session). Fix every `plan gap` and re-run until exit 0. Keep the forced `sec=yes` lines; they are the profile speaking.
+Pipe the rendered doc to `node "${CLAUDE_PLUGIN_ROOT}/scripts/intent-plan.mjs" --root . --plan -` (several docs: `--plan <file>` each, outside the repo in an operator session). Fix every `plan gap` and re-run until exit 0 (it also checks the frontmatter: `type: Roadmap`, the title `M<n> plan: <Title>`, tags `roadmap, milestones, m<n>`, `status: draft`, and a `## Carried` section). Keep the forced `sec=yes` lines; they are the profile speaking. Then append `intent ... phase=checked`.
 
 ## 7. Approval gate
 - Optional light review, only when the owner asks for it: `orbit:designer` as reviewer, focus `plan-sizing`, with the plan doc and the script's output as the brief; it reads nothing else. Apply what holds, re-run step 6.
 - A one-way-door goal (persistent data, migrations, API contract, security boundary, money or destructive operations, plus the profile's additions): run `/orbit:decide` on the plan as a roadmap question before approval. Steps forced to sec=yes or marked door=yes do not trigger it here; each is decided when its issue is built.
 - Show the owner the doc, the forced lines, the waves and the "decide first" list. Ask once for approval. A change the owner asks for goes back to step 5.
-- On approval set `status: stable`, `generated.at` to now and `verified:` as a list with `- { by: human:<id>, at: <now> }`. The id is the owner's GitHub login (`gh api user -q .login`), else ask once; never an email address.
+- On approval set `status: stable`, `generated.at` to now and `verified:` as a list with `- { by: human:<id>, at: <now> }`. The id is the owner's GitHub login (`gh api user -q .login`), else ask once; never an email address. Re-run the script with `--approved` (it needs `status: stable` and that human `verified` entry), then append `intent ... phase=approved`.
 
 ## 8. Write
 - Order: the plan doc; its line in `roadmap/index.md` (`* [M<n> plan](m<n>.md) - <description> Load when working on M<n>.`); `roadmap/milestones.md` (`## M<n> <Title> - planned` with a link, unless the milestone exists; set its `generated` to `{ by: claude-code/<model id>, at: <now> }`); a `**Creation**` bullet under today's `## YYYY-MM-DD` in `log.md`. The docs hook fails between these writes (not yet indexed); act only on the final `node "${CLAUDE_PLUGIN_ROOT}/scripts/validate-okf.mjs" --root .`.
@@ -44,4 +46,5 @@ Pipe the rendered doc to `node "${CLAUDE_PLUGIN_ROOT}/scripts/intent-plan.mjs" -
 - With the owner's go only: create the tracker milestone `M<n> <Title>` if it is missing, then one issue per step (type label, milestone, a link to the plan doc, the step's Files, Proof and Hint). A `decide-first` step becomes a question issue for `/orbit:decide`.
 
 ## 9. Hand off
+Append `intent ... phase=written` once the docs are written.
 The operator dispatches the issues by its loop, in the script's waves; without one, the owner runs `/orbit:decide` per issue. Later changes to the plan's intent, steps or exit tests need the owner's approval again, appended to `verified`; progress and carried issues do not.

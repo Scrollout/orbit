@@ -6,7 +6,10 @@
 // may be empty or a placeholder (`...`, TODO, <...>), except Conditions (empty is fine unless the verdict is `conditions`) and Tokens
 // (`-` is fine). After the table, each at the start of a line (a list marker and bold are fine) with its exact label and a colon: the three triage
 // lines `Security paths:`, `One-way door:` and `Touches real:` (or `Touches the profile's production-like environment:`), answered yes or no
-// (the last may be n/a when the profile defines none).
+// (the last may be n/a when the profile defines none). Then the sections `Decision:`, `Track and why:`, `Lenses:`, `Actions taken:`,
+// `Open risks and revisit trigger:` and `Cost:` (same form; text after the label may follow on the next lines, but not a placeholder).
+// When the PM's verdict differs from the tech lead's, an `override tech lead: <reason>` line (DEC-10); when a security `block` is followed
+// by an adopt of the blocked proposal (or of any, when the block names none), an `override security: <reason>` line (DEC-12).
 // Output: one `decision gap: <what>` line per gap; exit 0 ok, 2 gaps, 64 bad usage. It checks the shape, not whether the call was right.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -27,9 +30,12 @@ const placeholder = (s) => s === "" || /^(\.\.\.|…|todo|tbd|<[^>]*>)$/i.test(s
 const roleOf = (call) => call.replace(/[`*]/g, "").split(":")[0].trim().toLowerCase();
 const WORDS = (role) => /^(pm|techlead|tech lead|architect)$/.test(role) ? ["adopt", "reject"] : role === "security" ? ["accept", "conditions", "block"] : /^(analyst|explorer)$/.test(role) ? null : ["for", "against"];
 
+export const SECTIONS = ["Decision", "Track and why", "Lenses", "Actions taken", "Open risks and revisit trigger", "Cost"];
+const verdictOf = (r, idx) => (r[idx.Verdict] ?? "").replace(/[`*]/g, "").trim().replace(/\s+/g, " ");
+
 export function lint(text) {
   const gaps = [], lines = text.split(/\r?\n/);
-  let tableEnd = 0;
+  let tableEnd = 0, calls = [];
   const h = lines.findIndex((l) => l.trim().startsWith("|") && /\bcall\b/i.test(l) && /\bverdict\b/i.test(l));
   if (h < 0) gaps.push("no decision table (a header row with Call and Verdict)");
   else {
@@ -41,6 +47,7 @@ export function lint(text) {
     tableEnd = rows.length ? rows.at(-1)[0] : h + 1;
     if (!rows.length) gaps.push("the table has no rows");
     if (rows.length && !rows.some(([, r]) => roleOf(r[idx.Call] ?? "") === "pm")) gaps.push("no PM row");
+    if (!Object.values(idx).includes(-1)) calls = rows.map(([, r]) => ({ role: roleOf(r[idx.Call] ?? ""), verdict: verdictOf(r, idx) }));
     if (!Object.values(idx).includes(-1)) for (const [n, r] of rows) {
       const call = r[idx.Call] ?? "", g = (m) => gaps.push(`line ${n} (${call || "?"}): ${m}`);
       if (r.length !== head.length) g(`${r.length} cells, the header has ${head.length}`);
@@ -64,6 +71,20 @@ export function lint(text) {
     const a = answer(label);
     if (a === undefined) gaps.push(`triage line ${name} missing (after the table, at the start of a line, as "${name}:")`);
     else if (!ok.test(a)) gaps.push(`triage line ${name}: answer must start with ${name === "Touches real" ? "yes, no or n/a" : "yes or no"}, got ${JSON.stringify(a.slice(0, 30))}`);
+  }
+  const labelled = (label) => { for (let i = 0; i < after.length; i++) { const m = new RegExp(`^${label}\\s*:\\s*(.*)$`, "i").exec(norm(after[i])); if (m) return { text: m[1].trim(), next: after.slice(i + 1).find((l) => l.trim()) }; } return undefined; };
+  for (const sec of SECTIONS) {
+    const a = labelled(sec.replace(/ /g, "\\s+"));
+    if (!a) gaps.push(`section ${sec} missing (after the table, at the start of a line, as "${sec}:")`);
+    else if (a.text ? placeholder(a.text) : !a.next || SECTIONS.some((o) => new RegExp(`^${o}\\s*:`, "i").test(norm(a.next)))) gaps.push(`section ${sec} is empty or a placeholder`);
+  }
+  const reason = (label) => { const a = labelled(label); return a !== undefined && a.text !== "" && !placeholder(a.text); };
+  const pm = calls.filter((c) => c.role === "pm").at(-1), lead = calls.filter((c) => /^(techlead|tech lead|architect)$/.test(c.role)).at(-1);
+  if (pm && lead && pm.verdict.toLowerCase() !== lead.verdict.toLowerCase() && !reason("override tech lead")) gaps.push(`PM verdict ${JSON.stringify(pm.verdict)} differs from the tech lead's ${JSON.stringify(lead.verdict)}: add an "override tech lead: <reason>" line (DEC-10)`);
+  const adopted = calls.filter((c) => /^(pm|techlead|tech lead|architect)$/.test(c.role) && /^adopt\b/i.test(c.verdict)).map((c) => c.verdict.replace(/^adopt\s*/i, "").trim().toLowerCase());
+  for (const b of calls.filter((c) => c.role === "security" && /^block\b/i.test(c.verdict))) {
+    const blocked = b.verdict.replace(/^block\s*/i, "").trim().toLowerCase();
+    if (adopted.some((a) => !blocked || a === blocked) && !reason("override security")) gaps.push(`security blocked${blocked ? ` ${blocked}` : ""} but a verdict adopts it: add an "override security: <reason>" line (DEC-12; on a one-way door only the owner overrides)`);
   }
   return gaps;
 }

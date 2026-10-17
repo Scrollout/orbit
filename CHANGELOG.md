@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.20.0
+- Loop caps (from 0.19.1): "every loop has a stated cap; at the cap, stop and report" is a bullet in §4 of both principles templates (not versioned).
+- Deterministic checks for `/decide` and `/intent`, each with a failing scenario or test (`/decide` 1.6.0, `intent` 1.2.0, rules 1.11.0, scenario pin and manifest updated):
+  - `audit-ledger.mjs`: new kinds `intent{milestone,phase}`, `handoff{topic,from,to}` (one per direction per topic) and `owner_go{topic}` (a second fix round after the re-reviewer needs it, DEC-14); `agent_start.extra` (`research|missing-fact|rebuttal|hypotheses`, once per topic each, rebuttal only on a door=yes triage, no `cap_reason` excuse); a yes triage line needs the full review or incident track, the incident coder runs on Opus; at `merge_built` the track's security and tech lead calls must have run, in order (security after the design reviewers, tech lead last, incident: security first); a role outside the track roles is a LEDGER violation; DEC-02 needs a `triage` with `files` after the last coder run before each review; `merge_built.catchup_sha` needs a green `ci_run` (DEC-05); `fix_scope` is checked against the fix's `files` (DEC-04, DEC-19); `triage.trigger` (`asked`/`unasked` with `why`). `trigger` and `catchup_sha` are required from rules 1.11.0; older ledgers audit as before. The audit fixtures and 23 scenarios were updated or added.
+  - `intent-plan.mjs`: `type: Roadmap`, the title `M<n> plan: <Title>`, tags, `status: draft`, a `## Carried` section, one milestone per plan; `--approved` needs `status: stable` and a human `verified`. The intent skill appends its trail with `ledger.mjs`.
+  - `decision-lint.mjs`: the six sections, the `override tech lead:` line when the PM and tech lead verdicts differ, the `override security:` line when a security block is adopted past.
+  - Tests: failing cases for each `validate-okf.mjs` bundle check, `paths.mjs` `classify`, `hooks/okf-hook.mjs`, and the tracks and rules drift checks (a bad fixture is caught).
+
 ## 0.19.1
 - The loop cap ("every loop has a stated cap; at the cap, stop and report") is now also a bullet in §4 of both principles templates (not versioned).
 

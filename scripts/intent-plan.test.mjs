@@ -22,10 +22,9 @@ const fm = `---
 type: Roadmap
 title: "M2 plan: CSV export"
 description: M2's intent, steps with proofs, exit tests and carried issues.
-status: stable
+tags: [roadmap, milestones, m2]
+status: draft
 generated: { by: claude-code/claude-opus-5-5, at: 2026-10-14T10:00:00Z }
-verified:
-  - { by: human:owner, at: 2026-10-14T10:05:00Z }
 ---
 **TL;DR:** M2 (CSV export) is done when its exit tests pass.
 
@@ -211,4 +210,42 @@ test("a plain name that is a directory on disk is treated as a directory", () =>
   const r = spawnSync("node", [script, "--root", root, "--plan", "plan.md"], { encoding: "utf8" });
   rmSync(root, { recursive: true, force: true });
   assert.match(r.stdout, /^step 1: sec=yes \(forced, may touch: infra\/main\.tf\)$/m);
+});
+
+// Frontmatter shape, ## Carried and --approved.
+test("frontmatter: type Roadmap, title 'M<n> plan: <Title>', tags roadmap, milestones and m<n>, status draft", () => {
+  gapOf(run(plan().replace("type: Roadmap", "type: Reference")), /type must be Roadmap, got "Reference"/);
+  gapOf(run(plan().replace('title: "M2 plan: CSV export"', "title: CSV export")), /title must be 'M<n> plan: <Title>'/);
+  gapOf(run(plan().replace('"M2 plan: CSV export"', '"M2: CSV export"')), /title must be 'M<n> plan: <Title>'/);
+  gapOf(run(plan().replace("tags: [roadmap, milestones, m2]", "tags: [roadmap, m2]")), /tags must include milestones/);
+  gapOf(run(plan().replace("tags: [roadmap, milestones, m2]", "tags: [roadmap, milestones, m3]")), /tags must include m2/);
+  gapOf(run(plan().replace("tags: [roadmap, milestones, m2]\n", "")), /tags must include roadmap/);
+  gapOf(run(plan().replace("status: draft", "status: stable")), /status must be draft until the owner approves/);
+  gapOf(run(plan().replace("status: draft\n", "")), /status must be draft/);
+});
+
+test("a plan with no ## Carried section in any doc is a gap; one doc of a split plan is enough", () => {
+  gapOf(run(plan().replace("\n## Carried\nNone.\n", "")), /no ## Carried section/);
+  const root = mkdtempSync(join(tmpdir(), "intent-"));
+  mkdirSync(join(root, ".agents"));
+  writeFileSync(join(root, ".agents/project.md"), profile());
+  writeFileSync(join(root, "a.md"), plan().replace("\n## Carried\nNone.\n", ""));
+  writeFileSync(join(root, "b.md"), plan(["| 4 | Docs | `docs/csv.md` | `docs check` | 3 | sec=no door=no |"], ""));
+  writeFileSync(join(root, "c.md"), plan(["| 5 | Docs | `docs/c.md` | `docs check` | - | sec=no door=no |"], "").replace("m2", "m3").replace("M2 plan", "M3 plan"));
+  const ok = spawnSync("node", [script, "--root", root, "--plan", "a.md", "--plan", "b.md"], { encoding: "utf8" });
+  assert.equal(ok.status, 0, ok.stdout);
+  const other = spawnSync("node", [script, "--root", root, "--plan", "a.md", "--plan", "c.md"], { encoding: "utf8" });
+  assert.match(other.stdout, /plan docs name different milestones \(M2, M3\)/);
+  rmSync(root, { recursive: true, force: true });
+});
+
+const approvedFm = (text, verified = "verified:\n  - { by: human:owner, at: 2026-10-14T10:05:00Z }\n") => text.replace("status: draft\n", "status: stable\n").replace("---\n**TL;DR:**", `${verified}---\n**TL;DR:**`);
+test("--approved needs status stable and a verified entry by a human (not an email)", () => {
+  const ok = run(approvedFm(plan()), { args: ["--approved"] });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  gapOf(run(plan(), { args: ["--approved"] }), /approved plan needs status: stable, got "draft"/);
+  gapOf(run(approvedFm(plan(), ""), { args: ["--approved"] }), /approved plan needs a verified entry/);
+  gapOf(run(approvedFm(plan(), "verified:\n  - { by: process:ci, at: 2026-10-14T10:05:00Z }\n"), { args: ["--approved"] }), /approved plan needs a verified entry/);
+  gapOf(run(approvedFm(plan(), "verified:\n  - { by: human:a@b.c, at: 2026-10-14T10:05:00Z }\n"), { args: ["--approved"] }), /approved plan needs a verified entry/);
+  gapOf(run(approvedFm(plan()), {}), /status must be draft until the owner approves/);
 });

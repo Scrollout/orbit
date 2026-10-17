@@ -12,7 +12,7 @@ Detail of the `/decide` command (`commands/decide.md`); the numbered rules and t
 | security officer | `security` | Fable |
 | tech lead | `architect` | Fable |
 
-2. **Track.** The cheapest that is safe; say which. Caps are agent calls at most; research and the answer after it, the one-way-door re-check of hypotheses (step 3), a missing-fact round, the rebuttal and delivery are outside them. A narrow question uses fewer.
+2. **Track.** The cheapest that is safe; say which. Caps are agent calls at most; research and the answer after it, the one-way-door re-check of hypotheses (step 3), a missing-fact round, the rebuttal and delivery are outside them. A narrow question uses fewer. Ledger: each of those outside rounds is an `agent_start` with `extra: research|missing-fact|rebuttal|hypotheses`, once per topic each (the rebuttal only on a one-way door); the audit refuses a repeat even with a `cap_reason`. Any yes line means the full review or incident track.
    Compute it: `node "${CLAUDE_PLUGIN_ROOT}/scripts/decide-triage.mjs" --root . --files <planned paths> --lines sec=..,door=..,prod=.. --kind small|design|incident` (`--kind`: `small` a small change with every line no, `design` a design, decision-record or roadmap question with every line no, `incident` starts from a security finding or incident). Once a branch exists use `--base <base> --branch <branch>` instead of `--files`, and run it again before the reviewer starts and whenever the changed files change (a branch that touches a security path stays yes).
 
 | Track | When | Analysts | Engineers | Reviewers | Security | Tech lead | Max |
