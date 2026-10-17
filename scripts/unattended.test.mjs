@@ -71,6 +71,10 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
           ...['@(zz|u*).mjs', '*(zz|u*)', '+(zz|u*)', '?(zz|u*)nattended.mjs', '@(zz|[u]*).mjs', '@(zz|u?attended).mjs', '@(zz|u)nattended.mjs', 'u@(n|x)attended.mjs',
             '@(u|x)n@(a|x)ttended.mjs', '!(zz|guard*|[a-t]*).mjs', 'una$"tt"ended.mjs', 'u$"n"attended.mjs', 'una$()ttended.mjs', 'una`true`ttended.mjs'].map((f) => `a=(1)\nshopt -s extglob\nnode ${repo}/hooks/${f} on 24h`),
           `a=(1)\ncd ${repo}/hooks\nnode @(zz|u*).mjs on 24h`, `shopt -s extglob\nbash -c "a=(1); node ${repo}/hooks/@(zz|u*).mjs on 24h"`, "a=(1); cd hooks; node $(echo x).mjs",
+          // A script path with a glob or an expansion, in an unparsable command or a parsed one, is denied (#38).
+          ...['ho$"o"ks/@(zz|u*).mjs', 'h?oks/@(zz|u*).mjs', 'ho*s/u*.mjs', 'h?oks/u*.mjs', '[h]ooks/[u]nattended.mjs', 'h{o,p}oks/@(zz|u*).mjs', 'h$()ooks/@(zz|u*).mjs',
+            '*/u*.mjs', '?ooks/?nattended.mjs', 'ho$"o"ks/una$"tt"ended.mjs'].map((f) => `a=(1); cd /tmp; node ${repo}/${f} on 24h`),
+          ...['una$()ttended.mjs', 'una$"tt"ended.mjs', 'u$"n"attended.mjs', 'una$(echo)ttended.mjs'].map((f) => `node ${repo}/hooks/${f} on 24h`),
           `shopt -s nocaseglob\nnode ${repo}/hooks/U*.MJS on 24h`, `a=(1); shopt -s nocaseglob\nnode ${repo}/hooks/U*.MJS on 24h`, `shopt -s nocaseglob\nnode U*.MJS on 24h`]) {
           assert.equal(kind(g(c)), "deny", `${mode} ${k}: ${c}`);
         }

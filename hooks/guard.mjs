@@ -1694,8 +1694,17 @@ const ansiC = (b) => b.replace(/\\(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F
 function unparsedGo(text, cwd) {
   const t = text.replace(/\\\n/g, "").replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_, b) => ansiC(b)).replace(/\$'|['"\\]/g, "");
   const hooks = dirname(GO_SCRIPT);
-  return RUNTIME_WORD.test(t) && (/(?<![\w.-])hooks(?![\w.-])/.test(t) || t.includes("unatt") || (typeof cwd === "string" && cwd !== "" && inside(hooks, real(resolve(cwd)))));
+  // Also denied: a script word (.mjs, .js, .cjs; not *.test.*) with a glob character or an expansion, whatever it spells: no matching.
+  const globbed = t.split(/[\s;&<>]+/).some((w) => /\.[cm]?js$/.test(w) && !/\.test\.[cm]?js$/.test(w) && /[*?[{]|[+@!]\(|[$`]/.test(w));
+  return RUNTIME_WORD.test(t) && (globbed || /(?<![\w.-])hooks(?![\w.-])/.test(t) || t.includes("unatt") || (typeof cwd === "string" && cwd !== "" && inside(hooks, real(resolve(cwd)))));
 }
+// A word whose last segment holds an expansion ($(...), backtick, $"...") and, with each expansion read as *, can match unattended.mjs.
+const expGo = (raw) => {
+  const seg = raw.split("/").pop();
+  if (!/\$\(|`|\$"/.test(seg)) return false;
+  const m = seg.replace(/\$\([^)]*\)?|`[^`]*`?|\$"[^"]*"/g, "*");
+  return /[^*]/.test(m) && segMatch(m, basename(GO_SCRIPT));
+};
 const FIND_OPS = new Set(["-o", "-or", ",", "!", "-not", "-prune"]);
 function namesGo(cmds, text, cwd, env) {
   if (text.includes("unattended.mjs")) return true;
@@ -1722,6 +1731,7 @@ function namesGo(cmds, text, cwd, env) {
       const e = x.exp ?? x.lit;
       if (e !== null && (e.includes("unattended.mjs") || (!x.glob && (isAbsolute(e) || cwd) && realOrNull(resolve(cwd ?? "/", e)) === GO_SCRIPT))) return true;
       if (x.glob && e !== null && globUnder(e, cwd, [GO_SCRIPT])) return true;
+      if (RUNTIMES.has(r?.name) && expGo(x.raw)) return true;
       return Boolean(x.glob && RUNTIMES.has(r?.name) && ((e !== null && goGlob(e)) || (x.ext && goGlob(x.raw))));
     });
   });
@@ -1729,7 +1739,7 @@ function namesGo(cmds, text, cwd, env) {
 function goCommand(cmds, text, input, cwd, env) {
   if (!namesGo(cmds, text, cwd, env)) return undefined;
   const c = cmds.length === 1 && !cmds.complex ? cmds[0] : null;
-  const w = c && !c.depth && !c.redirs.length && c.heredoc === null && c.words.every((x) => x.lit !== null) ? c.words.map((x) => x.lit) : [];
+  const w = c && !c.depth && !c.redirs.length && c.heredoc === null && c.words.every((x) => x.lit !== null && !x.raw.includes('$"')) ? c.words.map((x) => x.lit) : [];
   if (w[0] === "node" && isAbsolute(w[1] ?? "") && realOrNull(w[1]) === GO_SCRIPT) {
     if (w.length === 2 || ((w[2] === "off" || w[2] === "status") && w.length === 3)) return null;
     if (w[2] === "on" && w.length <= 4) {
