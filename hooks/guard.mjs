@@ -16,7 +16,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
-import { EVIDENCE_MS, GO_MAX_MS, baseEvidence, deleteEvidence, githubRepo, goForm, goSession, goState, localCommit, pushConfigEvidence, pushUrl, remoteTagCommit, trailerOk } from "./go.mjs";
+import { EVIDENCE_MS, GO_MAX_MS, baseEvidence, deleteEvidence, githubRepo, goForm, goSession, goState, localCommit, markAllowed, pushConfigEvidence, pushUrl, remoteTagCommit, trailerOk } from "./go.mjs";
 import { USAGE, duration } from "./unattended.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
@@ -2057,10 +2057,12 @@ export function guard(input, env = {}, ctx = null) {
   };
   const d = out.findings.find((f) => f.cls === "destructive");
   if (d) return outwardReason("DENY", withCommit(d), input);
-  // The go (its session's main thread, any permission mode): a verified pinned shape is allowed outright. A failed check denies
-  // in bypassPermissions (nobody answers a prompt); in a mode that prompts the call is classified as without a go.
+  // The go (its session's main thread, any permission mode but plan): a verified pinned shape is allowed outright, and marked
+  // for capture. A failed check denies in bypassPermissions (nobody answers a prompt); in a mode that prompts the call is
+  // classified as without a go.
   if (goState(input, env)) {
     const a = goAction(cmds, cwd, input, getCtx, env);
+    if (a !== null) markAllowed(input, env, typeof a?.allow === "string");
     if (typeof a?.allow === "string") return a;
     if (go && typeof a === "string") return a;
   }

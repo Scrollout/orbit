@@ -20,8 +20,8 @@
       ]
     },
     "commands/unattended.md": {
-      "version": "1.1.5",
-      "hash": "d70e3b9edba24c7d2356b9ec709b8be60bc90743877d781dea1a92fa6e7dc254",
+      "version": "1.1.6",
+      "hash": "1d490049b6f4bbb221f3f48e619eec4eb1e4043b0a6aa31246dd3c43175c12db",
       "files": [
         "commands/unattended.md"
       ]
@@ -61,8 +61,8 @@
       ]
     },
     "rules/rules.json": {
-      "version": "1.15.23",
-      "hash": "934f68f06c11aa76e0275625cea1ca250016c5fb4602190366708ac56eaaa87a",
+      "version": "1.15.24",
+      "hash": "5e91fdb7b9b2dc7e65027c0e70561546c71fa5700a6edbd0030790c5f3bd5501",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
