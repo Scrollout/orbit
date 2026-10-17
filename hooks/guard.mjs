@@ -1037,8 +1037,8 @@ const short = (s) => (s === "@" ? "HEAD" : /^(heads|tags)\//.test(s) ? `refs/${s
 function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   let force = false, del = false, wide = false, other = false, unknown = false;
   const pos = [];
-  // A glob word that may expand to an option or a +refspec (-f*, -{f,}, +ma?n, {+feat,x}) fails closed as a force push.
-  const globForce = (w) => { const t = w.lit ?? w.raw; return /^[+-]/.test(t) || t.includes("{+") || t.includes(",+"); };
+  // A glob word that may expand to an option or a +refspec (-f*, -{f,}, +ma?n, {+feat,x}, {-f,x}, [+]main) fails closed as a force push.
+  const globForce = (w) => { const t = w.lit ?? w.raw; return /^[+-]|[{,][+-]/.test(t) || /^\[[^\]]*[+-]/.test(t); };
   const globPos = (w) => { if (globForce(w)) force = true; return null; };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;

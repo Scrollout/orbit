@@ -724,3 +724,16 @@ test("#27/#28 fix round: a glob word that may be a force option or a +refspec is
     assert.equal(guard(bash("git push origin feat", { ...MAIN, permission_mode: "default" }), env, ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } })), null, "a plain feature branch stays silent");
   });
 });
+
+test("#29: a brace word holding {- or ,-, or a leading bracket set with + or -, is a force push (deny in every mode)", () => {
+  withGo((env) => {
+    const force = ["git push origin {-f,feat}", "git push origin {feat,-f}", "git push origin {,-f}", "git push origin {x,{y,-f}}", "git push origin {--force,feat}", "git push origin {\\-f,x}", "git push origin {x,\\-f}", "git push origin {x,\"-f\"}", "git push origin -- {-f,x}", "git -C /r/merge push origin {x,-f}", "git push origin [+]main", "git push origin [-]f"];
+    for (const m of ["default", "bypassPermissions", "dontAsk", undefined]) {
+      const who = { ...MAIN, ...(m ? { permission_mode: m } : {}) };
+      for (const c of force) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+    }
+    attendedAsk(env, ["git push origin m?in", "git push origin {main,feat}"]);
+    const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
+    for (const c of ["git push origin feat", "git push -u origin feat", "git push origin HEAD:refs/heads/feat", "git push origin '{-f,x}'", "git push origin \"{-f,x}\"", "git push origin \\{-f,x\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
+  });
+});
