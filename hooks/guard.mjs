@@ -871,12 +871,25 @@ const GITGH = /\b(git|gh)\b/;
 const COND1 = /\b(push|tag|release|api|pr|repo|config|auth)\b|--delete|\bgh\s+(run|workflow)\b/;
 const TOKENISH = /gh[pousr]_|github_pat_|glpat-|xox[a-z]-|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/;
 const TOKENISH_ALL = /gh[pousr]_\w*|github_pat_\w*|glpat-[\w-]*|xox[a-z]-[\w-]*|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/g;
-const CONFIG_KEYS = [/^alias\./i, /^core\.hookspath$/i, /^remote\./i, /^url\./i, /^push\./i, /^include(if\..+)?\.path$/i];
+// Key shapes are plain string checks (the unsafe-regex rule). keyIs(head, tails, mid): the key is head.<tail>; mid "req" needs a
+// non-empty subsection between them, "opt" allows one, "none" forbids one.
+const keyIs = (head, tails, mid = "none") => (k) => {
+  const key = k.toLowerCase();
+  if (!key.startsWith(`${head}.`)) return false;
+  const rest = key.slice(head.length + 1);
+  return tails.some((t) => (mid !== "req" && rest === t) || (mid !== "none" && rest.length > t.length + 1 && rest.endsWith(`.${t}`)));
+};
+const keyPrefix = (p) => (k) => k.toLowerCase().startsWith(p);
+const CONFIG_KEYS = [keyPrefix("alias."), keyIs("core", ["hookspath"]), keyPrefix("remote."), keyPrefix("url."), keyPrefix("push."), (k) => {
+  const key = k.toLowerCase();
+  return key === "include.path" || (key.startsWith("includeif.") && key.length > "includeif..path".length && key.endsWith(".path"));
+}];
 // Keys whose value git runs as a command; a -c of one asks unless the value is a harmless pager or editor.
-const COMMAND_KEYS = [/^core\.(pager|editor|sshcommand|fsmonitor|askpass|gitproxy|alternaterefscommand)$/i, /^pager\./i, /^sequence\.editor$/i,
-  /^diff\.external$/i, /^diff\..+\.(textconv|command)$/i, /^merge\..+\.driver$/i, /^filter\..+\.(clean|smudge|process)$/i, /^credential\.(.+\.)?helper$/i,
-  /^gpg\.(.+\.)?program$/i, /^(difftool|mergetool|browser|man)\..+\.(cmd|path)$/i, /^uploadpack\.packobjectshook$/i, /^sendemail\.(.+\.)?(smtpserver|tocmd|cccmd|headercmd)$/i,
-  /^trailer\..+\.(cmd|command)$/i];
+const COMMAND_KEYS = [keyIs("core", ["pager", "editor", "sshcommand", "fsmonitor", "askpass", "gitproxy", "alternaterefscommand"]), keyPrefix("pager."),
+  keyIs("sequence", ["editor"]), keyIs("diff", ["external"]), keyIs("diff", ["textconv", "command"], "req"), keyIs("merge", ["driver"], "req"),
+  keyIs("filter", ["clean", "smudge", "process"], "req"), keyIs("credential", ["helper"], "opt"), keyIs("gpg", ["program"], "opt"),
+  ...["difftool", "mergetool", "browser", "man"].map((h) => keyIs(h, ["cmd", "path"], "req")), keyIs("uploadpack", ["packobjectshook"]),
+  keyIs("sendemail", ["smtpserver", "tocmd", "cccmd", "headercmd"], "opt"), keyIs("trailer", ["cmd", "command"], "req")];
 const HARMLESS_CMD = new Set(["", "cat", "less", "more", "true", "false", ":"]);
 // Built-ins that run commands or other git commands they are given; the push-capable plumbing.
 const GIT_RUNNERS = new Set(["for-each-repo", "filter-branch", "difftool", "mergetool"]);
@@ -1010,7 +1023,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
 }
 
 // git config writes and -c/--config-env overrides that can redirect a push or run a command.
-const riskyKey = (k) => [...CONFIG_KEYS, ...COMMAND_KEYS].some((r) => r.test(k));
+const riskyKey = (k) => [...CONFIG_KEYS, ...COMMAND_KEYS].some((r) => r(k));
 function gitConfigOut(args, add) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i].lit;
@@ -1023,7 +1036,7 @@ function gitConfigOut(args, add) {
     else if (a.startsWith("-")) continue;
     else return;
     const key = kv === null ? null : kv.split("=")[0], value = kv === null ? null : kv.slice(key.length + 1);
-    if (kv === null || CONFIG_KEYS.some((r) => r.test(key)) || (COMMAND_KEYS.some((r) => r.test(key)) && !HARMLESS_CMD.has(value.trim())) || GITGH.test(value)) return add({ cls: "shared", what: "git config that can redirect a command", sub: "config", action: `git -c ${safe(key ?? "?")}`, refs: [], cmd: null });
+    if (kv === null || CONFIG_KEYS.some((r) => r(key)) || (COMMAND_KEYS.some((r) => r(key)) && !HARMLESS_CMD.has(value.trim())) || GITGH.test(value)) return add({ cls: "shared", what: "git config that can redirect a command", sub: "config", action: `git -c ${safe(key ?? "?")}`, refs: [], cmd: null });
   }
 }
 
