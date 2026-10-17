@@ -39,6 +39,8 @@ const WORDS = [
   ['"$\\\n(echo a)"', "x"], ['"$\\\n{x}"', "x"], ['"${x:-$\\\n(echo a)}"', "x"], ["`echo \\\na`", "x"], ["$\\\nx", "x"],
   // $(( without a closing )) is $( and a subshell; $\<newline>'..' and $\<newline>".." (#37)
   ["$((echo a) )", "x"], ["$(\\\n(echo a) )", "x"], ["$\\\n((echo a) )", "x"], ['"$((echo a) )"', "x"], ["$\\\n'-f'", "s"], ['$\\\n"-f"', "s"], ["$\\\n'\\x2d'f", "s"],
+  // a quote in $(( keeps the arithmetic reading (#37)
+  ["$(( '$(echo a)' ))", "x"], ['$(( "$(echo a)" ))', "x"], ["$(( '1' ))", "x"], ['$(( "1" + 2 ))', "x"], ["$(( ')' ))", "x"], ["$(( '`echo a`' ))", "x"],
   ["$((1+$(echo 1)))", "x"], ["$(((1+2)*3))", "x"], ["$((`echo 1`+1))", "x"], ["$[1+$(echo 1)]", "x"], ["$[x]", "x"],
 ];
 

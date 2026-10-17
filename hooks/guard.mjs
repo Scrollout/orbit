@@ -174,20 +174,30 @@ function word(p, depth, one = false) {   // one: only the $ expansion at p.i (a 
     };
     const a = cont(p.i + 1);
     if (s[a] === "(" && s[cont(a + 1)] === "(") {
-      // Arithmetic only when its matching close is )) (backslash-newlines removed), as bash reads it; else, or at a quote,
-      // it is $( and a subshell (#37): what the arithmetic reading parsed is dropped and the body parsed as commands.
+      // Arithmetic only when its matching close is )) (backslash-newlines removed), as bash reads it; else it is $( and a
+      // subshell (#37): what the arithmetic reading parsed is dropped and the body parsed as commands. Bash skips quoted
+      // text while matching and then expands the body as in double quotes, so a $(...) or `...` even in '...' runs: with a
+      // quote in the body the guard keeps what both readings parse, arithmetic and subshell.
       const from = p.cmds.length, ns = subs.length, nn = nested, cx = p.f.complex;
-      let n = 0;
+      let n = 0, quoted = false, end = -1;
       for (p.i = a; p.i < s.length; p.i++) {
         if (inner()) p.i--;
-        else if (s[p.i] === "'" || s[p.i] === '"') break;
+        else if (s[p.i] === "'" || s[p.i] === '"') {
+          const qc = s[p.i];
+          quoted = true;
+          for (p.i++; p.i < s.length && s[p.i] !== qc; p.i++) if ((qc === '"' || s[p.i] !== "\\") && inner()) p.i--;
+          if (p.i >= s.length) throw new ParseError("unclosed quote in $((");
+        }
         else if (s[p.i] === "(") n++;
-        else if (s[p.i] === ")" && --n === 0) { p.i++; dyn = unexp = true; return; }
+        else if (s[p.i] === ")" && --n === 0) { end = p.i + 1; break; }
         else if (s[p.i] === ")" && n === 1) { if (s[cont(p.i + 1)] !== ")") break; p.i = cont(p.i + 1) - 1; }
       }
-      if (p.i >= s.length) throw new ParseError("unclosed $((");
-      p.cmds.length = from; subs.length = ns; nested = nn; p.f.complex = cx;
-      p.i = a + 1; sub(); return;
+      if (end < 0 && p.i >= s.length) throw new ParseError("unclosed $((");
+      if (end >= 0 && !quoted) { p.i = end; dyn = unexp = true; return; }
+      if (!quoted) { p.cmds.length = from; subs.length = ns; nested = nn; p.f.complex = cx; }
+      p.i = a + 1; sub();
+      if (end >= 0) p.i = end;
+      return;
     }
     if (s[a] === "(") { p.i = a + 1; sub(); return; }
     let name = null;
