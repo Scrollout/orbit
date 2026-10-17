@@ -16,7 +16,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
-import { EVIDENCE_MS, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
+import { EVIDENCE_MS, GO_MAX_MS, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
+import { USAGE, duration } from "./unattended.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
 const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -1672,20 +1673,40 @@ const noteFile = (rel) => {
 const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
 
 // The go's one opening command, `node <plugin root>/hooks/unattended.mjs on [dur]`, alone and literal: ask in every mode, the
-// owner's answer is the proof. `off` or `status` in the same shape: allowed. Any other command naming the script (another path,
-// an option, an env prefix, a compound, sh -c, a here-doc, a redirect): denied. undefined: the command does not name it.
+// owner's answer is the proof. `off`, `status` or no argument (the usage) in the same shape: allowed; a duration out of range:
+// denied with the usage. Any other command that may run the script: denied. undefined: the command does not name it.
+// A command names it (#38) when its text does, when a word (after the guard's expansion) does or resolves to it, when a glob
+// word can match it, or when node, nodejs, bun or deno has a dynamic or glob word up to its script operand. A program the
+// model writes first, or a name held in a variable, is not seen: the evidence gates carry the safety there.
 const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "hooks", "unattended.mjs"));
-function goCommand(cmds, text, input) {
-  if (!text.includes("unattended.mjs")) return undefined;
+const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
+function namesGo(cmds, text, cwd) {
+  if (text.includes("unattended.mjs")) return true;
+  return cmds.some((c) => {
+    const r = resolveCmd(c.words);
+    let k = RUNTIMES.has(r?.name) ? c.words.length - r.args.length - 1 : -1;
+    return c.words.some((x, i) => {
+      const e = x.exp ?? x.lit;
+      if (e !== null && (e.includes("unattended.mjs") || (!x.glob && (isAbsolute(e) || cwd) && realOrNull(resolve(cwd ?? "/", e)) === GO_SCRIPT))) return true;
+      if (x.glob && e !== null && globUnder(e, cwd, [GO_SCRIPT])) return true;
+      if (k < 0 || i <= k) return false;
+      if (x.lit === null || x.glob) return true;
+      if (!x.lit.startsWith("-")) k = -1;   // the script operand: later words are its arguments
+      return false;
+    });
+  });
+}
+function goCommand(cmds, text, input, cwd) {
+  if (!namesGo(cmds, text, cwd)) return undefined;
   const c = cmds.length === 1 && !cmds.complex ? cmds[0] : null;
   const w = c && !c.depth && !c.redirs.length && c.heredoc === null && c.words.every((x) => x.lit !== null) ? c.words.map((x) => x.lit) : [];
   if (w[0] === "node" && isAbsolute(w[1] ?? "") && realOrNull(w[1]) === GO_SCRIPT) {
-    const m = w.length === 4 ? /^(\d{1,4})([mh])$/.exec(w[3]) : null;
-    if (w[2] === "on" && (w.length === 3 || m)) {
-      const min = m ? Number(m[1]) * (m[2] === "h" ? 60 : 1) : 720;
-      return { ask: outwardReason("ASK", { what: `open an unattended go of ${min} minutes for this session`, action: `/orbit:unattended on${m ? ` ${w[3]}` : ""}` }, input, { do: "approve only if you typed /orbit:unattended on" }) };
+    if (w.length === 2 || ((w[2] === "off" || w[2] === "status") && w.length === 3)) return null;
+    if (w[2] === "on" && w.length <= 4) {
+      const ms = duration(w[3]);
+      if (ms === null || ms < 60_000 || ms > GO_MAX_MS) return outwardReason("DENY", { what: "an unattended go of that duration", action: `/orbit:unattended on ${safe(w[3])}` }, input, { note: "the duration must be from 1m to 24 h", do: USAGE });
+      return { ask: outwardReason("ASK", { what: `open an unattended go of ${ms / 60_000} minutes for this session`, action: `/orbit:unattended on${w[3] ? ` ${w[3]}` : ""}` }, input, { do: "approve only if you typed /orbit:unattended on" }) };
     }
-    if ((w[2] === "off" || w[2] === "status") && w.length === 3) return null;
   }
   return stateDeny("a command naming the unattended go's script", "only the exact /orbit:unattended command runs it", input);
 }
@@ -1918,7 +1939,7 @@ export function guard(input, env = {}, ctx = null) {
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
-  const gc = goCommand(cmds, ti.command, input);
+  const gc = goCommand(cmds, ti.command, input, cwd);
   if (gc !== undefined) return gc;
   const links = [];
   const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links, globOpts: GLOB_OPTS.test(ti.command) }, dirs);

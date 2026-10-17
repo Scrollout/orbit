@@ -8,10 +8,10 @@ import { pathToFileURL } from "node:url";
 import { GO_MAX_MS, goState, stateDir, validSession } from "./go.mjs";
 
 const DEFAULT_MS = 12 * 3600_000;
-const USAGE = "usage: /orbit:unattended on [duration] (like 8h or 90m, at most 24 h; default 12h) | off | status";
+export const USAGE = "usage: /orbit:unattended on [duration] (like 8h or 90m, at most 24 h; default 12h) | off | status";
 const at = (ms) => new Date(ms).toISOString().slice(11, 16) + " UTC";
 
-function duration(arg) {
+export function duration(arg) {
   if (arg === undefined) return DEFAULT_MS;
   const m = /^(\d{1,4})([mh])$/.exec(arg);
   if (!m) return null;

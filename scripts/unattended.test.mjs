@@ -38,6 +38,18 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
         assert.match(g(`node "${SCRIPT}" on 90m`).ask, /of 90 minutes/);
         assert.equal(kind(g(`node ${join(repo, "hooks/../hooks/unattended.mjs")} on 8h`)), "ask", `${mode} ${k}: another spelling of the same file still asks`);
         for (const sub of ["off", "status"]) assert.equal(g(`node "${SCRIPT}" ${sub}`), null, `${mode} ${k}: ${sub} runs silently`);
+        assert.equal(g(`node "${SCRIPT}"`), null, `${mode} ${k}: no argument prints the usage`);
+        for (const d of ["0m", "9999h", "25h"]) assert.match(g(`node "${SCRIPT}" on ${d}`), /usage: \/orbit:unattended/, `${mode} ${k}: on ${d} is refused with the usage`);
+        // The command as Claude Code renders commands/unattended.md: ${CLAUDE_PLUGIN_ROOT} substituted, $ARGUMENTS as typed (#38).
+        const tpl = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}[^`]*)`/.exec(readFileSync(join(repo, "commands/unattended.md"), "utf8"))[1].replace("${CLAUDE_PLUGIN_ROOT}", repo);
+        assert.equal(kind(g(tpl.replace("$ARGUMENTS", "on 8h"))), "ask", `${mode} ${k}: the rendered command asks`);
+        assert.equal(g(tpl.replace(" $ARGUMENTS", "")), null, `${mode} ${k}: the rendered bare command prints the usage`);
+        // Respellings of the script path (#38): each asks or is denied, never runs silently.
+        for (const c of [`node ${repo}/hooks/unattended''.mjs on 24h`, `node ${repo}/hooks/unatt"ended".mjs on 24h`, `node ${repo}/hooks/unattended.m?s on 24h`,
+          `node ${repo}/hooks/unattended\\.mjs on 24h`, `node $'${repo}/hooks/unattended\\x2emjs' on 24h`, `ln -s ${repo}/hooks/unattende?.mjs /tmp/x.mjs; node /tmp/x.mjs on 24h`,
+          `node ${repo}/hooks/unatt*.mjs on 24h`, `node "$X" on 24h`, `bun ${repo}/hooks/unattende[d].mjs on 24h`, `env node $(echo x) on 24h`]) {
+          assert.ok(["ask", "deny"].includes(kind(g(c))), `${mode} ${k}: ${c}`);
+        }
         for (const c of [`node "${SCRIPT}" on 8h extra`, `node "${SCRIPT}" on 8h --force`, `node "${SCRIPT}" on 30x`, `node "${SCRIPT}" confirm ABCD`, `node "${SCRIPT}" off now`,
           `node --no-warnings "${SCRIPT}" on 8h`, "node /tmp/x/hooks/unattended.mjs on 8h", "node hooks/unattended.mjs on 8h", `node "${SCRIPT}.bak" on 8h`,
           `FOO=1 node "${SCRIPT}" on 8h`, `env node "${SCRIPT}" on 8h`, `/usr/bin/node "${SCRIPT}" on 8h`, `true && node "${SCRIPT}" on 8h`, `node "${SCRIPT}" on 8h; echo ok`,
