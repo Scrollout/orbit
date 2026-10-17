@@ -698,3 +698,13 @@ test("#27: a push refspec with an unquoted glob character is unreadable (shared)
     assert.equal(guard(bash("git push origin feat", { ...MAIN, permission_mode: "default" }), env, ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } })), null, "a plain feature branch stays silent");
   });
 });
+
+test("#28: a push refspec with an unquoted { is unreadable (shared): bash may expand it to a protected branch", () => {
+  withGo((env, h) => {
+    attendedAsk(env, ["git push origin {main,feat}", "git push origin {main..main}", "git push origin HEAD:{main,x}", "git push origin -- {main,x}"]);
+    const branch = ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } });
+    for (const c of ["git push origin feat", "git push origin 'x{y}'", "git push origin x\\{y\\}"]) assert.equal(guard(bash(c, { ...MAIN, permission_mode: "default" }), env, branch), null, `stays silent: ${c}`);
+    // Braces outside a push refspec keep their result.
+    for (const c of ["echo {a,b}", "find . -name '*.go' -exec gofmt -l {} +", "mkdir -p x/{a,b}", "git log --format=%H -n1 HEAD@{1}"]) assert.equal(guard(bash(c, { ...MAIN, cwd: h, permission_mode: "default" }), env, ctx()), null, `stays silent: ${c}`);
+  });
+});

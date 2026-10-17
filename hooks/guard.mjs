@@ -222,11 +222,12 @@ function word(p, depth) {
       if (p.env.HOME === undefined) unexp = true; else exp += p.env.HOME;
       continue;
     }
-    if (c === "*" || c === "?" || c === "[") glob = true;
+    // An unquoted { may start a brace expansion ({a,b}, {a..b}): counted with the glob characters (#28).
+    if (c === "*" || c === "?" || c === "[" || c === "{") glob = true;
     add(c); plainAt = p.i++;
   }
   if (p.i === start) return null;
-  // glob: an unquoted *, ? or [ (or an extglob group); ext: an extglob group.
+  // glob: an unquoted *, ?, [ or { (or an extglob group); ext: an extglob group.
   return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), glob, ext, subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 ? subs[0] : null };
 }
 
@@ -1038,7 +1039,7 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   const pos = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;
-    // A word with an unquoted glob character is a target it cannot read: bash may expand it to any name (#27).
+    // A word with an unquoted glob character or { is a target it cannot read: bash may expand it to any name (#27, #28).
     if (a === null || rest[i].glob) { pos.push(null); continue; }
     if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => (w.glob ? null : w.lit))); break; }
     if (a.startsWith("--")) {

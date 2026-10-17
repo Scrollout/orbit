@@ -1,10 +1,11 @@
 # Changelog
 
 ## 0.21.1
-Guard residuals accepted at 0.21.0 (rules 1.15.7; scenario pin and manifest updated). Fixes #25, #27.
+Guard residuals accepted at 0.21.0 (rules 1.15.7; scenario pin and manifest updated). Fixes #25, #27, #28.
 - **Glob options**: on a line with `shopt`, `BASHOPTS` or a command whose program the guard cannot tell (also inside `sh -c` or `eval`), every glob in a write target or a link or copy operand is shared: `shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json` no longer passes silently. `rm *.log` stays silent, also after `set -euo pipefail` (no `set` option widens matching).
 - **Extglob**: a `+(…)`, `@(…)`, `!(…)`, `?(…)` or `*(…)` group (after an unquoted, unescaped operator character) stays in its word (the parser no longer stops at the `(`), makes the word unreadable and counts as a glob the matcher does not model: shared. A group holding `$`, a backtick, a quote or a backslash, and a `(` after a quoted, escaped or expanded `+@!?*` (`\*(x)`, `$?(x)`), are parse errors (unreadable: denied when the text names `.claude`, shared on outward git or gh text), so a substitution inside a group is never silent.
 - **Glob refspecs** (#27): a push refspec with an unquoted `*`, `?`, `[` or extglob group is a target it cannot read (shared), as `ma*` was: `git push origin m?in`, `ma[i]n`, `HEAD:m?in`.
+- **Brace refspecs** (#28): a push refspec with an unquoted, unescaped `{` is a target it cannot read (shared): `git push origin {main,feat}` (bash pushes `main` and `feat`), `{main..main}`, `HEAD:{main,x}`. A quoted or escaped `{` (`'x{y}'`) and braces outside a push refspec (`echo {a,b}`, `find -exec … {} +`) keep their result.
 - **Negated sets**: a `]` right after `[!` or `[^` is a set character, as in bash; `[!]` with no later `]` is literal.
 - **plugin-validate self-test**: the planted `frobnicate` field is a warning under the pinned 2.1.288 (not an error), and the test now requires the `Found N warning` count message for it.
 - **Docs**: README "Strict on doubt" and [docs/threat-model.md](docs/threat-model.md) name the claude.ai (portal) case: the portal does not store `onFailure`, so only a hard crash or a timeout of the guard fails open there. The field stays in `hooks.json`.
