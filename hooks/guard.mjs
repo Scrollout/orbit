@@ -176,6 +176,13 @@ function word(p, depth) {
   while (p.i < s.length) {
     const c = s[p.i];
     if ((c === "<" || c === ">") && s[p.i + 1] === "(") { p.i += 2; sub(); continue; }
+    // An extglob group (+( @( !( ?( *( inside a word) stays in the word, to its matching ) (#25).
+    if (c === "(" && p.i > start && "+@!?*".includes(s[p.i - 1])) {
+      let n = 0, j = p.i;
+      for (; j < s.length; j++) { if (s[j] === "(") n++; else if (s[j] === ")" && --n === 0) break; }
+      if (j >= s.length) throw new ParseError("unclosed extglob group");
+      add(s.slice(p.i, j + 1)); p.i = j + 1; continue;
+    }
     if (META.has(c)) break;
     if (c === "\\") { if (s[p.i + 1] !== "\n") add(s[p.i + 1] ?? ""); p.i += 2; continue; }
     if (c === "'") {
@@ -1546,7 +1553,11 @@ const noteFile = (rel) => {
 const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
-const hasGlob = (s) => /[*?[{]/.test(s);
+// An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
+const hasGlob = (s) => /[*?[{]|[+@!]\(/.test(s);
+const EXTGLOB = /[+@!?*]\(/;
+// A line that may change glob matching (shopt, set -o/+o, BASHOPTS): its every glob is shared (#25).
+const GLOB_OPTS = /shopt|BASHOPTS|\bset\s+[-+][a-zA-Z]*o\b/;
 // A pattern with its {a,b} alternatives expanded (at most 64; null beyond: the caller takes the stricter answer).
 // A group with no comma, or with no closing }, is literal, as in bash; the next group still expands.
 function braces(s, n = 0, from = 0) {
@@ -1569,7 +1580,7 @@ function braces(s, n = 0, from = 0) {
 // equivalence or collating form), and brace groups with a comma, no ~ and no {a..b} sequence (a group with no comma and
 // no .. is literal). Any other form is shared: bash may expand it to a path the matcher does not see.
 function globExact(s) {
-  if (s.includes("~") || /\[[:=.]/.test(s)) return false;
+  if (s.includes("~") || /\[[:=.]/.test(s) || EXTGLOB.test(s)) return false;
   for (let i = s.indexOf("{"); i >= 0; i = s.indexOf("{", i + 1)) {
     let depth = 0, j = i, comma = false;
     for (; j < s.length; j++) {
@@ -1588,9 +1599,10 @@ function segMatch(p, s, i = 0, k = 0) {
     if (k >= s.length) return false;
     if (p[i] === "?") continue;
     if (p[i] === "[") {
-      const end = p.indexOf("]", i + 2);
+      // A ] right after [ or [! / [^ is a set character, as in bash (#25).
+      const neg = p[i + 1] === "!" || p[i + 1] === "^", end = p.indexOf("]", i + (neg ? 3 : 2));
       if (end > 0) {
-        const neg = p[i + 1] === "!" || p[i + 1] === "^", set = p.slice(neg ? i + 2 : i + 1, end);
+        const set = p.slice(neg ? i + 2 : i + 1, end);
         let hit = false;
         for (let c = 0; c < set.length; c++) {
           if (set[c + 1] === "-" && c + 2 < set.length) { if (s[k] >= set[c] && s[k] <= set[c + 2]) hit = true; c += 2; } else if (s[k] === set[c]) hit = true;
@@ -1634,7 +1646,7 @@ function claudeWrite(cmds, st, dirs) {
     const e = expOf(w, st);
     if (e != null && hasGlob(e)) {
       if (globUnder(e, base, names) || w.raw.includes(".claude")) return w.raw;
-      if (!globExact(e)) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      if (!globExact(e) || st.globOpts) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
       return null;
     }
     if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
@@ -1647,6 +1659,8 @@ function claudeWrite(cmds, st, dirs) {
     assigns(cmd, r, st);
     const text = [...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join(" ");
     if (!r) continue;
+    // A shopt or set -o/+o (or a program it cannot tell) may change glob matching for the rest of the line (#25).
+    if (r.dynamic || r.name === "shopt" || (r.name === "set" && r.args.some((w) => w.lit === null || /^[-+][a-zA-Z]*o$/.test(w.lit)))) st.globOpts = true;
     if (r.dynamic) { if (text.includes(".claude")) return text; continue; }
     if (r.name === "cd" || r.name === "pushd") {
       const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
@@ -1774,7 +1788,7 @@ export function guard(input, env = {}, ctx = null) {
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
   const links = [];
-  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links }, dirs);
+  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links, globOpts: GLOB_OPTS.test(ti.command) }, dirs);
   if (w) return stateDeny("write to ~/.claude", safe(w), input);
   const go = goSession(input, env);
   const out = classifyOutward(cmds, ti.command, cwd, env, getCtx);

@@ -626,3 +626,39 @@ test("#24 row 2: any gh call under xargs, find -exec, fd -x or parallel is share
     attendedAsk(env, ["xargs -a a.txt gh issue", "xargs -I{} -a a.txt gh pr {} 1", "find . -exec gh pr view {} \\;", "find . -execdir gh issue view {} \\;", "fd -x gh issue view", "fd -X gh pr view", "parallel gh pr view ::: 1"]);
   });
 });
+
+// ---------- Orbit #25: guard residuals accepted at 0.21.0 ----------
+test("#25 row 1: a line with shopt or set -o/+o shares every glob operand", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of [
+        "shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json", "bash -c 'shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json'",
+        "eval 'shopt -s nocaseglob'; echo x > ~/.CLAUD?/settings.json", "sh''opt -s nocaseglob; cp x ~/.CLAUD?/settings.json",
+        "set -o posix; cp x ~/.CLAUD?/settings.json", "set +o noglob; ln -sf x ~/.CLAUD?/settings.json", "x=shopt; $x -s nocaseglob; cp x ~/.CLAUD?/settings.json",
+      ]) assert.notEqual(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      for (const c of ["rm *.log", "cp x ~/.CLAUD?/settings.json"]) assert.equal(guard(bash(c, { ...who, cwd: c === "rm *.log" ? repo : h }), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
+
+test("#25 row 2: an extglob form is a glob the matcher does not model (shared)", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ["cp x ~/.@(claude)/settings.json", "echo x > ~/.+(c)laude/settings.json", "ln -sf x ~/.!(x)laude/settings.json", "cp x ~/.?(c)laude/settings.json", "cp x ~/.*(c)laude/settings.json", "echo x > \"a+(b)\""]) assert.notEqual(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      for (const c of ["echo \"a+(b)\"", "echo x > a+b", "echo x > \"a?b\""]) assert.equal(guard(bash(c, { ...who, cwd: repo }), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
+
+test("#25 row 3: ] first in a negated set is a set character, as in bash", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ["echo x > ~/.[!]x]laude/settings.json", "echo x > ~/.[^]x]laude/settings.json"]) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+      // [!]c] excludes c; [!]laude has no closing ] after the set, so it is literal: neither names ~/.claude.
+      for (const c of ["echo x > ~/.[!]c]laude/settings.json", "echo x > ~/.[!]laude/settings.json"]) assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+    }
+  });
+});
