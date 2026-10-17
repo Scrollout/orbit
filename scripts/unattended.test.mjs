@@ -47,8 +47,20 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
         // Respellings of the script path (#38): each asks or is denied, never runs silently.
         for (const c of [`node ${repo}/hooks/unattended''.mjs on 24h`, `node ${repo}/hooks/unatt"ended".mjs on 24h`, `node ${repo}/hooks/unattended.m?s on 24h`,
           `node ${repo}/hooks/unattended\\.mjs on 24h`, `node $'${repo}/hooks/unattended\\x2emjs' on 24h`, `ln -s ${repo}/hooks/unattende?.mjs /tmp/x.mjs; node /tmp/x.mjs on 24h`,
-          `node ${repo}/hooks/unatt*.mjs on 24h`, `node "$X" on 24h`, `bun ${repo}/hooks/unattende[d].mjs on 24h`, `env node $(echo x) on 24h`]) {
+          `node ${repo}/hooks/unatt*.mjs on 24h`, `bun ${repo}/hooks/unattende[d].mjs on 24h`]) {
           assert.ok(["ask", "deny"].includes(kind(g(c))), `${mode} ${k}: ${c}`);
+        }
+        // Nested in sh -c, eval or find (#38): denied, never asked (the prompt would not show the real command).
+        for (const c of [`bash -c "node ${repo}/hooks/unattended''.mjs on 24h"`, `bash -c 'node ${repo}/hooks/unattende?.mjs on 24h'`, `eval "node ${repo}/hooks/unattende''d.mjs on 24h"`,
+          `bash -c 'node ${SCRIPT} on 8h'`, `find ${repo}/hooks -name 'unattende?.mjs' -exec node {} on 24h \;`, `find ${repo} -path '*/hooks/unatt*' -exec node {} on 24h +`,
+          `find ${repo}/hooks -execdir bun {} on 24h \;`, `find ${repo}/hooks -iname 'UNATT*' | xargs -I{} node {} on 24h`]) {
+          assert.equal(kind(g(c)), "deny", `${mode} ${k}: ${c}`);
+        }
+        // A glob that cannot match unattended.mjs, or a variable operand, is not the go's command: this rule does not deny it.
+        for (const c of ["node --test scripts/*.test.mjs", "node --check scripts/*.test.mjs", "cd hooks && node --test *.test.mjs", 'node "$HOME/x.mjs"',
+          'node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs"', 'node "$X" on 24h', "find . -name '*.test.mjs' -exec node --test {} +"]) {
+          const r = g(c);
+          assert.doesNotMatch(String(r?.ask ?? r ?? ""), /unattended go's script/, `${mode} ${k}: ${c}`);
         }
         for (const c of [`node "${SCRIPT}" on 8h extra`, `node "${SCRIPT}" on 8h --force`, `node "${SCRIPT}" on 30x`, `node "${SCRIPT}" confirm ABCD`, `node "${SCRIPT}" off now`,
           `node --no-warnings "${SCRIPT}" on 8h`, "node /tmp/x/hooks/unattended.mjs on 8h", "node hooks/unattended.mjs on 8h", `node "${SCRIPT}.bak" on 8h`,

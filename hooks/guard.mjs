@@ -1676,28 +1676,39 @@ const stateDeny = (what, action, input) => outwardReason("DENY", { what, action 
 // owner's answer is the proof. `off`, `status` or no argument (the usage) in the same shape: allowed; a duration out of range:
 // denied with the usage. Any other command that may run the script: denied. undefined: the command does not name it.
 // A command names it (#38) when its text does, when a word (after the guard's expansion) does or resolves to it, when a glob
-// word can match it, or when node, nodejs, bun or deno has a dynamic or glob word up to its script operand. A program the
-// model writes first, or a name held in a variable, is not seen: the evidence gates carry the safety there.
+// word can match it, when node, nodejs, bun or deno (also through xargs) has a glob word whose last segment can match
+// unattended.mjs, when a find whose -name or -path can match it (or that has none) runs one of them by -exec or into xargs,
+// or when the command inside sh -c, bash -c or eval does. A name held in a variable, a program the model writes first or
+// another interpreter is not seen: the go is intent, the evidence gates carry the safety there.
 const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "hooks", "unattended.mjs"));
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
-function namesGo(cmds, text, cwd) {
+const goGlob = (e) => (braces(e) ?? [null]).some((a) => a === null || segMatch(a.split("/").pop(), basename(GO_SCRIPT)));
+const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+function namesGo(cmds, text, cwd, env) {
   if (text.includes("unattended.mjs")) return true;
+  const runs = (c) => { const r = resolveCmd(c.words); return RUNTIMES.has(r?.name) && r; };
   return cmds.some((c) => {
     const r = resolveCmd(c.words);
-    let k = RUNTIMES.has(r?.name) ? c.words.length - r.args.length - 1 : -1;
-    return c.words.some((x, i) => {
+    if (r && "inner" in r && r.inner !== null) {
+      try { if (namesGo(parseShell(r.inner, env), r.inner, cwd, env)) return true; } catch { /* the guard's inner parse handles it */ }
+    }
+    if (r?.name === "find") {
+      const a = r.args.map((x) => x.lit);
+      const pats = a.flatMap((x, i) => (/^-i?(name|path|wholename|regex)$/.test(x ?? "") ? [[x, a[i + 1]]] : []));
+      const exec = a.some((x, i) => FIND_EXEC.has(x) && RUNTIMES.has(basename(a[i + 1] ?? "")));
+      const can = !pats.length || pats.some(([o, p]) => !/name$/.test(o) || p == null || segMatch(o === "-iname" ? p.toLowerCase() : p, "unattended.mjs"));
+      if (can && (exec || cmds.some((d) => runs(d)?.xargs))) return true;
+    }
+    return c.words.some((x) => {
       const e = x.exp ?? x.lit;
       if (e !== null && (e.includes("unattended.mjs") || (!x.glob && (isAbsolute(e) || cwd) && realOrNull(resolve(cwd ?? "/", e)) === GO_SCRIPT))) return true;
       if (x.glob && e !== null && globUnder(e, cwd, [GO_SCRIPT])) return true;
-      if (k < 0 || i <= k) return false;
-      if (x.lit === null || x.glob) return true;
-      if (!x.lit.startsWith("-")) k = -1;   // the script operand: later words are its arguments
-      return false;
+      return Boolean(x.glob && e !== null && RUNTIMES.has(r?.name) && goGlob(e));
     });
   });
 }
-function goCommand(cmds, text, input, cwd) {
-  if (!namesGo(cmds, text, cwd)) return undefined;
+function goCommand(cmds, text, input, cwd, env) {
+  if (!namesGo(cmds, text, cwd, env)) return undefined;
   const c = cmds.length === 1 && !cmds.complex ? cmds[0] : null;
   const w = c && !c.depth && !c.redirs.length && c.heredoc === null && c.words.every((x) => x.lit !== null) ? c.words.map((x) => x.lit) : [];
   if (w[0] === "node" && isAbsolute(w[1] ?? "") && realOrNull(w[1]) === GO_SCRIPT) {
@@ -1708,7 +1719,7 @@ function goCommand(cmds, text, input, cwd) {
       return { ask: outwardReason("ASK", { what: `open an unattended go of ${ms / 60_000} minutes for this session`, action: `/orbit:unattended on${w[3] ? ` ${w[3]}` : ""}` }, input, { do: "approve only if you typed /orbit:unattended on" }) };
     }
   }
-  return stateDeny("a command naming the unattended go's script", "only the exact /orbit:unattended command runs it", input);
+  return stateDeny("a command naming the unattended go's script, or a glob or spelling that can match it", "only the exact /orbit:unattended command runs it", input);
 }
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
@@ -1939,7 +1950,7 @@ export function guard(input, env = {}, ctx = null) {
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
-  const gc = goCommand(cmds, ti.command, input, cwd);
+  const gc = goCommand(cmds, ti.command, input, cwd, env);
   if (gc !== undefined) return gc;
   const links = [];
   const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links, globOpts: GLOB_OPTS.test(ti.command) }, dirs);
