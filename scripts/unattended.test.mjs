@@ -823,6 +823,9 @@ test("#37: $(( ... ) ) without a closing )) is $( and a subshell; $\\<newline>'.
           `echo $(( '$(${s})' ))`, `cat <<EOF\n$(( '$(${s})' ))\nEOF`, `echo $(( x '$(${s})' ))`, `echo "$(( '$(${s})' ))"`]) {
           assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${JSON.stringify(c)}`);
         }
+        // $'\'' in $(( is one quoted quote; where the arithmetic and subshell closes differ, nothing between is skipped
+        const c = `echo $(( $'\\'' ))\n${s}\necho ' ))`;
+        assert.notEqual(kind(guard(bash(c, who), env, ctx())), "allow", `${m}: ${JSON.stringify(c)}`);
       }
       const force = kind(guard(bash("git push origin -f feat", who), env, ctx()));
       assert.notEqual(force, "allow", `${m}: bare -f`);
@@ -830,7 +833,7 @@ test("#37: $(( ... ) ) without a closing )) is $( and a subshell; $\\<newline>'.
         assert.equal(kind(guard(bash(c, who), env, ctx())), force, `${m}: ${JSON.stringify(c)}`);
       }
       for (const c of ["echo $((1+2))", "echo $(( $(date +%s) - 1 ))", "echo $(((1+2)*3))", "echo $(( (1+2) ))", "echo $(\\\n(1+2)\\\n)", "cat <<EOF\n$((1+2))'s\nEOF", "git push origin $\\\n'feat'",
-        'echo $(( "1" + 2 ))', "echo $(( '1' ))"]) {
+        'echo $(( "1" + 2 ))', "echo $(( '1' ))", 'git log -n $(( "$n" * 2 ))', 'echo $(( "1" > 2 ))']) {
         assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${JSON.stringify(c)}`);
       }
     }

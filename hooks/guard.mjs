@@ -182,10 +182,12 @@ function word(p, depth, one = false) {   // one: only the $ expansion at p.i (a 
       let n = 0, quoted = false, end = -1;
       for (p.i = a; p.i < s.length; p.i++) {
         if (inner()) p.i--;
-        else if (s[p.i] === "'" || s[p.i] === '"') {
+        else if (s[p.i] === "'" || s[p.i] === '"' || s.startsWith("$'", p.i)) {
+          const ansi = s[p.i] === "$";   // $'...': a backslash escapes the next character, \' included
+          if (ansi) p.i++;
           const qc = s[p.i];
           quoted = true;
-          for (p.i++; p.i < s.length && s[p.i] !== qc; p.i++) if ((qc === '"' || s[p.i] !== "\\") && inner()) p.i--;
+          for (p.i++; p.i < s.length && s[p.i] !== qc; p.i++) if ((qc === '"' || ansi || s[p.i] !== "\\") && inner()) p.i--;
           if (p.i >= s.length) throw new ParseError("unclosed quote in $((");
         }
         else if (s[p.i] === "(") n++;
@@ -196,7 +198,8 @@ function word(p, depth, one = false) {   // one: only the $ expansion at p.i (a 
       if (end >= 0 && !quoted) { p.i = end; dyn = unexp = true; return; }
       if (!quoted) { p.cmds.length = from; subs.length = ns; nested = nn; p.f.complex = cx; }
       p.i = a + 1; sub();
-      if (end >= 0) p.i = end;
+      // Both readings must close at the same place, or text between the two closes is parsed by neither: deny.
+      if (end >= 0 && p.i !== end) throw new ParseError("$(( closes differently as arithmetic and as a subshell");
       return;
     }
     if (s[a] === "(") { p.i = a + 1; sub(); return; }
