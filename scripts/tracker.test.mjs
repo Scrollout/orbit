@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,16 +9,10 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "tracker.mjs");
 
-// A stub gh on PATH (sh, so it starts fast under load): answers <key>.out / <key>.code from GH_STUB, logs each call.
-const STUB = `#!/bin/sh
-echo "$*" >> "$GH_LOG"
-case "$*" in
-  auth*) k=auth ;; *issueTypes*) k=types ;; *projectsV2*) k=projects ;; */labels*) k=labels ;; */milestones*) k=milestones ;; *) k=repo ;;
-esac
-[ -f "$GH_STUB/$k.out" ] || exit 1
-cat "$GH_STUB/$k.out"
-exit "$(cat "$GH_STUB/$k.code")"
-`;
+// A stub gh on PATH: the tracked executable fixtures/gh-stub.sh (sh, so it starts fast under load), linked into each repo's .bin.
+// It lives in the checkout, not a temp file: CI mounts /tmp noexec, so a stub written there cannot run. It answers
+// <key>.out / <key>.code from GH_STUB and logs each call.
+const STUB = join(here, "fixtures", "gh-stub.sh");
 const ALL = {
   auth: { code: 0, out: "github.com\n  Logged in to github.com\n  Token scopes: 'gist', 'project', 'repo'\n" },
   repo: { out: { has_issues: true, owner: { login: "acme", type: "Organization" } } },
@@ -37,7 +31,7 @@ function setup({ stub = ALL, remote = "git@github.com:acme/app.git", extra = "",
   writeFileSync(join(root, ".agents", "project.md"), "# P\n\n```yaml orbit-profile\n" + PROFILE + (extra ? "\n" + extra : "") + "\n```\n");
   const bin = join(root, ".bin");
   mkdirSync(bin);
-  if (gh) { writeFileSync(join(bin, "gh"), STUB); chmodSync(join(bin, "gh"), 0o755); }
+  if (gh) { symlinkSync(STUB, join(bin, "gh")); }
   mkdirSync(join(root, ".stub"));
   for (const [k, r] of Object.entries(stub)) {
     writeFileSync(join(root, ".stub", `${k}.out`), typeof r.out === "string" ? r.out : JSON.stringify(r.out));
