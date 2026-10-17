@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.19.1
+- The loop cap ("every loop has a stated cap; at the cap, stop and report") is now also a bullet in §4 of both principles templates (not versioned).
+
 ## 0.19.0
 - `/decide` starts when needed (`/decide` 1.5.0): its description now names the triggers (a design, decision-record or roadmap question; a trade-off between real options; a bug or finding with more than one plausible fix; a change touching a security path, a one-way door or shared state; a review finding) and the exclusions (a small change with all triage lines no, a worker or subagent executing a brief, a multi-session goal, which is `/intent`); started unasked, it says in one line why the question qualifies. The `peer` skill (1.1.1) and the `coder` agent (rules 1.10.2) report such a question to the operator or PM instead of running `/decide`.
 - Parallel fan-out inside `/decide`: the analysts, engineers and design reviewers of steps 3 to 5 start in one message; security and the tech lead stay sequential; caps unchanged.
