@@ -1693,7 +1693,10 @@ const ansiC = (b) => b.replace(/\\(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F
 function unparsedGo(text) {
   const t = text.replace(/\\\n/g, "").replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_, b) => ansiC(b)).replace(/\$'|['"\\]/g, "");
   const name = basename(GO_SCRIPT);
-  return RUNTIME_WORD.test(t) && t.split(/[\s;|&()<>]+/).some((k) => (/[*?[{]/.test(k) ? goGlob(k) : k.split("/").pop() === name));
+  // Script-involved: a token with the stem unatt and an expansion, glob or paren character, or ending in the script name, or
+  // a glob token that can match the name. Split only on whitespace and ; | &, so an expansion stays inside its word.
+  const involved = (k) => (k.includes("unatt") && (/[$`()?*[{@+!,]/.test(k) || k.endsWith(name))) || (/[*?[{]|[@+!]\(/.test(k) && goGlob(k));
+  return RUNTIME_WORD.test(t) && t.split(/[\s;|&]+/).some(involved);
 }
 const FIND_OPS = new Set(["-o", "-or", ",", "!", "-not", "-prune"]);
 function namesGo(cmds, text, cwd, env) {
@@ -1719,7 +1722,7 @@ function namesGo(cmds, text, cwd, env) {
       const e = x.exp ?? x.lit;
       if (e !== null && (e.includes("unattended.mjs") || (!x.glob && (isAbsolute(e) || cwd) && realOrNull(resolve(cwd ?? "/", e)) === GO_SCRIPT))) return true;
       if (x.glob && e !== null && globUnder(e, cwd, [GO_SCRIPT])) return true;
-      return Boolean(x.glob && e !== null && RUNTIMES.has(r?.name) && goGlob(e));
+      return Boolean(x.glob && RUNTIMES.has(r?.name) && ((e !== null && goGlob(e)) || (x.ext && goGlob(x.raw))));
     });
   });
 }
@@ -1782,6 +1785,25 @@ function globExact(s) {
 // Whether one path segment matches a glob segment: *, ?, [...] (with ! or ^ and ranges); a [ without ] is literal.
 function segMatch(p, s, i = 0, k = 0) {
   for (; i < p.length; i++, k++) {
+    // An extglob group @( ) + ( ) ? ( ) * ( ) ! ( ) with | alternatives (#38): each alternative, then the rest of the pattern.
+    if ("@+?*!".includes(p[i]) && p[i + 1] === "(") {
+      let d = 0, e = i + 1;
+      for (; e < p.length; e++) { if (p[e] === "(") d++; else if (p[e] === ")" && --d === 0) break; }
+      if (e < p.length) {
+        const inner = p.slice(i + 2, e), rest = p.slice(e + 1), alts = [];
+        for (let a = 0, q = 0, j = 0; j <= inner.length; j++) {
+          if (inner[j] === "(") q++; else if (inner[j] === ")") q--;
+          if (j === inner.length || (inner[j] === "|" && q === 0)) { alts.push(inner.slice(a, j)); a = j + 1; }
+        }
+        const one = alts.some((a) => segMatch(a + rest, s, 0, k));
+        if (p[i] === "@") return one;
+        if (p[i] === "?") return one || segMatch(rest, s, 0, k);
+        if (p[i] === "+") return alts.some((a) => segMatch(`${a}*(${inner})${rest}`, s, 0, k));
+        if (p[i] === "*") return segMatch(rest, s, 0, k) || alts.some((a) => segMatch(`${a}*(${inner})${rest}`, s, 0, k));
+        for (let x = k; x <= s.length; x++) if (!alts.some((a) => segMatch(a, s.slice(k, x))) && segMatch(rest, s, 0, x)) return true;
+        return false;
+      }
+    }
     if (p[i] === "*") { for (let x = k; x <= s.length; x++) if (segMatch(p, s, i + 1, x)) return true; return false; }
     if (k >= s.length) return false;
     if (p[i] === "?") continue;
