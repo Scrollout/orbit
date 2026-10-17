@@ -8,12 +8,15 @@
 // inline scripts or shells it cannot read. What it cannot parse or resolve is denied (fail closed).
 // DEC-08 (any session, only with a profile whose review_trailer is set): a `git merge --no-ff` of a non-base ref, and
 // the commit that concludes it, need a readable message with the review trailer in the last paragraph, with Co-Authored-By.
+// Outward (every session, every git, gh and GitHub MCP call): destructive actions are denied, shared ones ask where the
+// permission mode prompts and are denied elsewhere or when not alone in their call (see "outward actions" below).
 // A guardrail against slips, not a sandbox: it does not model every way a program can write a file.
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
+import { EVIDENCE_MS, anyPending, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
 const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -268,24 +271,48 @@ export function resolveCmd(words) {
 }
 
 // ---------- context (git and the profile); tests pass their own ----------
-const git = (dir, ...a) => {
-  const r = spawnSync("git", ["-C", dir, ...a], { encoding: "utf8", timeout: 5000 });
-  return r.status === 0 ? r.stdout.trim() : null;
-};
+// A helper git call that times out or cannot run returns FAIL; the outward classes then take the stricter class.
+export const FAIL = Object.freeze({ fail: true });
+const HELPER_BUDGET_MS = 7000;   // every helper git call of one hook run shares it, so the hook stays under its 10 s timeout
+const HELPER_CALL_MS = 3000;     // one helper git call
 const todo = (v) => typeof v !== "string" || !v.trim() || /^TODO\b/i.test(v.trim());
 
-// The path with symlinks resolved, for the part of it that exists.
-export function real(f) {
-  const rest = [];
-  for (let cur = f; ; cur = dirname(cur)) {
-    try { return join(realpathSync(cur), ...rest); } catch {
-      if (dirname(cur) === cur) return f;
+// The path with symlinks resolved, for the part of it that exists; a dangling link is followed to where it points (so a
+// write through it lands there), each hop against the link's real directory, as the kernel does. null: a link it cannot
+// resolve (a loop, more than 40 hops, unreadable); callers that protect a directory treat null as inside it.
+const LINK_HOPS = 40;
+export function realOrNull(f) {
+  let path = f;
+  for (let hops = 0; ;) {
+    const rest = [];
+    let next = null;
+    for (let cur = path; ; cur = dirname(cur)) {
+      try { return join(realpathSync(cur), ...rest); } catch { /* a missing part or a dangling link: look at it below */ }
+      let st = null;
+      try { st = lstatSync(cur); } catch { /* missing: go up */ }
+      if (st?.isSymbolicLink()) {
+        if (++hops > LINK_HOPS) return null;
+        try { next = join(resolve(realpathSync(dirname(cur)), readlinkSync(cur)), ...rest); } catch { return null; }
+        break;
+      }
+      if (st) return null;   // it exists, yet realpath failed
+      if (dirname(cur) === cur) return path;
       rest.unshift(basename(cur));
     }
+    path = next;
   }
 }
+export const real = (f) => realOrNull(f) ?? f;
 
-export function realCtx(cwd, env) {
+export function realCtx(cwd, env, budgetMs = HELPER_BUDGET_MS) {
+  const deadline = Date.now() + budgetMs;
+  const run = (dir, ...a) => {
+    const left = deadline - Date.now();
+    if (left < 50) return FAIL;
+    const r = spawnSync("git", ["-C", dir, ...a], { encoding: "utf8", timeout: Math.min(HELPER_CALL_MS, left) });
+    return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
+  };
+  const git = (dir, ...a) => { const r = run(dir, ...a); return r !== FAIL && r.code === 0 ? r.out : null; };
   const project = env.CLAUDE_PROJECT_DIR ? real(resolve(env.CLAUDE_PROJECT_DIR)) : null;
   const list = (git(cwd, "worktree", "list", "--porcelain") ?? "").split("\n").filter((l) => l.startsWith("worktree ")).map((l) => real(resolve(l.slice(9))));
   const roots = [...new Set([...list, ...(project ? [project] : [])])];
@@ -295,19 +322,38 @@ export function realCtx(cwd, env) {
   return {
     roots,
     operatorFiles: [...new Set([main, ...(project ? [project] : [])].map((r) => join(r, ".agents/operator.md")))],
+    // The main checkout's profile (else the project dir's) sets the floor: the review trailer, the base that exempts
+    // catch-up merges and the base push grant. A worktree's own profile only tightens: it may add a trailer when the
+    // floor has none, and protected branches (its base among them); it never drops or moves the trailer, or grants a push.
     profile(dir) {
       const key = dir ?? "";
       if (!profiles.has(key)) {
-        let data = null;
-        for (const r of [dir && git(dir, "rev-parse", "--show-toplevel"), main, project].filter(Boolean)) {
-          const f = join(r, ".agents/project.md");
-          if (existsSync(f)) { data = parseProfileText(readFileSync(f, "utf8")); if (data) break; }
+        const read = (r) => {
+          const f = r && join(r, ".agents/project.md");
+          const data = f && existsSync(f) ? parseProfileText(readFileSync(f, "utf8")) : null;
+          return data && {
+            base: todo(data.base_branch) ? null : data.base_branch,
+            pusher: ["agent", "owner"].includes(data.base_pusher) ? data.base_pusher : null,
+            trailer: todo(data.review_trailer) || data.review_trailer === "none" ? null : data.review_trailer,
+            protected: (Array.isArray(data.protected_branches) ? data.protected_branches : []).filter((b) => !todo(b)),
+            checks: (Array.isArray(data.required_checks) ? data.required_checks : []).filter((b) => !todo(b)),
+          };
+        };
+        const floor = read(main) ?? (project && project !== main ? read(project) : null);
+        const own = dir && git(dir, "rev-parse", "--show-toplevel");
+        const wt = own && real(resolve(own)) !== main && real(resolve(own)) !== project ? read(own) : null;
+        let p = floor ?? null;
+        if (wt) {
+          const trailer = floor?.trailer ?? wt.trailer;
+          p = {
+            base: floor?.trailer ? floor.base : (floor?.base ?? wt.base),
+            pusher: floor?.pusher ?? null,
+            trailer,
+            protected: [...new Set([...(floor?.protected ?? []), ...wt.protected, ...(wt.base ? [wt.base] : [])])],
+            checks: floor?.checks ?? [],
+          };
         }
-        profiles.set(key, data && {
-          base: todo(data.base_branch) ? null : data.base_branch,
-          pusher: ["agent", "owner"].includes(data.base_pusher) ? data.base_pusher : null,
-          trailer: todo(data.review_trailer) || data.review_trailer === "none" ? null : data.review_trailer,
-        });
+        profiles.set(key, p);
       }
       return profiles.get(key);
     },
@@ -317,6 +363,50 @@ export function realCtx(cwd, env) {
     },
     baseShas: (dir, base) => [base, `origin/${base}`].map((r) => git(dir, "rev-parse", "--verify", "-q", `${r}^{commit}`)).filter(Boolean),
     readFile: (f) => { try { return readFileSync(f, "utf8"); } catch { return null; } },
+    // Outward helpers: a value, null (none) or FAIL (timeout, error, or a name it will not pass to git).
+    alias(dir, name) {
+      if (!/^[\w.-]+$/.test(name)) return FAIL;
+      const r = run(dir, "config", "--get", `alias.${name}`);
+      return r === FAIL ? FAIL : r.code === 0 ? r.out : r.code === 1 ? null : FAIL;
+    },
+    refKind(dir, name) {
+      if (name.startsWith("-") || !/^[\w./@{}^~-]+$/.test(name)) return FAIL;
+      const r = run(dir, "for-each-ref", "--format=%(refname)", `refs/tags/${name}`, `refs/heads/${name}`, `refs/remotes/origin/${name}`);
+      if (r === FAIL || r.code !== 0) return FAIL;
+      const l = r.out.split("\n");
+      return { tag: l.includes(`refs/tags/${name}`), branch: l.includes(`refs/heads/${name}`), remote: l.includes(`refs/remotes/origin/${name}`) };
+    },
+    head(dir) { const r = run(dir, "symbolic-ref", "-q", "--short", "HEAD"); return r === FAIL ? FAIL : r.code === 0 ? r.out : null; },
+    followTags(dir) {
+      const r = run(dir, "config", "--type=bool", "--get", "push.followTags");
+      return r === FAIL ? FAIL : r.code === 0 ? r.out === "true" : r.code === 1 ? false : FAIL;
+    },
+    originHead(dir) {
+      const r = run(dir, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD");
+      if (r === FAIL) return FAIL;
+      return r.code === 0 && r.out.startsWith("origin/") ? r.out.slice(7) : null;
+    },
+    // The unattended go's evidence calls (git in that repo, gh api): one deadline of 6 s, inside the hook's budget. Each runs
+    // in its own process group, killed with SIGKILL at the deadline and after it returns, so neither a child that ignores
+    // SIGTERM nor a grandchild (ssh) holding its output keeps the hook waiting or outlives the call.
+    evidence() {
+      const end = Math.min(Date.now() + EVIDENCE_MS, deadline);
+      const call = (cmd, args) => {
+        const left = end - Date.now();
+        if (left < 50) return FAIL;
+        const r = spawnSync(cmd, args, { encoding: "utf8", timeout: left, killSignal: "SIGKILL", detached: true, maxBuffer: 64 << 20 });
+        if (r.pid) { try { process.kill(-r.pid, "SIGKILL"); } catch { /* the group is gone */ } }
+        return r.error || r.signal || r.status === null ? FAIL : { code: r.status, out: (r.stdout ?? "").trim() };
+      };
+      return { git: (d, ...a) => call("git", ["-C", d, ...a]), gh: (path) => call("gh", ["api", "-H", "Accept: application/vnd.github+json", path]) };
+    },
+    commit(dir, rev) {
+      if (rev.startsWith("-") || !/^[\w./@{}^~-]+$/.test(rev)) return null;
+      const r = run(dir, "log", "-1", "--format=%h%x09%s", `${rev}^{commit}`, "--");
+      if (r === FAIL || r.code !== 0 || !r.out) return null;
+      const t = r.out.indexOf("\t");
+      return { sha: r.out.slice(0, t), subject: r.out.slice(t + 1) };
+    },
   };
 }
 
@@ -327,24 +417,27 @@ const shown = (w) => w.raw;
 // Global options before the subcommand. A dynamic -C leaves the directory unknown (null): the operator is denied,
 // a worker's DEC-08 check still runs, with the session's cwd for the repo state.
 function gitSplit(args, cwd, op) {
-  let i = 0, dir = cwd, config = false;
+  // redirect: --git-dir, --work-tree or a -C path that is not literal (the outward classes then cannot tell the repo).
+  let i = 0, dir = cwd, config = false, redirect = false;
   while (i < args.length) {
     const a = args[i].lit;
     if (a === null) return { bad: "a dynamic git option" };
     if (a === "-C") {
       const d = args[i + 1]?.exp;
       if (d == null) { if (op || !args[i + 1]) return { bad: "a dynamic git -C path" }; dir = null; i += 2; continue; }
+      if (args[i + 1].lit === null) redirect = true;
       dir = isAbsolute(d) ? d : dir && resolve(dir, d); i += 2; continue;
     }
     if (a === "-c" || a === "--config-env") { config = true; i += 2; continue; }
     if (/^(-c.|--config-env=)/.test(a)) { config = true; i++; continue; }
-    if (["--git-dir", "--work-tree", "--namespace"].includes(a)) { i += 2; continue; }
-    if (/^--(git-dir|work-tree|namespace)=/.test(a) || ["--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--bare"].includes(a)) { i++; continue; }
-    if (["--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"].includes(a)) return { dir, config, sub: "version", rest: [] };
+    if (["--git-dir", "--work-tree", "--namespace"].includes(a)) { redirect ||= a !== "--namespace"; i += 2; continue; }
+    if (/^--(git-dir|work-tree)=/.test(a)) { redirect = true; i++; continue; }
+    if (/^--namespace=/.test(a) || ["--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--bare"].includes(a)) { i++; continue; }
+    if (["--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"].includes(a)) return { dir, config, redirect, sub: "version", rest: [] };
     if (a.startsWith("-")) return { bad: `git option ${a}` };
-    return { dir, config, sub: a, rest: args.slice(i + 1) };
+    return { dir, config, redirect, sub: a, rest: args.slice(i + 1) };
   }
-  return { dir, config, sub: null, rest: [] };
+  return { dir, config, redirect, sub: null, rest: [] };
 }
 
 // Read-only git: a per-subcommand allowlist of options (default deny; no abbreviations). A spec has
@@ -476,27 +569,64 @@ const GH_GLOBAL_VALUED = ["-R", "--repo", "--hostname"];
 const GH_API_VALUED = ["-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq", "-t", "--template", "--hostname", "-p", "--preview", "--cache"];
 const GH_WRITE_ENDPOINT = /(^|\/)(merges|pulls|merge|refs|contents|git)(\/|$|\?)/;
 
-function ghDeny(args) {
-  const pos = [], fields = [];
-  let method = null, input = false;
+// gh api's flags without a value; with the valued ones above, the flags ghParse knows exactly (#22).
+const GH_API_BOOL = ["-i", "--include", "--paginate", "--silent", "--slurp", "--verbose"];
+const GH_LONG_VALUED = [...GH_GLOBAL_VALUED, ...GH_API_VALUED].filter((o) => o.startsWith("--"));
+
+// The positionals, api method (null: dynamic), fields, --input, -R/--repo, the other flags of a gh call, and the flags it
+// does not know exactly (unknown).
+function ghParse(args) {
+  const pos = [], fields = [], flags = new Set(), unknown = [];
+  let method, input = false, repo;
   for (let i = 0; i < args.length; i++) {
     const a = args[i].lit;
     if (a === null) { pos.push(args[i]); continue; }
-    if (a === "-X" || a === "--method") { method = args[i + 1]?.lit ?? "?"; i++; continue; }
+    if (a === "-X" || a === "--method") { method = args[i + 1] ? args[i + 1].lit : null; i++; continue; }
     if (/^(-X|--method=)./.test(a)) { method = a.replace(/^(-X|--method=)/, ""); continue; }
     if (["-f", "-F", "--field", "--raw-field"].includes(a)) { fields.push(args[i + 1] ?? { lit: null }); i++; continue; }
     if (/^(--field|--raw-field)=/.test(a)) { fields.push({ lit: a.replace(/^[^=]*=/, "") }); continue; }
+    if (/^-[fF]./.test(a)) { fields.push({ lit: a.slice(2) }); continue; }
     if (a === "--input" || a.startsWith("--input=")) { input = true; if (a === "--input") i++; continue; }
+    if (a === "-R" || a === "--repo") { repo = args[i + 1]?.lit ?? null; i++; continue; }
+    if (a.startsWith("--repo=")) { repo = a.slice(7); continue; }
     if ([...GH_GLOBAL_VALUED, ...GH_API_VALUED].includes(a)) { i++; continue; }
-    if (a.startsWith("-")) continue;
+    if (a.startsWith("-")) {
+      flags.add(a.split("=")[0]);
+      if (!GH_API_BOOL.includes(a) && !(a.includes("=") && GH_LONG_VALUED.includes(a.split("=")[0]))) unknown.push(a);
+      continue;
+    }
     pos.push(args[i]);
   }
+  return { pos, method, fields, input, repo, flags, unknown };
+}
+
+// Why a gh api call is not read exactly (#22), else null: a substitution wrapper (xargs, find, fd, parallel), a control
+// character in an argument, a flag ghParse does not know exactly, or an endpoint with %, //, /./ or /../.
+function ghApiOdd(args, p, xargs) {
+  if (xargs) return "arguments a wrapper appends";
+  if (args.some((w) => w.lit !== null && [...w.lit].some((c) => c.charCodeAt(0) < 0x20 && c !== "\n" && c !== "\t"))) return "a control character";
+  if (p.unknown.length) return `option ${safe(p.unknown[0])} (not one it reads exactly)`;
+  const ep = p.pos[1]?.lit;
+  if (typeof ep === "string") {
+    const e = ep.replace(/^https?:\/\/[^/]*/i, ""), s = e.startsWith("/") ? e : `/${e}`;
+    if (s.includes("%") || s.includes("//") || s.includes("/./") || s.includes("/../") || s.endsWith("/.") || s.endsWith("/..")) return "an endpoint it cannot read exactly";
+  }
+  return null;
+}
+
+function ghDeny(args, xargs = false) {
+  if (xargs) return "run gh under xargs, find -exec, fd -x or parallel (the wrapper appends or substitutes its arguments)";
+  const p = ghParse(args), { pos, method: m0, fields, input } = p;
+  const method = m0 === null ? "?" : m0 ?? null;
   const [p0, p1] = pos.map((w) => w.lit);
   if (p0 === "pr" && (p1 === "merge" || p1 === "checkout")) return `run "gh pr ${p1}" (the merge is the verified local --no-ff merge a worker builds)`;
   if (p0 !== "api") return null;
+  const odd = ghApiOdd(args, p, xargs);
+  if (odd) return `run "gh api" with ${odd}`;
   const endpoint = p1;
-  if (endpoint === "graphql") {
-    if (input || fields.some((f) => f.lit === null || /\bmutation\b/.test(f.lit) || /^[^=]*=@/.test(f.lit))) return `run a GraphQL mutation, or a query it cannot read (a variable, @file or --input), through "gh api graphql"`;
+  if (pos.slice(1).some((w) => gqlEndpoint(w.lit))) {
+    const g = graphqlRead(args);
+    if (g.cls || g.tracker) return `run a GraphQL mutation, or a call it cannot read (a variable, placeholder, @file, --input or another argument shape), through "gh api graphql"`;
     return null;
   }
   const m = (method ?? (fields.length || input ? "POST" : "GET")).toUpperCase();
@@ -606,13 +736,6 @@ function writeTargets(name, args) {
 }
 
 // ---------- DEC-08 ----------
-function trailerOk(msg, key) {
-  const paras = msg.replace(/\r\n/g, "\n").trim().split(/\n[ \t]*\n/);
-  const last = paras.pop().split("\n"), lc = key.toLowerCase();
-  const has = (lines, k) => lines.some((l) => l.toLowerCase().startsWith(`${k}:`) && l.slice(k.length + 1).trim());
-  return has(last, lc) && !paras.some((p) => has(p.split("\n"), "co-authored-by"));
-}
-
 // The literal text of a -m value: a static word, or "$(cat <<'EOF' ... EOF)".
 function messageOf(w, cmds) {
   if (!w) return null;
@@ -784,7 +907,11 @@ function checkCmds(cmds, st, ctx, op, total) {
       return deny(`run "git ${g.sub}${g.rest.length ? " " + g.rest.map(shown).join(" ") : ""}" (${why})`);
     }
     if (!op) continue;
-    if (r.name === "gh") { const d = ghDeny(r.args); if (d) return deny(d); continue; }
+    if (r.name === "gh") { const d = ghDeny(r.args, r.xargs); if (d) return deny(d); continue; }
+    if (SUBST_PROGRAMS.has(r.name)) {
+      const from = EXEC_OPTS[r.name] ? r.args.findIndex((w) => EXEC_OPTS[r.name].includes(w.lit)) : 0;
+      if (from >= 0 && r.args.slice(from).some((w) => w.lit !== null && basename(w.lit) === "gh")) return deny(ghDeny([], true));
+    }
     const targets = writeTargets(r.name, r.args);
     if (r.xargs && (targets.length || r.name in WRITERS || r.name === "sed")) return deny(`run "xargs ${r.name}" (its targets are unknown before it runs)`);
     for (const t of targets) { const d = target_(t, st, ctx); if (d) return deny(`write ${d} (${r.name})`); }
@@ -808,13 +935,826 @@ function target_(w, st, ctx) {
   return ctx.roots.some((r) => inside(r, f)) ? `${shown(w)} inside the repo` : null;
 }
 
-// Returns the deny reason, or null to allow.
+// ---------- outward actions (every session): git, gh and GitHub MCP calls that reach the forge ----------
+// Classes: local and branch push (silent), shared (ask where the permission mode prompts, else deny; denied when not alone
+// in its call), destructive (deny in every mode; the owner runs it with `!`). Protected branches: main, master, release/*,
+// the target of origin/HEAD, plus the profile's base_branch and protected_branches (the profile only adds). A helper git call
+// that fails or times out gives the stricter class. Reasons use one short fixed shape built from parsed fields, never the command line.
+const ASK_MODES = new Set(["default", "acceptEdits", "plan", "auto", "bypassPermissions"]);
+const GITGH = /\b(git|gh)\b/;
+const COND1 = /\b(push|tag|release|api|pr|repo|config|auth)\b|--delete|\bgh\s+(run|workflow)\b/;
+const TOKENISH = /gh[pousr]_|github_pat_|glpat-|xox[a-z]-|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/;
+const TOKENISH_ALL = /gh[pousr]_\w*|github_pat_\w*|glpat-[\w-]*|xox[a-z]-[\w-]*|AKIA[0-9A-Z]{12}|[A-Za-z0-9]{32,}/g;
+// Key shapes are plain string checks (the unsafe-regex rule). keyIs(head, tails, mid): the key is head.<tail>; mid "req" needs a
+// non-empty subsection between them, "opt" allows one, "none" forbids one.
+const keyIs = (head, tails, mid = "none") => (k) => {
+  const key = k.toLowerCase();
+  if (!key.startsWith(`${head}.`)) return false;
+  const rest = key.slice(head.length + 1);
+  return tails.some((t) => (mid !== "req" && rest === t) || (mid !== "none" && rest.length > t.length + 1 && rest.endsWith(`.${t}`)));
+};
+const keyPrefix = (p) => (k) => k.toLowerCase().startsWith(p);
+const CONFIG_KEYS = [keyPrefix("alias."), keyIs("core", ["hookspath"]), keyPrefix("remote."), keyPrefix("url."), keyPrefix("push."), (k) => {
+  const key = k.toLowerCase();
+  return key === "include.path" || (key.startsWith("includeif.") && key.length > "includeif..path".length && key.endsWith(".path"));
+}];
+// Keys whose value git runs as a command; a -c of one asks unless the value is a harmless pager or editor.
+const COMMAND_KEYS = [keyIs("core", ["pager", "editor", "sshcommand", "fsmonitor", "askpass", "gitproxy", "alternaterefscommand"]), keyPrefix("pager."),
+  keyIs("sequence", ["editor"]), keyIs("diff", ["external"]), keyIs("diff", ["textconv", "command"], "req"), keyIs("merge", ["driver"], "req"),
+  keyIs("filter", ["clean", "smudge", "process"], "req"), keyIs("credential", ["helper"], "opt"), keyIs("gpg", ["program"], "opt"),
+  ...["difftool", "mergetool", "browser", "man"].map((h) => keyIs(h, ["cmd", "path"], "req")), keyIs("uploadpack", ["packobjectshook"]),
+  keyIs("sendemail", ["smtpserver", "tocmd", "cccmd", "headercmd"], "opt"), keyIs("trailer", ["cmd", "command"], "req")];
+const HARMLESS_CMD = new Set(["", "cat", "less", "more", "true", "false", ":"]);
+// Built-ins that run commands or other git commands they are given; the push-capable plumbing.
+const GIT_RUNNERS = new Set(["for-each-repo", "filter-branch", "difftool", "mergetool"]);
+const GIT_PUSHERS = new Set(["send-pack", "http-push", "receive-pack"]);
+const GIT_BUILTINS = new Set(("add am annotate apply archive backfill bisect blame branch bundle cat-file check-attr check-ignore check-mailmap check-ref-format " +
+  "checkout checkout-index cherry cherry-pick citool clean clone column commit commit-graph commit-tree config count-objects credential describe diff " +
+  "diff-files diff-index diff-tree difftool fetch fetch-pack filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck gc get-tar-commit-id " +
+  "grep gui hash-object help hook index-pack init instaweb interpret-trailers log ls-files ls-remote ls-tree mailinfo mailsplit maintenance merge merge-base " +
+  "merge-file merge-index merge-tree mergetool mktag mktree multi-pack-index mv name-rev notes pack-objects pack-refs patch-id prune prune-packed pull " +
+  "range-diff read-tree rebase reflog refs remote repack replace replay request-pull rerere reset restore rev-list rev-parse revert rm shortlog show " +
+  "show-branch show-ref sparse-checkout stash status stripspace submodule switch symbolic-ref tag unpack-objects update-index update-ref var " +
+  "verify-commit verify-pack verify-tag version whatchanged worktree write-tree").split(" "));
+const GH_TOP = new Set(("agent-task alias api attestation auth browse cache codespace completion config copilot extension gist gpg-key help issue label " +
+  "org pr preview project release repo ruleset run search secret ssh-key status variable version workflow").split(" "));
+const GH_OUT_ENDPOINT = /(^|\/)(merges|pulls|merge|refs|contents|git|releases|actions|branches|tags)(\/|$|\?)/;
+// git push's long options (git 2.53 `push --git-completion-helper-all`); git accepts any unique prefix.
+const PUSH_LONG = "verbose quiet repo all branches mirror delete tags dry-run porcelain force force-with-lease force-if-includes recurse-submodules thin receive-pack exec set-upstream progress prune follow-tags signed atomic push-option".split(" ");
+const PUSH_OPTS = [...PUSH_LONG, ...PUSH_LONG.map((o) => `no-${o}`), "no-verify", "verify", "ipv4", "ipv6"];
+const PUSH_VALUED = new Set(["repo", "recurse-submodules", "receive-pack", "exec", "push-option"]);
+const pushLong = (n) => { if (PUSH_OPTS.includes(n)) return n; const c = PUSH_OPTS.filter((o) => o.startsWith(n)); return n && c.length === 1 ? c[0] : null; };
+// Ref namespaces a short destination can resolve to on the remote that are neither branches nor tags.
+const OTHER_NS = /^(remotes|notes|pull|replace|stash)\//;
+
+// A value fit for a reason: no URL, query, token-looking run or shell text.
+export function safe(v) {
+  if (typeof v !== "string" || v === "") return "?";
+  if (TOKENISH.test(v)) return "<redacted>";
+  const s = v.split("?")[0];
+  if (s === "") return "?";
+  if (s.includes("://") || /^[^@]*@[^{]/.test(s)) return "<url>";
+  if (/[^\w./@{}^~+:*#=,-]/.test(s)) return "…";
+  return s.length > 80 ? `${s.slice(0, 77)}…` : s;
+}
+const argShow = (w) => (w.lit === null ? "<?>" : safe(w.lit));
+const remoteShow = (r) => (r == null ? "?" : r === "origin" ? "origin" : /[:/@]/.test(r) ? "<url>" : safe(r));
+const sessionBy = (input) => (input?.agent_id ? `subagent ${safe(input.agent_type ?? "?")}` : null);
+
+// The reason: a headline, then only the rows that apply (at most 6 lines). kind: ASK or DENY.
+export function outwardReason(kind, f, input, extra = {}) {
+  const rows = [`orbit · ${kind} · ${f.what}`];
+  const row = (k, v) => rows.push(`${k.padEnd(9)}${v}`);
+  row("action", f.action);
+  // The subject is agent text: control and format characters (bidi overrides, zero-width) dropped, capped at 72 characters.
+  if (f.commit) row("commit", `${f.commit.sha} "${[...String(f.commit.subject).replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}"]/gu, "").replace(TOKENISH_ALL, "<redacted>")].slice(0, 72).join("")}"`);
+  const by = sessionBy(input);
+  if (by) row("by", by);
+  if (extra.note) row("note", extra.note);
+  row("do", extra.do ?? (kind === "ASK" ? "approve only if you gave the go" : f.cmd ? `run it yourself with ! ${f.cmd}` : "do it yourself, outside the agent"));
+  return rows.join("\n");
+}
+
+// The shorthands git resolves in a refspec side: `@` is HEAD, `heads/X` a branch, `tags/X` a tag.
+const short = (s) => (s === "@" ? "HEAD" : /^(heads|tags)\//.test(s) ? `refs/${s}` : s);
+// git push: force, deletes, tags, unknown targets and protected candidates (resolved after the walk).
+function pushOut(rest, dir, cwd, getCtx, add, xargs) {
+  let force = false, del = false, wide = false, other = false, unknown = false;
+  const pos = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i].lit;
+    if (a === null) { pos.push(null); continue; }
+    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => w.lit)); break; }
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("="), n = pushLong(a.slice(2, eq < 0 ? undefined : eq));
+      if (n === null) { unknown = true; continue; }
+      if (PUSH_VALUED.has(n) && eq < 0) i++;
+      if (["force", "force-with-lease", "force-if-includes", "mirror", "prune"].includes(n)) force = true;
+      else if (n === "delete") del = true;
+      else if (["tags", "follow-tags", "all", "branches"].includes(n)) wide = true;
+      else if (["repo", "receive-pack", "exec"].includes(n)) other = true;
+      continue;
+    }
+    if (a.length > 1 && a.startsWith("-")) {
+      for (let k = 1; k < a.length; k++) {
+        if (a[k] === "f") force = true;
+        else if (a[k] === "d") del = true;
+        else if (a[k] === "o") { if (k === a.length - 1) i++; break; }
+      }
+      continue;
+    }
+    pos.push(a);
+  }
+  const remote = pos[0], specs = pos.slice(1), rs = remoteShow(remote);
+  const cmd = `git ${dir && dir !== cwd ? `-C ${safe(dir)} ` : ""}push ${rest.map(argShow).join(" ")}`.trim();
+  const flag = force ? " --force" : del ? " --delete" : "";
+  const f = (cls, what, dst, more = {}) => add({ cls, what, sub: "push", action: `git push${flag} → ${rs}/${safe(dst ?? "?")}`, refs: [`${rs}/${safe(dst ?? "?")}`], dst, cmd, dir, ...more });
+  const dstOf = (s) => (s == null ? null : s.includes(":") ? s.slice(s.indexOf(":") + 1) : s.replace(/^\+/, ""));
+  if (force || specs.some((s) => s?.startsWith("+"))) return f("destructive", "force push", dstOf(specs.find((s) => s !== "") ?? null));
+  const dels = (del ? specs : specs.filter((s) => s !== null && s.startsWith(":")).map((s) => s.slice(1))).map((s) => (s === null ? s : short(s)));
+  if (del || dels.length) {
+    if (remote !== "origin" || !dir || !dels.length || xargs) return f("destructive", "remote delete of a target it cannot read", dels[0] ?? null);
+    for (const t of dels) {
+      if (!t) { f("destructive", "remote delete of a target it cannot read", t); continue; }
+      if (t.startsWith("refs/tags/")) { f("destructive", "tag delete", t.slice(10)); continue; }
+      if (t.startsWith("refs/heads/")) { f("candidate", "", t.slice(11), { del: true }); continue; }
+      if (t.startsWith("refs/")) { f("destructive", "remote delete of a target it cannot read", t); continue; }
+      const k = getCtx().refKind(dir, t);
+      if (k === FAIL || k.tag) f("destructive", k === FAIL ? "remote delete of a target it cannot read" : "tag delete", t);
+      else if (k.branch || k.remote) f("candidate", "", t, { del: true });
+      else f("destructive", "remote delete of a target it cannot read", t);
+    }
+    if (del) return;
+  }
+  const plain = specs.filter((s) => !(s !== null && s.startsWith(":")));
+  if (unknown) return f("shared", "push with an option it cannot read", dstOf(plain[0]));
+  if (xargs) return f("shared", "push with arguments it cannot read", null);
+  if (!dir) return f("shared", "push from a directory it cannot tell", dstOf(plain[0]));
+  if (remote === undefined) return f("shared", "push with no remote or refspec", null);
+  if (remote !== "origin") return f("shared", remote !== null && /[:/@]/.test(remote) ? "push to a URL" : "push to another remote", dstOf(plain[0]));
+  if (other) return f("shared", "push with --repo, --receive-pack or --exec", dstOf(plain[0]));
+  if (wide) return f("shared", "push of tags or all branches", dstOf(plain[0]) ?? "*");
+  if (!plain.length && !dels.length) return f("shared", "push with no refspec", null);
+  for (const s of plain) {
+    if (s === null || s.includes("*") || s === "") { f("shared", "push with a refspec it cannot read", s); continue; }
+    const c = s.indexOf(":"), src = short(c < 0 ? s : s.slice(0, c));
+    let dst = c < 0 ? null : short(s.slice(c + 1));
+    if (dst === null && src === "HEAD") {
+      const h = getCtx().head(dir);
+      if (h === FAIL || !h) { f("shared", "push of HEAD on a branch it cannot read", "HEAD"); continue; }
+      dst = h;
+    }
+    dst ??= src;
+    if (dst.startsWith("refs/tags/") || src.startsWith("refs/tags/")) { f("shared", "tag push", dst.replace(/^refs\/tags\//, ""), { rev: src }); continue; }
+    const qualified = dst.startsWith("refs/heads/");
+    if (qualified) dst = dst.slice(11);
+    else if (dst.startsWith("refs/") || dst === "HEAD" || OTHER_NS.test(dst)) { f("shared", "push to a ref outside branches", dst); continue; }
+    const names = [...new Set([src !== "HEAD" && !src.startsWith("refs/") && !/^[0-9a-f]{7,40}$/.test(src) ? src : null, qualified ? null : dst].filter(Boolean))];
+    const kinds = names.map((n) => getCtx().refKind(dir, n));
+    if (kinds.includes(FAIL)) { f("shared", "push of a ref it cannot read", dst); continue; }
+    if (kinds.some((k) => k.tag && !k.branch)) { f("shared", "tag push", dst, { rev: src }); continue; }
+    f("candidate", "", dst, { rev: src });
+  }
+}
+
+// git config writes and -c/--config-env overrides that can redirect a push or run a command.
+const riskyKey = (k) => [...CONFIG_KEYS, ...COMMAND_KEYS].some((r) => r(k));
+function gitConfigOut(args, add) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i].lit;
+    if (a === null) return;
+    let kv = null;
+    if (a === "-c") kv = args[++i]?.lit ?? null;
+    else if (/^-c./.test(a)) kv = a.slice(2);
+    else if (a === "--config-env" || a.startsWith("--config-env=")) return add({ cls: "shared", what: "git config from the environment", sub: "config", action: "git --config-env", refs: [], cmd: null });
+    else if (["-C", "--git-dir", "--work-tree", "--namespace"].includes(a)) { i++; continue; }
+    else if (a.startsWith("-")) continue;
+    else return;
+    const key = kv === null ? null : kv.split("=")[0], value = kv === null ? null : kv.slice(key.length + 1);
+    if (kv === null || CONFIG_KEYS.some((r) => r(key)) || (COMMAND_KEYS.some((r) => r(key)) && !HARMLESS_CMD.has(value.trim())) || GITGH.test(value)) return add({ cls: "shared", what: "git config that can redirect a command", sub: "config", action: `git -c ${safe(key ?? "?")}`, refs: [], cmd: null });
+  }
+}
+
+// A plumbing push that forces or deletes (or has an argument it cannot read); --force-with-lease and --force-if-includes force.
+const forcedPlumbing = (lits) => lits.some((x) => x === null || /^[+:]/.test(x) || (/^-[^-]/.test(x) && /[fdD]/.test(x)) || x.split("=")[0].startsWith("--force") ||
+  (x.length > 3 && ["force", "force-with-lease", "force-if-includes", "mirror", "delete"].some((n) => `--${n}`.startsWith(x.split("=")[0]))));
+
+// Built-ins with an option whose value git runs as a command (--upload-pack, --receive-pack, --exec, clone and ls-remote -u,
+// grep -O); a long option matches by unique prefix like git. An argument it cannot read there may be one of them.
+const CMD_OPT_SUBS = { fetch: "", pull: "", "fetch-pack": "", clone: "u", "ls-remote": "u", archive: "", grep: "O" };
+const CMD_LONG = ["--upload-pack", "--receive-pack", "--exec", "--open-files-in-pager"];
+function commandOption(sub, rest) {
+  if (!(sub in CMD_OPT_SUBS)) return false;
+  for (const w of rest) {
+    const a = w.lit;
+    if (a === null) return true;
+    if (a === "--") return false;
+    const n = a.split("=")[0];
+    if (n.startsWith("--") && n.length >= 5 && CMD_LONG.some((o) => o.startsWith(n))) return true;
+    if (/^-[^-]/.test(a) && [...CMD_OPT_SUBS[sub]].some((c) => a.includes(c))) return true;
+  }
+  return false;
+}
+// Variables whose value git runs as a command; a pager or editor of `cat`, `less`, `true` or `:` stays silent (like -c).
+const GIT_CMD_ENV = new Set(["GIT_SSH_COMMAND", "GIT_SSH", "GIT_ASKPASS", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_EXEC_PATH"]);
+const GIT_ENV_HARMLESS = new Set(["GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR"]);
+export function gitCmdEnv(w) {
+  const eq = w.raw.indexOf("=");
+  if (eq < 1) return false;
+  const name = w.raw.slice(0, eq).replace(/\+$/, "");
+  if (!GIT_CMD_ENV.has(name)) return false;
+  if (!GIT_ENV_HARMLESS.has(name) || w.lit === null) return true;
+  return !HARMLESS_CMD.has(w.lit.slice(w.lit.indexOf("=") + 1).trim());
+}
+
+const REMOTE_WRITES = new Set(["add", "set-url", "set-head", "set-branches", "rename", "remove", "rm"]);
+// loose: a git word found among another program's arguments; an unknown subcommand there is no git call.
+function gitOut(r, st, getCtx, add, depth, loose = false) {
+  const g = gitSplit(r.args, st.cwd, false);
+  gitConfigOut(r.args, add);
+  if (g.bad) return add({ cls: "shared", what: "git with an option it cannot read", sub: "git", action: "git", refs: [], cmd: null });
+  if (!g.sub) { if (r.xargs) add({ cls: "shared", what: "git with arguments it cannot read", sub: "git", action: "git", refs: [], cmd: null }); return; }
+  const sub = g.sub, rest = g.rest, shared = (what) => add({ cls: "shared", what, sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
+  const redirect = g.redirect || r.redirect || st.gitEnv;
+  if (r.cmdEnv || st.gitCmdEnv) shared("git running a command from the environment");
+  if (sub === "push") return pushOut(rest, redirect ? null : g.dir, st.cwd, getCtx, add, r.xargs);
+  if (GIT_PUSHERS.has(sub)) {
+    if (!forcedPlumbing(rest.map((w) => w.lit))) return shared("low-level push");
+    return add({ cls: "destructive", what: "low-level forced push or delete", sub, action: `git ${safe(sub)}`, refs: [], cmd: null });
+  }
+  if (GIT_RUNNERS.has(sub)) return shared("git running a command");
+  if (sub === "config") {
+    if (!gitNotReadOnly("config", rest)) return;
+    const lits = rest.map((w) => w.lit);
+    if (lits.includes(null) || lits.some((x) => x === "-e" || x === "--edit") || lits.some((x) => riskyKey(x))) return shared("git config that can redirect a command");
+    return;
+  }
+  if (sub === "remote") {
+    // Where `git push origin` goes: adding, renaming, removing a remote or changing its URL or HEAD is shared.
+    const op = rest.map((w) => w.lit).find((x) => x === null || !x.startsWith("-"));
+    if (op === null || REMOTE_WRITES.has(op)) return shared("git remote change (where a push goes)");
+  }
+  if ((sub === "submodule" || sub === "rebase" || sub === "bisect") && GITGH.test(rest.map((w) => w.raw).join(" "))) return shared("git running a command");
+  if (commandOption(sub, rest)) return shared("git running a command");
+  if (GIT_BUILTINS.has(sub)) return;
+  if (depth > 2 || !g.dir) return shared("unknown git subcommand");
+  const a = getCtx().alias(g.dir, sub);
+  if (a === null && loose) return;
+  if (a === FAIL || a === null) return shared("unknown git subcommand");
+  if (a.trim().startsWith("!")) return shared("git shell alias");
+  const words = a.trim().split(/\s+/).map((lit) => ({ lit, exp: lit, raw: lit, vars: [] }));
+  return gitOut({ ...r, redirect, args: [...(g.dir !== st.cwd ? [{ lit: "-C", raw: "-C" }, { lit: g.dir, exp: g.dir, raw: g.dir }] : []), ...words, ...rest] }, st, getCtx, add, depth + 1);
+}
+
+// The tracker's GraphQL writes (#14): issue type, Project create, link, item add and Status move. Silent when they are the
+// only top-level fields of the one mutation.
+const TRACKER_MUTATIONS = new Set(["updateIssueIssueType", "createProjectV2", "linkProjectV2ToRepository", "addProjectV2ItemById", "updateProjectV2ItemFieldValue"]);
+// The top-level field names of a single GraphQL mutation (aliases included as names), or null when it is anything else or
+// holds what this reader does not model (comments, block strings, fragments, directives, a second operation, a placeholder
+// gh fills in -F values: {owner}, {repo}, {branch}, :owner, :repo, :branch).
+export function mutationFields(q) {
+  if (q.includes('"""') || /\{(?:owner|repo|branch)\}|:(?:owner|repo|branch)\b/.test(q)) return null;
+  const t = q.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
+  if (/[#@]|\.\.\./.test(t) || !/^\s*mutation\b/.test(t)) return null;
+  const names = [];
+  let braces = 0, parens = 0, opened = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === "{") { braces++; opened = true; continue; }
+    if (c === "}") { if (--braces < 0) return null; if (braces === 0) return t.slice(i + 1).trim() ? null : names; continue; }
+    if (c === "(") { parens++; continue; }
+    if (c === ")") { if (--parens < 0) return null; continue; }
+    if (opened && braces === 1 && parens === 0 && /[A-Za-z_]/.test(c)) {
+      let j = i;
+      while (j < t.length && /\w/.test(t[j])) j++;
+      names.push(t.slice(i, j)); i = j - 1;
+    }
+  }
+  return null;
+}
+
+// The placeholders gh fills in an endpoint or a -F value (gh 2.46 fills only these three names).
+const GH_PLACEHOLDER = /:(?:owner|repo|branch)\b|\{(?:owner|repo|branch)\}/i;
+// Whether a gh api endpoint is (or a placeholder may make it) the GraphQL endpoint: normalised like the REST path
+// (scheme and host, leading slashes, a GHES api/ prefix, query, trailing slashes, case).
+function gqlEndpoint(ep) {
+  if (ep == null) return false;
+  const n = ep.toLowerCase().replace(/^https?:\/\/[^/]*/, "").replace(/^\/+/, "").replace(/^api\//, "").split(/[?#]/)[0].replace(/\/+$/, "");
+  if (n === "graphql") return true;
+  const k = n.search(GH_PLACEHOLDER);
+  return k >= 0 && "graphql".startsWith(n.slice(0, k));
+}
+// A GraphQL document with its strings and comments blanked, or null when a block string holds an escaped delimiter or a
+// string does not close.
+function gqlStrip(q) {
+  let out = "";
+  for (let i = 0; i < q.length;) {
+    if (q.startsWith('"""', i)) {
+      const j = q.indexOf('"""', i + 3);
+      if (j < 0 || q[j - 1] === "\\") return null;
+      out += '""'; i = j + 3; continue;
+    }
+    if (q[i] === '"') {
+      let j = i + 1;
+      while (j < q.length && q[j] !== '"' && q[j] !== "\n") j += q[j] === "\\" ? 2 : 1;
+      if (q[j] !== '"') return null;
+      out += '""'; i = j + 1; continue;
+    }
+    if (q[i] === "#") { while (i < q.length && q[i] !== "\n") i++; continue; }
+    out += q[i++];
+  }
+  return out;
+}
+// The GraphQL reader (#21), for ghOut and ghDeny alike: an allowlist of exact argument shapes that fails closed.
+// { cls: null } for a read or a tracker mutation (tracker: true), else { cls, what }. A destructive mutation name in any
+// argument is destructive whatever the shape; anything outside the shapes is shared.
+export function graphqlRead(args) {
+  const lits = args.map((w) => w.lit), all = lits.filter((x) => x !== null).join("\n");
+  if (/\b(createCheckRun|updateCheckRun|createCheckSuite)\b/.test(all)) return { cls: "destructive", what: "GraphQL check run write" };
+  if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(all) || (/\bupdateRefs?\b/.test(all) && /\bforce\s*[:=]\s*true\b/.test(all))) return { cls: "destructive", what: "GraphQL delete, archive or forced ref update" };
+  const no = { cls: "shared", what: "GraphQL mutation (or a call it cannot read)" };
+  if (lits.some((x) => x === null || GH_PLACEHOLDER.test(x))) return no;
+  const queries = [];
+  let pos = 0;
+  for (let i = 0; i < lits.length; i++) {
+    const a = lits[i];
+    if (["-f", "-F", "--field", "--raw-field"].includes(a)) {
+      const v = lits[++i];
+      if (v === undefined || !/^[A-Za-z_]\w*=/.test(v) || /^[^=]*=@/.test(v)) return no;
+      if (v.startsWith("query=")) queries.push(v.slice(6));
+      continue;
+    }
+    if (a === "-q" || a === "--jq") { if (lits[++i] === undefined) return no; continue; }
+    if (a === "-H" || a === "--header") { if (!/^accept:/i.test(lits[++i] ?? "")) return no; continue; }
+    if (a === "--paginate" || a === "--silent") continue;
+    if (a.startsWith("-") || ++pos > 2) return no;
+  }
+  if (queries.length !== 1) return no;
+  const t = gqlStrip(queries[0]);
+  if (t === null) return no;
+  // A read: no mutation keyword and no comment anywhere in the raw query (#22: a comment may end at a character it misreads).
+  if (!/mutation/i.test(queries[0]) && !queries[0].includes("#") && /^\s*(?:query\b|\{)/.test(t)) return { cls: null };
+  const top = mutationFields(queries[0]);
+  if (top && top.length && top.every((x) => TRACKER_MUTATIONS.has(x))) return { cls: null, tracker: true };
+  return { cls: "shared", what: "GraphQL mutation" };
+}
+
+function ghOut(r, add, loose = false) {
+  const p = ghParse(r.args), [p0, p1] = p.pos.map((w) => w.lit);
+  const where = p.repo === undefined ? "" : ` in ${safe(p.repo)}`;
+  const cmd = `gh ${r.args.map(argShow).join(" ")}`;
+  const target = p.pos.slice(2).map(argShow).join(" ");
+  const f = (cls, what, action) => add({ cls, what, sub: [p0, p1].filter(Boolean).join(" "), action: `${action ?? `gh ${p0} ${p1 ?? "?"}${target ? ` ${target}` : ""}`}${where}`, refs: [target || safe(p1 ?? "?")], cmd });
+  // Under xargs, find -exec, fd -x or parallel the wrapper appends or substitutes arguments (#24): shared, whatever the rest says.
+  if (r.xargs) f("shared", "gh with arguments a wrapper appends or substitutes", "gh");
+  if (!p.pos.length) return;
+  if (p0 === null || (p1 === null && p0 !== "api")) return f("shared", "gh command it cannot read", "gh");
+  if (!GH_TOP.has(p0)) return loose ? undefined : f("shared", "unknown gh command (an alias or extension)", `gh ${safe(p0)}`);
+  if (p0 === "auth" && ["token", "login", "refresh", "setup-git"].includes(p1)) return f("shared", "GitHub credential access");
+  if (p0 === "alias" && ["set", "import"].includes(p1)) return f("shared", "gh alias");
+  if (p0 === "release") {
+    if (p1 === "delete" || p1 === "delete-asset") return f("destructive", p1 === "delete" ? "release delete" : "release asset delete");
+    if (p1 === "upload") return p.flags.has("--clobber") ? f("destructive", "release asset overwrite") : f("shared", "release upload");
+    if (p1 === "create" || p1 === "edit") return f("shared", `release ${p1}`);
+    return;
+  }
+  if (p0 === "repo" && (p1 === "delete" || p1 === "archive")) return f("destructive", `repo ${p1}`);
+  if (p0 === "repo" && p1 === "edit") return [...p.flags].some((x) => /^--(visibility|archive)/.test(x)) ? f("destructive", "repo visibility or archive change") : f("shared", "repo settings edit");
+  if (p0 === "repo" && p1 === "rename") return f("shared", "repo rename");
+  if (p0 === "repo" && p1 === "sync") return p.flags.has("--force") ? f("destructive", "forced fork sync") : f("shared", "fork sync");
+  if (p0 === "repo" && p1 === "deploy-key") {
+    const op = p.pos[2]?.lit;
+    if (op === "delete") return f("destructive", "deploy key delete");
+    if (op !== "list" && op !== "ls") return f("shared", "deploy key add");
+    return;
+  }
+  if (p0 === "pr" && p1 === "merge") return f("shared", "pull request merge");
+  if (p0 === "pr" && p1 === "review" && [...p.flags].some((x) => x === "--approve" || (/^-[^-]/.test(x) && x.includes("a")))) return f("shared", "pull request approval");
+  // Secrets and variables: never a positional in the reason (a value may sit there).
+  if (p0 === "secret" || p0 === "variable") {
+    const g = (cls, what) => add({ cls, what, sub: `${p0} ${p1}`, action: `gh ${p0} ${safe(p1)}${where}`, refs: [], cmd: null });
+    if (p1 === "delete" || p1 === "remove") return g("destructive", `${p0} delete`);
+    if (p1 !== "list" && p1 !== "ls" && p1 !== "get") return g("shared", `${p0} write`);
+    return;
+  }
+  if (p0 === "ruleset") {
+    if (p1 === "delete") return f("destructive", "ruleset delete");
+    if (!["list", "ls", "view", "check"].includes(p1)) return f("shared", "ruleset change");
+    return;
+  }
+  if (p0 === "run" && p1 === "delete") return f("destructive", "run delete");
+  if ((p0 === "project" && ["delete", "item-delete", "field-delete"].includes(p1)) || ((p0 === "issue" || p0 === "label") && p1 === "delete")) return f("destructive", `${p0} ${p1}`);
+  if (p0 === "run" && (p1 === "cancel" || p1 === "rerun")) return f("shared", `run ${p1}`);
+  if (p0 === "workflow" && p1 === "run") return f("shared", "workflow dispatch");
+  if (p0 === "extension" && ["exec", "install", "upgrade"].includes(p1)) return f("shared", `gh extension ${p1}`);
+  if (p0 !== "api") return;
+  const ep = p1 ?? null, epShow = ep === null ? "<?>" : safe(ep);
+  if (p.method === null) return f("destructive", "gh api with a method it cannot read", `gh api ? ${epShow}`);
+  const m = (p.method ?? (p.fields.length || p.input ? "POST" : "GET")).toUpperCase();
+  if (m === "DELETE") return f("destructive", "gh api DELETE", `gh api DELETE ${epShow}`);
+  const unread = p.input || p.fields.some((x) => x.lit === null || /^[^=]*=@/.test(x.lit));
+  const odd = ghApiOdd(r.args, p, r.xargs);
+  if (p.pos.slice(1).some((w) => gqlEndpoint(w.lit))) {
+    const g = graphqlRead(r.args);
+    if (g.cls === "destructive") return f(g.cls, g.what, "gh api graphql");
+    if (odd) return f("shared", `gh api graphql with ${odd}`, "gh api graphql");
+    return g.cls ? f(g.cls, g.what, "gh api graphql") : undefined;
+  }
+  if (odd) return f("shared", `gh api with ${odd}`, `gh api ${safe(m)} ${epShow}`);
+  if (m === "GET" || m === "HEAD") return;
+  const path = ep === null ? null : ep.replace(/^https?:\/\/[^/]+/, "").replace(/^\//, "").split("?")[0];
+  if (path !== null && /^repos\/[^/]+\/[^/]+\/?$/.test(path)) {
+    if (unread || p.fields.some((x) => /^archived=true$/i.test(x.lit))) return f("destructive", "repo archive (or a body it cannot read)", `gh api ${safe(m)} ${epShow}`);
+    return f("shared", "repo settings write", `gh api ${safe(m)} ${epShow}`);
+  }
+  if (path !== null && m === "PATCH" && /(^|\/)git\/refs\//.test(path) && (unread || p.fields.some((x) => /^force=true$/i.test(x.lit)))) return f("destructive", "forced ref update (or a body it cannot read)", `gh api ${safe(m)} ${epShow}`);
+  // Under repos/{o}/{r}/: a transfer, a commit status or a check run is denied (a status is CI evidence); issues and pull
+  // requests (and their comments) stay silent; every other write (collaborators, keys, hooks, settings, ...) is shared.
+  if (path !== null && /^repos\/[^/]+\/[^/]+\/./.test(path)) {
+    const seg = path.split("/").slice(3).filter(Boolean), n = (x) => /^\d+$/.test(x ?? "");
+    const action = `gh api ${safe(m)} ${epShow}`;
+    if (seg[0] === "transfer") return f("destructive", "repo transfer", action);
+    if (seg.includes("statuses") || seg[0] === "check-runs" || seg[0] === "check-suites") return f("destructive", "commit status or check run write", action);
+    if (seg[0] === "issues") return;
+    // Tracker metadata (#14): creating or editing a milestone or a label.
+    if ((seg[0] === "milestones" || seg[0] === "labels") && ((m === "POST" && seg.length === 1) || (m === "PATCH" && seg.length === 2))) return;
+    if (seg[0] === "pulls" && (seg.length === 1 || (seg.length === 2 && n(seg[1])) || seg[1] === "comments" || (n(seg[1]) && seg[2] === "comments"))) return;
+    return f("shared", "repo write", action);
+  }
+  if (ep === null || GH_OUT_ENDPOINT.test(ep)) return f("shared", `gh api ${safe(m)}`, `gh api ${safe(m)} ${epShow}`);
+}
+
+// Walks the commands like checkCmds (wrappers, sh -c, eval, cd) and adds a finding per outward action.
+// Programs that take git or gh as data (a pattern, a page, a package), never as a command to run.
+const DATA_PROGRAMS = new Set(("echo printf grep egrep fgrep rg ag ack man which whereis type help info apropos whatis tldr cat bat less more head tail " +
+  "wc sort uniq tr cut ls file stat basename dirname realpath readlink test [ printenv jq yq sed awk apt apt-get dnf yum pacman apk snap").split(" "));
+// The options of find and fd that run a command (the next word is its program).
+const EXEC_OPTS = { find: ["-exec", "-execdir", "-ok", "-okdir"], fd: ["-x", "--exec", "-X", "--exec-batch"] };
+// git or gh text in one argument that shows a force or a delete (the fallback for a command string it does not parse).
+const showsForce = (t) => t.split(/[\s'"]+/).some((x) => /^-[^-]*[fdD]/.test(x) || /^--(force|delete|mirror|prune)/.test(x) || /^[+:]./.test(x) || x === "delete" || x === "DELETE" || x === "-XDELETE");
+// Programs that substitute or append arguments to the command they run.
+const SUBST_PROGRAMS = new Set(["find", "fd", "parallel"]);
+const GIT_SUBS = new Set([...GIT_BUILTINS, ...GIT_PUSHERS, ...GIT_RUNNERS, "push"]);
+const isGitWord = (lit) => { const b = basename(lit); return b === "git" || b === "gh" || (b.startsWith("git-") && GIT_SUBS.has(b.slice(4))); };
+const GIT_ENV = /^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)=/;
+
+// A git, git-<sub> or gh command (loose: found among another program's arguments).
+function gitGhOut(r, st, getCtx, add, loose) {
+  if (r.name === "gh") return ghOut(r, add, loose);
+  const args = r.name === "git" ? r.args : [{ lit: r.name.slice(4), exp: r.name.slice(4), raw: r.name.slice(4), vars: [] }, ...r.args];
+  return gitOut({ ...r, args }, st, getCtx, add, 0, loose);
+}
+
+// Walks the commands like checkCmds (wrappers, sh -c, eval, cd) and adds a finding per outward action.
+function outWalk(cmds, st, getCtx, add, text) {
+  if (cmds.length > 1 || cmds.complex) st.out.multi = true;
+  // Condition 1 on the text the guard cannot read: a dynamic or unparseable string, or the words and heredoc of a script runner.
+  const unreadable = (t) => { if (GITGH.test(t) && COND1.test(t)) add({ cls: "shared", what: "a command the guard cannot read", sub: "unknown", action: "git or gh inside a script or shell it cannot read", refs: [], cmd: null }); };
+  // Another program with a git or gh word among its arguments (find -exec, unbuffer, parallel, ...): that word on is the command.
+  // A data program is told by its own name only (a `-name test` among find's arguments is data, its -exec git is not); find and
+  // fd run only what follows their exec options, and nothing when every one of those is a data program.
+  // Git text inside one argument (`sh -c '...'`, `parallel ::: '...'`) falls back: shared, destructive when it shows a force or delete.
+  const embedded = (r) => {
+    if (DATA_PROGRAMS.has(r.name)) return false;
+    if (EXEC_OPTS[r.name]) {
+      const progs = r.args.flatMap((w, i) => (EXEC_OPTS[r.name].includes(w.lit) ? [r.args[i + 1]] : []));
+      if (progs.every((w) => w && w.lit !== null && DATA_PROGRAMS.has(basename(w.lit)))) return false;
+    }
+    let found = false;
+    const k = r.args.findIndex((w) => w.lit !== null && isGitWord(w.lit));
+    if (k >= 0) {
+      let words = r.args.slice(k).map((w) => (w.lit === "{}" ? { ...w, lit: null, exp: null } : w));
+      const end = words.findIndex((w) => [";", "+", ":::", "::::", ":::+", "::::+"].includes(w.lit));   // find and parallel separators
+      if (end >= 0) words = words.slice(0, end);
+      gitGhOut({ name: basename(words[0].lit), args: words.slice(1), xargs: r.xargs || SUBST_PROGRAMS.has(r.name), redirect: r.redirect, cmdEnv: r.cmdEnv }, st, getCtx, add, true);
+      found = true;
+    }
+    for (const w of r.args) {
+      const t = w.lit;
+      if (t === null || !/\s/.test(t) || !GITGH.test(t) || !COND1.test(t)) continue;
+      found = true;
+      add({ cls: showsForce(t) ? "destructive" : "shared", what: showsForce(t) ? "git or gh text that forces or deletes, inside an argument" : "git or gh text inside an argument", sub: "unknown", action: `git or gh run by ${safe(r.name)}`, refs: [], cmd: null });
+    }
+    return found;
+  };
+  // Keystrokes or a new Claude session sent to a terminal, a pane or a pty (they can answer a prompt): shared.
+  const steer = (cmd, r) => {
+    const devPts = (w) => typeof w?.exp === "string" && w.exp.startsWith("/dev/pts/");
+    const lits = r.args.map((w) => w.lit);
+    let what = null;
+    if (r.name === "claude" && !(lits.length && lits.every((a) => ["--version", "-v", "--help", "-h"].includes(a)))) what = "a new Claude session";
+    else if (r.name === "tmux" && lits.some((a) => a === "send-keys" || a === "send" || a === "paste-buffer" || a === "pasteb")) what = "keystrokes sent to a tmux pane";
+    else if (r.name === "screen" && lits.includes("-X") && lits.some((a) => a === "stuff" || a === "paste")) what = "keystrokes sent to a screen window";
+    else if (cmd.redirs.some((x) => devPts(x.target)) || (r.name === "tee" && r.args.some(devPts))) what = "a write to another terminal";
+    if (what) add({ cls: "shared", what, sub: r.name, action: safe(r.name), refs: [], cmd: null });
+  };
+  for (const cmd of cmds) {
+    if (cmd.words.some((w) => /^GIT_CONFIG\w*=/.test(w.raw))) add({ cls: "shared", what: "git config from the environment", sub: "config", action: "GIT_CONFIG_* variables", refs: [], cmd: null });
+    const r = resolveCmd(cmd.words);
+    assigns(cmd, r, st);
+    const gitEnv = cmd.words.some((w) => GIT_ENV.test(w.raw));
+    if (gitEnv && (!r || DECLARE.has(r.name))) st.gitEnv = true;
+    const cmdEnv = cmd.words.some(gitCmdEnv);
+    if (cmdEnv && (!r || DECLARE.has(r.name))) st.gitCmdEnv = true;
+    if (!r) { if (cmd.redirs.some((x) => typeof x.target?.exp === "string" && x.target.exp.startsWith("/dev/pts/"))) add({ cls: "shared", what: "a write to another terminal", sub: "redirect", action: "redirect", refs: [], cmd: null }); continue; }
+    if (r.dynamic) {
+      if (/\b(push|tag|release|api|rerun|cancel|pr|repo|delete|config|auth|merge|workflow|alias)\b/.test(cmd.words.map((w) => w.raw).join(" "))) add({ cls: "shared", what: "a command whose program it cannot tell", sub: "unknown", action: "a program named by a variable", refs: [], cmd: null });
+      continue;
+    }
+    if (gitEnv) r.redirect = true;
+    if (cmdEnv) r.cmdEnv = true;
+    steer(cmd, r);
+    if (r.name === "cd" || r.name === "pushd") {
+      const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
+      const e = t ? expOf(t, st) : st.env.HOME;
+      st.cwd = cmd.depth > 0 || st.complex || e == null || e === "-" ? null : isAbsolute(e) ? e : st.cwd && resolve(st.cwd, e);
+      continue;
+    }
+    if (r.name === "popd") { st.cwd = null; continue; }
+    if ("inner" in r && r.inner === null) { unreadable(text); continue; }
+    if (r.opaque || r.scripter) { if (!embedded(r)) unreadable([...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join("\n")); continue; }
+    if ("inner" in r) {
+      let inner;
+      try { inner = parseShell(r.inner, st.env); } catch { unreadable(r.inner); continue; }
+      const sub = r.name === "eval" ? st : { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp) };
+      sub.complex ||= inner.complex;
+      outWalk(inner, sub, getCtx, add, text);
+      continue;
+    }
+    if (r.name === "git" || r.name === "gh" || r.name.startsWith("git-")) gitGhOut(r, st, getCtx, add, false);
+    else embedded(r);
+  }
+}
+
+const FLOOR = (b) => b === "main" || b === "master" || b.startsWith("release/");
+// Classifies a parsed command: { findings, multi }. Destructive findings are final before any profile read; the profile is
+// read only to add protected branches to the push and delete candidates.
+export function classifyOutward(cmds, text, cwd, env, getCtx) {
+  const out = { findings: [], multi: false };
+  outWalk(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, out }, getCtx, (f) => out.findings.push(f), text);
+  if (out.findings.some((f) => f.cls === "destructive")) return out;
+  const prot = new Map(), ft = new Map();
+  const isProt = (dir, b) => {
+    if (!prot.has(dir)) {
+      const oh = getCtx().originHead(dir);
+      const p = getCtx().profile(dir);
+      prot.set(dir, oh === FAIL ? null : [oh, p?.base, ...(p?.protected ?? [])].filter((x) => typeof x === "string" && x));
+    }
+    const list = prot.get(dir);
+    return list === null || FLOOR(b) || list.some((x) => x === b || (x.endsWith("*") && b.startsWith(x.slice(0, -1))));
+  };
+  out.findings = out.findings.map((f) => {
+    if (f.cls !== "candidate") return f;
+    const p = isProt(f.dir, f.dst);
+    if (f.del) return { ...f, cls: p ? "destructive" : "shared", what: p ? "protected branch delete" : "remote branch delete" };
+    if (p) return { ...f, cls: "shared", what: "push to protected branch" };
+    if (!ft.has(f.dir)) ft.set(f.dir, getCtx().followTags(f.dir));
+    const t = ft.get(f.dir);
+    return t === false ? { ...f, cls: "branch", what: "push to protected branch" } : { ...f, cls: "shared", what: t === FAIL ? "push with config it cannot read" : "tag push (push.followTags)" };
+  });
+  return out;
+}
+
+// The decision for a shared finding: deny when not alone or when the mode cannot prompt, else ask.
+// Under the go every shared action other than the go's own two waits for the owner.
+function sharedDecision(f, input, multi, go = null) {
+  if (go) {
+    const base = f.sub === "push" && f.what === "push to protected branch" && f.dst ? safe(f.dst) : null;
+    return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only two actions)", do: base ? `push the verified merge as git push origin <40-hex sha>:refs/heads/${base}` : "leave it for the owner" });
+  }
+  if (multi) return outwardReason("DENY", f, input, { note: "not alone in its call", do: "run it alone in its own call" });
+  if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
+  return { ask: outwardReason("ASK", f, input) };
+}
+
+function mcpOut(tool, ti) {
+  const parts = tool.toLowerCase().split("__"), t = parts.slice(2).join("__");
+  if (!(parts[1] ?? "").includes("github")) return null;
+  const target = [ti.owner && ti.repo ? `${ti.owner}/${ti.repo}` : null, ti.pullNumber ?? ti.pull_number ?? ti.issue_number ?? null, ti.ref ?? ti.branch ?? ti.tag ?? ti.tag_name ?? ti.run_id ?? null];
+  const show = `${target[0] === null ? "" : safe(String(target[0]))}${target[1] === null ? "" : `#${safe(String(target[1]))}`}${target[2] === null ? "" : ` ${safe(String(target[2]))}`}`.trim();
+  const base = { sub: tool, action: `${safe(tool)}${show ? ` ${show}` : ""}`, refs: show ? [show] : [], cmd: null };
+  const d = ["delete", "force"].find((w) => t.includes(w)) ?? (ti.force === true ? "force" : null);
+  if (d) return { ...base, cls: "destructive", what: `GitHub ${d}` };
+  if (/^(get|list|search|read)_/.test(t)) return null;
+  const s = ["merge", "push", "release", "cancel", "rerun", "dispatch"].find((w) => t.includes(w));
+  return { ...base, cls: "shared", what: s ? `GitHub ${s}` : "GitHub write" };
+}
+
+// A parse error or guard error on git/gh text with an outward word: shared (condition 1).
+function unreadableDecision(input, env = {}) {
+  const text = input?.tool_input?.command;
+  if (typeof text !== "string" || !GITGH.test(text) || !COND1.test(text)) return null;
+  return sharedDecision({ cls: "shared", what: "a command the guard cannot read", action: "git or gh in a command it cannot parse", cmd: null }, input, false, goSession(input, env));
+}
+
+// ---------- the unattended go's own state, in every mode ----------
+// ~/.claude (and CLAUDE_CONFIG_DIR) holds Claude Code's settings, plugins and transcripts and Orbit's go state: no session
+// writes it (memory and plan notes excepted), and while a confirm code is pending no session reads it.
+const CORE_TOOLS = new Set(["Bash", ...EDIT_TOOLS, "Read", "Grep", "Glob", "Agent", "Task"]);
+const PENDING_TEXT = [".claude", "capture-pane", "hardcopy", "/proc/", "/dev/pts", "/dev/tty", "CLAUDE_CONFIG_DIR"];
+function claudeDirs(env) {
+  const d = [];
+  if (typeof env.HOME === "string" && isAbsolute(env.HOME)) d.push(real(join(env.HOME, ".claude")));
+  if (typeof env.CLAUDE_CONFIG_DIR === "string" && isAbsolute(env.CLAUDE_CONFIG_DIR)) d.push(real(env.CLAUDE_CONFIG_DIR));
+  return [...new Set(d)];
+}
+const noteFile = (rel) => {
+  const seg = rel.split(sep);
+  if (!rel.endsWith(".md") || seg.includes("..")) return false;
+  return (seg[0] === "projects" && seg[2] === "memory" && seg.length >= 4) || (seg[0] === "plans" && seg.length === 2);
+};
+const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
+
+// ---------- globs in an ln/cp operand or a write target (#22) ----------
+const hasGlob = (s) => /[*?[{]/.test(s);
+// A pattern with its {a,b} alternatives expanded (at most 64; null beyond: the caller takes the stricter answer).
+// A group with no comma, or with no closing }, is literal, as in bash; the next group still expands.
+function braces(s, n = 0, from = 0) {
+  const i = s.indexOf("{", from);
+  if (i < 0) return [s];
+  if (n > 8) return null;
+  let depth = 0, j = i;
+  const parts = [], start = [i + 1];
+  for (; j < s.length; j++) {
+    if (s[j] === "{") depth++;
+    else if (s[j] === "}" && --depth === 0) break;
+    else if (s[j] === "," && depth === 1) start.push(j + 1);
+  }
+  if (j >= s.length || start.length < 2) return braces(s, n, i + 1);
+  for (let k = 0; k < start.length; k++) parts.push(s.slice(start[k], (start[k + 1] ?? j + 1) - 1));
+  const out = parts.flatMap((p) => braces(s.slice(0, i) + p + s.slice(j + 1), n + 1) ?? [null]);
+  return out.length > 64 || out.includes(null) ? null : out;
+}
+// Whether braces and segMatch model the glob exactly (#24, an allowlist): *, ?, a plain [...] set (no [: [= [. class,
+// equivalence or collating form), and brace groups with a comma, no ~ and no {a..b} sequence (a group with no comma and
+// no .. is literal). Any other form is shared: bash may expand it to a path the matcher does not see.
+function globExact(s) {
+  if (s.includes("~") || /\[[:=.]/.test(s)) return false;
+  for (let i = s.indexOf("{"); i >= 0; i = s.indexOf("{", i + 1)) {
+    let depth = 0, j = i, comma = false;
+    for (; j < s.length; j++) {
+      if (s[j] === "{") depth++;
+      else if (s[j] === "}" && --depth === 0) break;
+      else if (s[j] === "," && depth === 1) comma = true;
+    }
+    if (j >= s.length || (!comma && s.slice(i, j).includes(".."))) return false;
+  }
+  return true;
+}
+// Whether one path segment matches a glob segment: *, ?, [...] (with ! or ^ and ranges); a [ without ] is literal.
+function segMatch(p, s, i = 0, k = 0) {
+  for (; i < p.length; i++, k++) {
+    if (p[i] === "*") { for (let x = k; x <= s.length; x++) if (segMatch(p, s, i + 1, x)) return true; return false; }
+    if (k >= s.length) return false;
+    if (p[i] === "?") continue;
+    if (p[i] === "[") {
+      const end = p.indexOf("]", i + 2);
+      if (end > 0) {
+        const neg = p[i + 1] === "!" || p[i + 1] === "^", set = p.slice(neg ? i + 2 : i + 1, end);
+        let hit = false;
+        for (let c = 0; c < set.length; c++) {
+          if (set[c + 1] === "-" && c + 2 < set.length) { if (s[k] >= set[c] && s[k] <= set[c + 2]) hit = true; c += 2; } else if (s[k] === set[c]) hit = true;
+        }
+        if (hit === neg) return false;
+        i = end; continue;
+      }
+    }
+    if (p[i] !== s[k]) return false;
+  }
+  return k === s.length;
+}
+// Whether the literal pattern could name a path in one of dirs. Each brace alternative resolves against base (.. too);
+// then a ** segment, or its first segments matching a dir's, counts. A relative pattern with no base (an unknown cwd)
+// counts when a segment can match a dir's name.
+function globUnder(pat, base, dirs) {
+  const alts = braces(pat);
+  if (alts === null) return true;
+  return alts.some((a) => {
+    const rel = !isAbsolute(a) && !base;
+    const segs = (rel ? a : resolve(base ?? "/", a)).split("/").filter(Boolean);
+    if (rel) return segs.some((x) => x.includes("**") || dirs.some((d) => segMatch(x, basename(d))));
+    return dirs.some((d) => {
+      const ds = d.split("/").filter(Boolean);
+      for (let i = 0; i < ds.length; i++) {
+        if (i >= segs.length) return false;
+        if (segs[i].includes("**")) return true;
+        if (!segMatch(segs[i], ds[i])) return false;
+      }
+      return true;
+    });
+  });
+}
+
+// A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null. A glob
+// in a write target or an ln/cp operand counts when it can match under ~/.claude; a form the matcher does not model
+// exactly is a shared finding in st.links (#24); any other glob is silent (#22).
+function claudeWrite(cmds, st, dirs) {
+  const names = [...new Set([...dirs, ...[st.env?.HOME && join(st.env.HOME, ".claude"), st.env?.CLAUDE_CONFIG_DIR].filter((d) => typeof d === "string" && isAbsolute(d))])];
+  const hit = (w, base = st.cwd) => {
+    const e = expOf(w, st);
+    if (e != null && hasGlob(e)) {
+      if (globUnder(e, base, names) || w.raw.includes(".claude")) return w.raw;
+      if (!globExact(e)) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      return null;
+    }
+    if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
+    const f = realOrNull(resolve(base ?? "/", e));
+    return f === null || dirs.some((d) => inside(d, f)) ? w.raw : null;
+  };
+  for (const cmd of cmds) {
+    for (const { target } of cmd.redirs) { const h = hit(target); if (h) return h; }
+    const r = resolveCmd(cmd.words);
+    assigns(cmd, r, st);
+    const text = [...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join(" ");
+    if (!r) continue;
+    if (r.dynamic) { if (text.includes(".claude")) return text; continue; }
+    if (r.name === "cd" || r.name === "pushd") {
+      const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
+      const e = t ? expOf(t, st) : st.env.HOME;
+      st.cwd = cmd.depth > 0 || st.complex || e == null || e === "-" ? null : isAbsolute(e) ? e : st.cwd && resolve(st.cwd, e);
+      continue;
+    }
+    if (r.name === "popd") { st.cwd = null; continue; }
+    if (r.opaque || r.scripter) { if (text.includes(".claude")) return r.name; continue; }
+    if ("inner" in r) {
+      if (r.inner === null) { if (text.includes(".claude")) return r.name; continue; }
+      let inner;
+      try { inner = parseShell(r.inner, st.env); } catch { if (r.inner.includes(".claude")) return r.name; continue; }
+      const h = claudeWrite(inner, r.name === "eval" ? st : { ...st, assigned: new Set(st.assigned), temp: new Set(st.temp), complex: st.complex || inner.complex }, dirs);
+      if (h) return h;
+      continue;
+    }
+    const targets = writeTargets(r.name, r.args);
+    if (r.xargs && (targets.length || r.name in WRITERS) && text.includes(".claude")) return r.name;
+    for (const t of targets) { const h = hit(t); if (h) return h; }
+    // Every cp operand with a glob counts (#22); ln checks all its operands below.
+    if (r.name === "cp") for (const t of positionals(r.args, WRITERS.cp.opts)) { if (t.exp != null && hasGlob(t.exp)) { const h = hit(t); if (h) return h; } }
+    // A link to a ~/.claude path (ln in any mode, cp -s or -l) is a way to write it later: every operand counts.
+    if (r.name === "ln" || (r.name === "cp" && r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit)))) {
+      const pos = positionals(r.args, WRITERS[r.name].opts);
+      for (const t of pos) { const h = hit(t); if (h) return h; }
+      // A symbolic link's relative target resolves against the link's directory (the kernel's view), not the cwd: the
+      // -t directory, else the last operand (a directory) or its parent.
+      if (r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*s[a-zA-Z]*|--symbolic(-link)?)$/.test(w.lit))) {
+        const ti = r.args.findIndex((w) => w.lit === "-t" || w.lit?.startsWith("--target-directory="));
+        const dw = ti < 0 ? (pos.length > 1 ? pos[pos.length - 1] : null) : r.args[ti].lit === "-t" ? r.args[ti + 1] : val(r.args[ti], 19);
+        const d = dw ? expOf(dw, st) : st.cwd;
+        const at = d == null || (!isAbsolute(d) && !st.cwd) ? null : resolve(st.cwd ?? "/", d);
+        for (const base of at === null ? [null] : ti < 0 && dw ? [at, dirname(at)] : [at]) {
+          for (const t of pos) { if (t === dw) continue; const h = hit(t, base); if (h) return h; }
+        }
+      }
+      // Outside ~/.claude, a link is silent only in exact shapes (#21): options from a fixed set (clustered or not, no -t),
+      // operands with no .. or .claude that resolve against a known cwd. Anything else is shared.
+      const ok = r.name === "ln" ? /^-[sfnvrT]+$/ : /^-[sfnvrTl]+$/;
+      // cp counts only with a literal -s or -l: a cp word it cannot read stays the plain copy it was before.
+      const link = r.name === "ln" || r.args.some((w) => w.lit !== null && /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit));
+      const odd = link && (r.xargs || r.args.some((w) => {
+        const e = expOf(w, st);
+        if (e == null) return true;
+        if (e.startsWith("-") && e !== "-") return !ok.test(e);
+        return e.includes("..") || e.includes(".claude") || (!isAbsolute(e) && !st.cwd);
+      }));
+      if (odd) st.links?.push({ cls: "shared", what: "link it cannot read (an option, operand or cwd outside its exact shapes)", sub: r.name, action: `${r.name} ${r.args.map(argShow).join(" ")}`, refs: [], cmd: null });
+    }
+  }
+  return null;
+}
+
+// While a code is pending: a read of a ~/.claude path, the transcripts, a pane capture or a pty, by any tool.
+function pendingRead(tool, ti, cwd, dirs, env) {
+  const inDirs = (p) => { if (typeof p !== "string" || !p) return false; const f = realOrNull(resolve(cwd ?? "/", p)); return f === null || dirs.some((d) => inside(d, f)); };
+  if (tool === "Read" || tool === "NotebookRead") return inDirs(ti.file_path ?? ti.notebook_path) || (typeof ti.file_path === "string" && ti.file_path.includes(".claude"));
+  if (tool === "Grep" || tool === "Glob") return inDirs(ti.path ?? cwd ?? "/") || JSON.stringify(ti).includes(".claude");
+  if (tool !== "Bash") return false;
+  const text = typeof ti.command === "string" ? ti.command : "";
+  if (!text || PENDING_TEXT.some((x) => text.includes(x)) || inDirs(cwd)) return true;
+  let cmds;
+  try { cmds = parseShell(text, env); } catch { return true; }
+  return cmds.some((c) => [...c.words, ...c.redirs.map((x) => x.target)].some((w) => w.exp === null || (isAbsolute(w.exp) && inDirs(w.exp))));
+}
+
+// Under the go: the pinned base push and the literal delete of a merged topic branch. null: not one of them (classify as
+// usual); { allow: true }; or the deny reason naming the check that failed.
+function goAction(cmds, cwd, input, getCtx) {
+  const g = goForm(cmds);
+  if (!g) return null;
+  const dir = g.dir === null ? cwd : isAbsolute(g.dir) ? g.dir : cwd && resolve(cwd, g.dir);
+  const c = getCtx(), base = dir ? c.originHead(dir) : FAIL, floor = c.profile(null);
+  const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha.slice(0, 12)}` : `git push --delete → origin/${safe(g.name)}`;
+  const no = (why) => outwardReason("DENY", { what: g.kind === "base" ? "unattended base push" : "unattended branch delete", action }, input, { note: why, do: "leave it for the owner" });
+  if (!dir) return no("the directory is unknown");
+  if (base === FAIL || !base || !/^[\w./-]+$/.test(base)) return no("origin/HEAD cannot be read");
+  // The base, the review trailer and the required checks come from the main checkout's profile (an agent can edit a worktree's).
+  if (!floor?.base || floor.base !== base) return no(`origin/HEAD (${safe(base)}) is not the main checkout profile's base_branch`);
+  const p = c.profile(dir);
+  if (g.kind === "base") {
+    if (g.dst !== base) return no(`the go pushes only origin/HEAD's branch (${safe(base)})`);
+    const key = floor.trailer ?? "Reviewed-by";
+    if (["co-authored-by", "signed-off-by"].includes(key.toLowerCase())) return no("the profile's review_trailer is not a review");
+    const why = baseEvidence(c.evidence(dir), dir, g.sha, base, key, floor.checks ?? []);
+    return why ? no(why) : { allow: true };
+  }
+  if (FLOOR(g.name) || g.name === base || p?.base === g.name || (p?.protected ?? []).some((x) => x === g.name || (x.endsWith("*") && g.name.startsWith(x.slice(0, -1))))) return null;
+  const why = deleteEvidence(c.evidence(dir), dir, g.name, base);
+  return why ? no(why) : { allow: true };
+}
+
+// Returns the deny reason (a string), { ask: reason }, or null to allow.
 export function guard(input, env = {}, ctx = null) {
   const op = isOperator(input, env);
   const tool = input?.tool_name, ti = input?.tool_input ?? {};
   const cwd = typeof input?.cwd === "string" && input.cwd ? resolve(input.cwd) : null;
   const getCtx = () => ctx ?? (ctx = realCtx(cwd ?? env.CLAUDE_PROJECT_DIR ?? process.cwd(), env));
+  const dirs = claudeDirs(env);
+  if (anyPending(env) && pendingRead(tool, ti, cwd, dirs, env)) return stateDeny("read while an unattended code is pending", `${safe(String(tool))} of a Claude Code file, a pane or a pty`, input);
+  if (typeof tool === "string" && !CORE_TOOLS.has(tool) && JSON.stringify(ti).toLowerCase().includes("orbit:unattended")) return stateDeny("a scheduled or sent /orbit:unattended", safe(tool), input);
   if (EDIT_TOOLS.includes(tool)) {
+    const fp = ti.file_path ?? ti.notebook_path;
+    if (typeof fp === "string" && fp) {
+      const abs = realOrNull(resolve(cwd ?? "/", fp)), d = abs === null ? null : dirs.find((x) => inside(x, abs));
+      if (abs === null || (d && !noteFile(relative(d, abs))) || (!d && !isAbsolute(fp) && !cwd && fp.includes(".claude"))) return stateDeny("write to ~/.claude", `${safe(tool)} ${safe(fp)}`, input);
+    }
     if (!op) return null;
     const f = ti.file_path ?? ti.notebook_path;
     if (typeof f !== "string" || !f || (!isAbsolute(f) && !cwd)) return `OPR-01: the operator session does not edit a file it cannot locate; ${DELEGATE}.`;
@@ -822,12 +1762,41 @@ export function guard(input, env = {}, ctx = null) {
     if (c.operatorFiles.includes(abs) || !c.roots.some((r) => inside(r, abs))) return null;
     return `OPR-01: the operator session does not edit or write ${f} inside the repo (its one file is .agents/operator.md); ${DELEGATE}.`;
   }
+  if (typeof tool === "string" && tool.startsWith("mcp__")) {
+    const f = mcpOut(tool, ti);
+    return !f ? null : f.cls === "destructive" ? outwardReason("DENY", f, input) : sharedDecision(f, input, false, goSession(input, env));
+  }
   if (tool !== "Bash") return null;
   if (typeof ti.command !== "string") return op ? `OPR-01: the operator session does not run a Bash call without a command string; ${DELEGATE}.` : null;
   let cmds;
-  try { cmds = parseShell(ti.command, env); } catch (e) { return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : null; }
-  if (!op && !/\bgit\b/.test(ti.command)) return null;
-  return checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
+  try { cmds = parseShell(ti.command, env); } catch (e) {
+    if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
+    return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
+  }
+  const links = [];
+  const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links }, dirs);
+  if (w) return stateDeny("write to ~/.claude", safe(w), input);
+  const go = goSession(input, env);
+  const out = classifyOutward(cmds, ti.command, cwd, env, getCtx);
+  out.findings.push(...links);
+  const withCommit = (f) => {
+    if (!f.rev || !f.dir) return f;
+    const c = getCtx().commit(f.dir, f.rev);
+    return c && c !== FAIL ? { ...f, commit: c } : f;
+  };
+  const d = out.findings.find((f) => f.cls === "destructive");
+  if (d) return outwardReason("DENY", withCommit(d), input);
+  if (go && goState(input, env)) {
+    const a = goAction(cmds, cwd, input, getCtx);
+    if (a?.allow) return null;
+    if (typeof a === "string") return a;
+  }
+  if (op || /\bgit\b/.test(ti.command)) {
+    const r = checkCmds(cmds, { cwd, env, assigned: new Set(), temp: new Set(), merging: false, complex: cmds.complex }, getCtx(), op, cmds.length);
+    if (r) return r;
+  }
+  const s = out.findings.find((f) => f.cls === "shared");
+  return s ? sharedDecision(withCommit(s), input, out.multi, go) : null;
 }
 
 // The hook entry: raw stdin in, { code, stdout, stderr } out. Fails closed only for the operator.
@@ -839,10 +1808,13 @@ export function hookMain(raw, env, fn = guard) {
   }
   let reason;
   try { reason = fn(input, env); } catch (e) {
-    if (!isOperator(input, env)) return { code: 0, stdout: "", stderr: "" };
-    reason = `OPR-01: the orbit guard failed (${e.message}), so the operator's tool call is denied.`;
+    const t = input?.tool_name, text = JSON.stringify(input?.tool_input ?? {});
+    if (EDIT_TOOLS.includes(t) && text.includes(".claude")) reason = "orbit · DENY · write to ~/.claude\nnote     the guard failed";
+    else if (!isOperator(input, env)) reason = t === "Bash" ? unreadableDecision(input, env) : null;
+    else reason = `OPR-01: the orbit guard failed (${e.message}), so the operator's tool call is denied.`;
   }
-  const stdout = reason ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } }) + "\n" : "";
+  const ask = reason !== null && typeof reason === "object";
+  const stdout = reason ? JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: ask ? "ask" : "deny", permissionDecisionReason: ask ? reason.ask : reason } }) + "\n" : "";
   return { code: 0, stdout, stderr: "" };
 }
 

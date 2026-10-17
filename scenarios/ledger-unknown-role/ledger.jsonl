@@ -1,2 +1,0 @@
-{"ts":"2026-10-14T10:01:00Z","session":"s1","rule_version":{"decide":"1.6.0","operator":"1.6.0","rules":"1.12.1"},"kind":"triage","topic":"feat-x","sec":"yes","door":"no","prod":"no","track":"full review","files":[".github/workflows/ci.yml","src/a.go"],"trigger":"asked"}
-{"ts":"2026-10-14T10:02:00Z","session":"s1","rule_version":{"decide":"1.6.0","operator":"1.6.0","rules":"1.12.1"},"kind":"agent_start","role":"architect","model":"opus","topic":"feat-x"}

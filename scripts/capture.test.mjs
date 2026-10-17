@@ -20,6 +20,8 @@ function project({ profile = true } = {}) {
 }
 const fire = (cwd, input, session = "sess-1") => spawnSync("sh", [join(repo, "hooks/capture.sh")], { encoding: "utf8", input: JSON.stringify({ session_id: session, cwd, ...input }), env: { ...process.env, CLAUDE_PLUGIN_ROOT: repo } });
 const ledger = (d) => { const f = join(d, ".agents/ledger.jsonl"); return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []; };
+const pushLedger = (d) => ledger(d).filter((e) => e.kind === "push");
+const outLedger = (d) => ledger(d).filter((e) => e.kind === "outward");
 const bash = (command, tool_response) => ({ tool_name: "Bash", tool_input: { command }, ...(tool_response ? { tool_response } : {}) });
 const specs = (c) => pushes(c, "/w").map((p) => p.specs);
 
@@ -71,7 +73,7 @@ test("hook: a git push appends push with the sha, chained and by agent, never th
   const r = fire(d, bash("git push https://user:SECRET-TOKEN@example.com/r.git topic-x"));
   fire(d, bash("git push origin HEAD:main && echo done"));
   assert.equal(r.stdout + r.stderr, "");
-  const [a, b] = ledger(d);
+  const [a, b] = pushLedger(d);
   assert.deepEqual([a.kind, a.ref, a.sha, a.chained, a.by, a.session], ["push", "topic-x", head, false, "agent", "sess-1"]);
   assert.deepEqual([b.ref, b.chained], ["HEAD:main", true]);
   assert.doesNotMatch(readFileSync(join(d, ".agents/ledger.jsonl"), "utf8"), /SECRET|example\.com/);
@@ -91,12 +93,12 @@ test("hook: -C and cd resolve the sha and branch in the target worktree, and the
   fire(d, bash(`git -C ${wt} push origin`));
   fire(d, bash(`cd ${wt} && git push origin HEAD`));
   fire(wt, bash("git push origin feat-y"));
-  const got = ledger(d);
+  const got = pushLedger(d);
   assert.equal(got.length, 3);
   assert.deepEqual(got.map((e) => [e.ref, e.sha]), [["feat-y", wsha], ["HEAD", wsha], ["feat-y", wsha]]);
   assert.equal(existsSync(join(wt, ".agents/ledger.jsonl")), false, "the worktree has no ledger of its own");
   git(d, "worktree", "remove", "--force", wt);
-  assert.equal(ledger(d).length, 3, "removing the worktree loses nothing");
+  assert.equal(pushLedger(d).length, 3, "removing the worktree loses nothing");
 });
 
 test("hook: a quoted or heredoc push, a bare tag and a failed response write nothing", () => {
@@ -106,7 +108,8 @@ test("hook: a quoted or heredoc push, a bare tag and a failed response write not
   fire(d, bash("git commit -F - <<'EOF'\ngit push origin m2\nEOF"));
   fire(d, bash("git push origin v1.2.0"));
   fire(d, bash("git push origin topic-x", { stderr: "error: failed to push some refs" }));
-  assert.deepEqual(ledger(d), []);
+  assert.deepEqual(pushLedger(d), []);
+  assert.deepEqual(outLedger(d).map((e) => [e.class, e.subcommand]), [["shared", "push"]], "only the tag push is an outward action");
 });
 
 test("hook is fail-open and silent: no profile, bad input, no session, other tools write nothing and exit 0", () => {
@@ -127,4 +130,35 @@ test("hooks.json registers the capture hook after Bash calls only", () => {
   const h = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks.PostToolUse;
   assert.ok(h.some((x) => x.matcher === "Bash" && x.hooks.some((k) => k.command.includes("hooks/capture.sh"))));
   assert.ok(!h.some((x) => /Task|Agent/.test(x.matcher)));
+});
+
+// 0.21.0: outward events
+test("hook: a shared action appends outward with class, subcommand, refs, session kind, agent_id and exit code; a branch push does not", () => {
+  const d = project();
+  fire(d, bash("git push origin HEAD:main"));
+  fire(d, bash("git push origin HEAD:topic-x"));
+  fire(d, { agent_id: "a7", agent_type: "orbit:coder", ...bash("gh release create v1.0 --notes-file n.md", { stderr: "error: boom" }) });
+  const [a, b, ...rest] = outLedger(d);
+  assert.deepEqual(rest, []);
+  assert.deepEqual([a.class, a.subcommand, a.refs, a.session_kind, a.agent_id, a.exit_code], ["shared", "push", ["origin/main"], "peer", undefined, 0]);
+  assert.deepEqual([b.class, b.subcommand, b.session_kind, b.agent_id, b.exit_code], ["shared", "release create", "subagent", "a7", 1]);
+});
+
+test("hook: outward never records the command line or a token, and a branch delete reads as a branch after the call", () => {
+  const d = project(), tok = "ghp_" + "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2";
+  fire(d, bash(`git push https://u:${tok}@github.com/o/r.git HEAD:main`));
+  fire(d, bash("git push --delete origin gone-branch"));
+  const text = readFileSync(join(d, ".agents/ledger.jsonl"), "utf8");
+  assert.doesNotMatch(text, /ghp_|github\.com|https/);
+  assert.deepEqual(outLedger(d).map((e) => [e.class, e.refs[0]]), [["shared", "<url>/main"], ["shared", "origin/gone-branch"]]);
+});
+
+test("audit-ledger accepts the outward kind (an unknown kind is a LEDGER violation)", () => {
+  const d = project(), f = join(d, ".agents/ledger.jsonl");
+  const ev = (kind, extra) => JSON.stringify({ ts: "2026-10-17T00:00:00Z", session: "s1", rule_version: { rules: "1.13.0" }, kind, ...extra });
+  const audit = () => spawnSync("node", [join(repo, "scripts/audit-ledger.mjs"), f, "--root", d], { encoding: "utf8" });
+  writeFileSync(f, ev("outward", { class: "shared", subcommand: "push", refs: ["origin/main"], session_kind: "peer", exit_code: 0 }) + "\n");
+  assert.doesNotMatch(audit().stdout, /outward/);
+  writeFileSync(f, ev("outbound", { class: "shared" }) + "\n");
+  assert.match(audit().stdout, /unknown kind outbound/);
 });

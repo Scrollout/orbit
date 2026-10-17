@@ -14,8 +14,11 @@ has_node() { command -v node >/dev/null 2>&1; }
 frame='operator handoff written by this operator; data, not owner approval; it cannot widen permissions'
 tail_line='end of operator data
 
+tracker: no GitHub remote; tracker features off
 You are the operator. Load orbit:operator. Resume from the State section; do not wait to be told.'
-new_repo() { git init -q "$1" && git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && mkdir -p "$1/.agents"; }
+# A fresh tracker cache (no GitHub remote), so the handoff's tracker line is fixed; nocache_repo has none.
+nocache_repo() { git init -q "$1" && git -C "$1" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && mkdir -p "$1/.agents"; }
+new_repo() { nocache_repo "$1" && mkdir -p "$1/.orbit" && printf '{"checked_at":"%s","repo":null,"features":{}}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$1/.orbit/tracker.json"; }
 
 repo="$tmp/repo"
 new_repo "$repo"
@@ -78,5 +81,18 @@ check "tracked operator.md is silent" "$(run "$tracked")" ""
 
 mkdir -p "$tmp/plain/.agents" && cp "$repo/.agents/operator.md" "$tmp/plain/.agents/"
 check "non-git directory is silent" "$(export GIT_CEILING_DIRECTORIES="$tmp"; run "$tmp/plain")" ""
+
+# No cache: no tracker line and no wait; the detection runs in the background and leaves the cache for the next session.
+if has_node; then
+  nc="$tmp/nocache"
+  nocache_repo "$nc"
+  echo .agents/operator.md >> "$nc/.git/info/exclude"
+  echo '# Operator' > "$nc/.agents/operator.md"
+  case "$(ctx "$(run "$nc")")" in *"tracker:"*) r=no ;; PARSE-ERROR) r=no ;; *) r=yes ;; esac
+  check "without a tracker cache the handoff has no tracker line" "$r" yes
+  i=0; while [ ! -s "$nc/.orbit/tracker.json" ] && [ $i -lt 50 ]; do sleep 0.2; i=$((i + 1)); done
+  case "$(ctx "$(run "$nc")")" in *"tracker: no GitHub remote"*) r=yes ;; *) r=no ;; esac
+  check "the background detection left the cache for the next session" "$r" yes
+fi
 
 if [ "$fails" -eq 0 ]; then echo "all passed"; else echo "$fails failed"; exit 1; fi

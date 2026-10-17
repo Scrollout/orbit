@@ -1,3 +1,0 @@
-{
-  "description": "a cancelled run is not a failure: a ci-fix coder run after it has no failed run to fix"
-}

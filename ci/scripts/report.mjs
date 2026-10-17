@@ -9,7 +9,7 @@ export const LIMIT = 1000000; // bytes; GitHub's job summary limit is 1 MiB (104
 export const TARGETS = ["vet", "quality", "security"];
 const ICON = { pass: "✅", fail: "❌", skipped: "⏭️" };
 // Text from a log or a file name goes into table cells and code fences: no HTML, no backticks, no pipes, no line breaks.
-const cell = (s) => String(s).replace(/[|]/g, "\\|").replace(/[\r\n]/g, " ").replace(/</g, "&lt;").replace(/`/g, "'");
+const cell = (s) => String(s).replace(/\\/g, "\\\\").replace(/[|]/g, "\\|").replace(/[\r\n]/g, " ").replace(/</g, "&lt;").replace(/`/g, "'");
 const code = (s) => String(s).replace(/</g, "‹").replace(/`/g, "'").replace(/[\r\n]/g, " ");
 
 const failed = (target, check, why) => ({ check, target, status: "fail", duration_s: 0, tool: "-", version: "-", findings: 1, excerpts: [why] });

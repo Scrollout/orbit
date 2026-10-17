@@ -1,6 +1,0 @@
-{
-  "description": "the test would not build with the production part reverted: the reviewer writes not checked with the reason, not fails: passes",
-  "report": {
-    "role": "reviewer"
-  }
-}

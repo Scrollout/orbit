@@ -1,6 +1,6 @@
 ---
 name: architect
-description: The tech lead in /decide, judging from a hyperscale-operator mindset - signs off on architecture, decision-record, roadmap and trade-off questions. Use after discovery, the proposals and the design review, never for exploration. Give it the brief (the question, the options including do nothing, the measured facts with file:line, the constraints, the decision records involved, what the session already decided), the engineers' proposals, the reviews and security's verdict. Returns a verdict with confidence, reasons, risks, a revisit trigger, the next step and the decision text in a few lines. Does not search the codebase, does not edit files, does not draft long documents.
+description: "The tech lead in /decide (hyperscale-operator mindset): signs off architecture, decision-record, roadmap and trade-off questions. Use after discovery, proposals and design review, never to explore. Give it the brief (question, options incl. do nothing, facts with file:line, constraints, decision records, what is decided), the proposals, reviews and security's verdict. Returns verdict, confidence, reasons, risks, revisit trigger, next step and decision text. No search, no edits, no long docs."
 model: fable
 tools: Read, Grep, Glob
 ---

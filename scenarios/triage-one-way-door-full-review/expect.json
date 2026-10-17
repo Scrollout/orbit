@@ -1,6 +1,0 @@
-{
-  "triage_exit": 0,
-  "track": "full review",
-  "caps": "analyst 0-1, engineer 1-2, reviewer 1, security 1, techlead 1",
-  "coder_model": "opus"
-}

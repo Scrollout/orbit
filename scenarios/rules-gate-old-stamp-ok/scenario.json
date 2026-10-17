@@ -1,3 +1,0 @@
-{
-  "description": "events stamped below 1.12.1 skip the 1.12.1 checks: tech lead before the reviewer, no trigger, no re-triage, a fix coder without files, a role outside the track roles and no catchup_sha all audit as before"
-}

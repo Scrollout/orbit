@@ -1,3 +1,0 @@
-{
-  "description": "a proof test passed with the production part reverted, the fix never re-checked it, yet the branch was merged"
-}

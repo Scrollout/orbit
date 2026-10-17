@@ -1,0 +1,14 @@
+{
+  "description": "an unset door line is a triage gap (exit 2), never a guess; a forced security yes does not fill it",
+  "triage": {
+    "files": [
+      "Makefile"
+    ]
+  },
+  "expect": {
+    "triage_exit": 2,
+    "gaps": [
+      "door"
+    ]
+  }
+}

@@ -57,12 +57,13 @@ Read by every role agent, `/decide` and the operator/peer skills. Keep it short;
 - Tracker: <GitHub issues via `gh`, ...>. Who opens/closes: <PM opens, closes on merge into the base; agents never>.
 - Label set: <type labels, extras>. Every issue gets at least one type label.
 - Issue types: <tracker types and their mapping, e.g. GitHub Bug for defects, Feature for new capabilities, Task otherwise; or "none">. Every issue gets one when the tracker has them.
+- Area labels (`areas`): <one per part of the codebase, or none>. GitHub Projects (`github_projects`): `off` (default) or `on`, for large, complex work only.
 - Milestones: <tracker milestones matching the roadmap, or "none">. Every issue gets the milestone it is targeted at; moving it later is a carry, with a comment. The milestone closes when its release is published.
 - What gets an issue: every review finding, red run, carried or deferred item.
 - Commit wording: `Fixes #n` only when the commit fully closes the issue, else `Refs #n` (closing keywords fire when the branch reaches the default branch).
 
 ## Releases
-Machine fields `release_when`, `release_via`, `release_tool`, `changelog`, `version_files` (operator rule OPR-09; setting `release_when` is the owner's standing go).
+Machine fields `release_when`, `release_via`, `release_tool`, `changelog`, `version_files` (operator rule OPR-09; `release_when` sets the cadence, not a standing go: the guard prompts the owner on the tag push and the release).
 - When (`release_when`): `change-set` (every merge to the base, released before the next is pushed), `milestone` (when a tracker milestone closes) or `never`.
 - How (`release_via`): `ci` (a tag-triggered workflow builds, attests and publishes; start from the plugin's `templates/release.yml`) or `session` (`gh release create --verify-tag` from a worker). Release tool (`release_tool`): `none`, or the tool that owns versions and notes (`release-please`, `changesets`, `semantic-release`, `goreleaser`, `other`).
 - Version: SemVer `vMAJOR.MINOR.PATCH` (0.y.z while unstable: breaking or feature MINOR, fix and docs PATCH), bumped in the change itself. Version files (`version_files`): <paths, or []>. Changelog (`changelog`): <path, Keep a Changelog sections>.
@@ -87,7 +88,7 @@ Machine fields `release_when`, `release_via`, `release_tool`, `changelog`, `vers
 - Extra one-way doors beyond data, migrations, API contract, security boundary, money/destructive operations: <...>
 
 ## Machine profile
-Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs anchored at the repo root: `*` within a directory, `**` across directories, `**/Makefile` for a file at any depth, a trailing `/` or a plain directory name covers everything below it; no leading slash, no braces; matched against `git diff --name-only <base>...<branch>`, renames count both paths); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`; the legacy `operator` reads as `agent` with a warning); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name; `TODO` is allowed but then `decide-triage.mjs` needs `prod=` on every run), optional `standing_waivers` (classes of change the owner waived review for, e.g. `docs-only`; `merge_built.waived` must cite one), optional `ledger_path` (default `.agents/ledger.jsonl`; keep it untracked, e.g. in `.git/info/exclude`), optional `tdd` (`no` default, `yes`: DEC-21 and DEC-22 apply, or `auto`: decided per step at triage by `tdd-suggest.mjs`; `decide-triage.mjs` prints it for the triage event; an invalid value is a profile gap), `targeted_test` (the targeted-test command, required with `tdd: yes` or `auto`), optional `test_first_commit` (`no` default, or `yes` with `tdd: yes`: the coder commits the failing test alone before the fix, DEC-21; `profile.mjs` warns when it is yes without `tdd: yes`).
+Read by `scripts/profile.mjs` (reports `profile gap: <field>` for a missing or TODO field) and the triage and audit scripts. Keep it equal to the prose above. Fields: `base_branch`; `security_paths` (globs anchored at the repo root: `*` within a directory, `**` across directories, `**/Makefile` for a file at any depth, a trailing `/` or a plain directory name covers everything below it; no leading slash, no braces; matched against `git diff --name-only <base>...<branch>`, renames count both paths); `review_trailer` (key, or `none`); `labels`; `issue_tracker`; `base_pusher` (`agent` or `owner`; the legacy `operator` reads as `agent` with a warning); `ci_policy` (`ci-only` or `local-full`); optional `production_env` (`none` or a name; `TODO` is allowed but then `decide-triage.mjs` needs `prod=` on every run), optional `standing_waivers` (classes of change the owner waived review for, e.g. `docs-only`; `merge_built.waived` must cite one), optional `ledger_path` (default `.agents/ledger.jsonl`; keep it untracked, e.g. in `.git/info/exclude`), optional `protected_branches` (more branches the guard treats as protected, a trailing `*` matches a prefix; it only adds to the fixed floor `main`, `master`, `release/*`, the target of `origin/HEAD` and `base_branch`, and never loosens it), optional `required_checks` (GitHub Actions workflow names an unattended base push needs green on the merged branch, beyond those green on the base tip; it only adds), optional `tdd` (`no` default, `yes`: DEC-21 and DEC-22 apply, or `auto`: decided per step at triage by `tdd-suggest.mjs`; `decide-triage.mjs` prints it for the triage event; an invalid value is a profile gap), `targeted_test` (the targeted-test command, required with `tdd: yes` or `auto`), optional `test_first_commit` (`no` default, or `yes` with `tdd: yes`: the coder commits the failing test alone before the fix, DEC-21; `profile.mjs` warns when it is yes without `tdd: yes`); optional tracker fields (`scripts/tracker.mjs`; a `no`/`off` beats detection): `milestones`, `issue_types` (`yes` or `no`), `github_projects` (`off` default, or `on`), `areas` (area labels).
 ```yaml orbit-profile
 base_branch: TODO
 security_paths: [TODO]
@@ -99,6 +100,7 @@ ci_policy: TODO
 production_env: TODO
 standing_waivers: []
 ledger_path: .agents/ledger.jsonl
+protected_branches: []
 release_when: TODO
 release_via: TODO
 release_tool: none
@@ -106,6 +108,8 @@ changelog: CHANGELOG.md
 version_files: []
 tdd: no
 test_first_commit: no
+github_projects: off
+areas: []
 ```
 
 ## Non-negotiable rules

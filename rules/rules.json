@@ -1,5 +1,5 @@
 {
-  "version": "1.12.1",
+  "version": "1.15.6",
   "rules": [
     {
       "id": "DEC-01",
@@ -138,7 +138,7 @@
       "id": "OPR-01",
       "file": "skills/operator/SKILL.md",
       "tag": "hook",
-      "text": "the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|reset|checkout|switch|cherry-pick|stash|tag|push` (one exception: the lone base push when the profile names a `base_pusher`), `worktree add|remove` or a `branch` change; every chore goes to a worker.",
+      "text": "the operator never edits or writes a repo file (except its own `.agents/operator.md`), and never runs `git commit|merge|rebase|reset|checkout|switch|cherry-pick|stash|tag|push` (exceptions: the lone base push when the profile names a `base_pusher`, and the unattended go's two actions), `worktree add|remove` or a `branch` change; every chore goes to a worker.",
       "enforced_by": "hooks/guard.mjs"
     },
     {
@@ -151,7 +151,7 @@
       "id": "OPR-03",
       "file": "skills/operator/SKILL.md",
       "tag": "script",
-      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names."
+      "text": "the base is pushed alone, never chained after the merge, by whoever the profile's \"who pushes the base\" names; the push prompts the owner (the guard asks on every protected-branch push, and denies one not alone in its call), so an operator GO never completes it alone; under the owner's unattended go the main thread pushes `git -C <merge worktree> push origin <sha>:refs/heads/<base>` itself, only with the guard's evidence."
     },
     {
       "id": "OPR-04",

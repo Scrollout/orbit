@@ -64,6 +64,8 @@ ci_policy: ci-only
 production_env: prod
 standing_waivers: [docs-only]
 ledger_path: .agents/ledger.jsonl
+protected_branches: [staging, hotfix/*]
+required_checks: [ci]
 release_when: milestone
 release_via: ci
 release_tool: none

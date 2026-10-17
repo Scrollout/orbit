@@ -1,6 +1,6 @@
 ---
 name: security
-description: The security officer in /decide - judges the engineers' proposals from the attacker's side, after the design review and before the tech lead signs off (first, when the question starts from a security finding or an incident). Use on the full review and incident tracks (a listed security path, a one-way door, production-like or shared state). Give it the PM's brief (options, security facts with path:line, numbered hypotheses, any scan findings), the proposals, the reviews and the threat model. Returns accept, conditions or block for each option, the attack paths it weighed, which hypotheses hold, the strongest alternative, what the code, grants and secret store must enforce, and the one test that proves it. Does not search the codebase, does not edit files, does not redesign.
+description: "The security officer in /decide: judges the proposals as an attacker, after design review and before the tech lead (first for a security finding or incident). Use on the full review and incident tracks. Give it the brief (options, security facts with path:line, hypotheses, scan findings), proposals, reviews and threat model. Returns accept, conditions or block per option, attack paths, what must be enforced and the one proving test. No search, no edits."
 model: fable
 tools: Read, Grep, Glob
 ---

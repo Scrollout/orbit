@@ -1,0 +1,16 @@
+{
+  "description": "the coder exempts its proof test because the profile has no targeted-test command: that is a profile gap, not a reason about the test",
+  "report": {
+    "role": "coder",
+    "tests": [
+      "TestCartTotal"
+    ]
+  },
+  "expect": {
+    "report_exit": 2,
+    "report_gaps": [
+      "TestCartTotal: CANNOT FAIL FIRST names a missing profile command; that is a profile gap (targeted_test), not a reason about the test"
+    ]
+  },
+  "report_md": "Files changed: src/cart.go, src/cart_test.go.\n\nCANNOT FAIL FIRST TestCartTotal -- no targeted-test command in the profile\n"
+}

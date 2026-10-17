@@ -1,6 +1,0 @@
-{
-  "report_exit": 2,
-  "report_gaps": [
-    "TestCartTotal: passes without the change but no CONFIRMED \"proof does not prove\" finding names it"
-  ]
-}

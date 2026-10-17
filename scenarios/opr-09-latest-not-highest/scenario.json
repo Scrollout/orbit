@@ -1,6 +1,0 @@
-{
-  "description": "a fix on an older version is released as latest while a higher version exists",
-  "profile_extra": [
-    "release_when: milestone"
-  ]
-}

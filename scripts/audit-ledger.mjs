@@ -1,5 +1,7 @@
 // Replays a session ledger against the `script`-tagged rules and prints violations by rule id. Zero dependencies.
-//   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md]
+//   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md] [--go-log <file>]
+//   --go-log: the capture hook's go log (default ~/.claude/orbit/unattended/go-log.jsonl under the OS user's home, not HOME, which the
+//   guard keeps agents from writing); any other path is named in the report's first line as `go-log: <path> (not default)`.
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
 //   triage{topic,sec,door,prod,track,files?,tdd?,trigger?,why?,decision_topic?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
@@ -14,6 +16,7 @@
 //   review_start{branch,sha,ci_state,role?}    role reviewer (default) or re-reviewer
 //   merge_built{branch (required),merge_sha,tree_equal,ci_state,catchup_sha?,waived?,waiver_reason?,release_skip?}   catchup_sha: head of the catch-up merge, must have a green ci_run (required from rules 1.12.1)   waived: a profile standing_waivers entry, or "owner" + waiver_reason; release_skip: why this merge is not released
 //   push{ref,sha,chained,by}                   by: agent or owner, compared with the profile's base_pusher
+//   outward{class,subcommand,refs?,sha?,session_kind?,agent_id?,exit_code?}   a shared or destructive action the capture hook saw run (class go: the unattended go's own action, with the sha pushed); recorded, never an authorisation, except that a go base push with a matching go log record is the owner's push for DEC-06
 //   issue_close{n,origin_base_sha,merge_sha}
 //   tag_push{tag,ref,sha,by,annotated,chained,signed?}   ref: refs/tags/<tag>   by: agent or owner (ci when a release_tool tags)
 //   release{tag,url?,via?,verify_tag?,latest?,prerelease?}   via: session (default) or ci
@@ -29,6 +32,7 @@
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { semverExec } from "./rx.mjs";
 import { existsSync, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { resolve } from "node:path";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,11 +53,11 @@ const T = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 
 
 const violations = [];
 const v = (ids, n, msg) => { for (const id of [].concat(ids)) violations.push({ id, n, line: `${id} line ${n}: ${msg}` }); };
-const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition", "intent", "handoff", "owner_go"];
+const KINDS = ["triage", "agent_start", "ci_run", "review_start", "merge_built", "push", "issue_close", "tag_push", "release", "coder_report", "proof_check", "condition", "intent", "handoff", "owner_go", "outward"];
 const short = (s) => String(s).slice(0, 8);
 const norm = (r) => String(r).replace(/^\+/, "").split(":").pop().replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 const dict = () => Object.create(null);
-const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"], intent: ["milestone", "phase"], handoff: ["topic", "from", "to"], owner_go: ["topic"] };
+const NEEDS = { triage: ["topic", "sec", "door", "prod", "track"], agent_start: ["role", "model", "topic"], ci_run: ["sha"], review_start: ["branch", "sha"], merge_built: ["branch", "merge_sha"], push: ["ref"], issue_close: ["merge_sha"], tag_push: ["tag", "sha", "by"], release: ["tag"], coder_report: ["branch", "evidence", "tests"], proof_check: ["branch", "sha", "test", "result"], condition: ["topic", "id", "step", "test", "status"], intent: ["milestone", "phase"], handoff: ["topic", "from", "to"], owner_go: ["topic"], outward: ["class", "subcommand"] };
 const isGreen = (e) => e.state === "green" || e.conclusion === "success";
 // DEC-21, DEC-22: only for events stamped with rules 1.7.0 or later
 const semParts = (x) => { const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(x ?? "")); return m ? m.slice(1).map(Number) : null; };
@@ -69,6 +73,8 @@ const maxRules = dict();   // per tdd-on topic
 let maxRulesAll = null;    // ledger-wide, with the profile's tdd yes or auto
 const tddOn = new Set();   // topics whose triage recorded tdd: true
 const rulesSeen = dict();
+// Two shas name the same commit when one is a prefix of the other (a hand-appended event may carry a short sha).
+const sameSha = (a, b) => typeof a === "string" && typeof b === "string" && a.length >= 7 && b.length >= 7 && (a.startsWith(b) || b.startsWith(a));
 const isRed = (e) => e.state === "red" || ["failure", "cancelled", "timed_out", "startup_failure"].includes(e.conclusion);
 
 const triage = dict(), sticky = dict(), counts = dict(), ci = dict(), versions = new Set(), lastTs = dict(), lastCoder = dict(), workerModel = dict();
@@ -85,6 +91,24 @@ const tagSha = dict(), releasedTags = new Set(), releasedShas = new Set();
 let pendingRelease = null;            // change-set mode without a release tool: the last base-pushed merge awaiting its release
 const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
 let n = 0, events = 0;
+// The unattended go is the owner's approval (threat model): a base push its `go` event records (same session, sha, exit 0) is the
+// owner's push for DEC-06, only when the go log (written by the capture hook under ~/.claude, guard-protected) has the same record.
+// The default comes from the OS user's home, which an agent cannot set (HOME it can); a chosen path is named in the report.
+// No passwd entry for the user (userInfo throws): no default, so no go log unless one is named.
+const osHome = (() => { try { return userInfo().homedir || null; } catch { return null; } })();
+const goLogDefault = osHome && join(osHome, ".claude", "orbit", "unattended", "go-log.jsonl");
+const goLogFile = flag("go-log") ?? goLogDefault;
+if (goLogFile && resolve(goLogFile) !== goLogDefault) console.log(`go-log: ${goLogFile} (not default)`);
+const goLogged = new Set();
+if (goLogFile && existsSync(goLogFile)) {
+  for (const raw of readFileSync(goLogFile, "utf8").split("\n")) {
+    try { const e = JSON.parse(raw); if (e?.subcommand === "push" && e.exit_code === 0 && typeof e.sha === "string") goLogged.add(`${e.session} ${e.sha}`); } catch { /* a torn line counts for nothing */ }
+  }
+}
+const goPushes = new Set();
+for (const raw of readFileSync(file, "utf8").split("\n")) {
+  try { const e = JSON.parse(raw); if (e?.kind === "outward" && e.class === "go" && e.subcommand === "push" && e.exit_code === 0 && e.sha && goLogged.has(`${e.session} ${e.sha}`)) goPushes.add(`${e.session} ${e.sha}`); } catch { /* reported below */ }
+}
 
 for (const raw of readFileSync(file, "utf8").split("\n")) {
   n++;
@@ -178,7 +202,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
         if (nw && e.phase === "ci-fix") {
           const b = bs(e.topic);
           if (!b.ciRed) v("DEC-14", n, `ci-fix coder run on ${e.topic} with no failed ci_run as the latest run of the branch (a review finding is phase fix; a cancelled run is not a failure)`);
-          else if (b.headSha && b.redSha !== b.headSha) v("DEC-14", n, `ci-fix coder run on ${e.topic}: the failed run is on ${short(b.redSha)}, the branch head is ${short(b.headSha)}`);
+          else if (b.headSha && !sameSha(b.redSha, b.headSha)) v("DEC-14", n, `ci-fix coder run on ${e.topic}: the failed run is on ${short(b.redSha)}, the branch head is ${short(b.headSha)}`);
         }
         bs(e.topic).ciRed = false;   // every coder run answers the red run before it
         if (e.phase === "fix") {
@@ -219,10 +243,11 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
     }
     case "ci_run": {
       if (e.branch) sawCi.add(e.branch);
-      if (e.branch) {   // only a failure is red for ci-fix, and only while it is the branch's latest run
-        const b = bs(e.branch);
-        b.ciRed = e.state === "red" || e.conclusion === "failure";
-        b.redSha = b.headSha = e.sha;
+      if (e.branch) {   // only a failure is red for ci-fix; a green run of the same workflow, or any run on a later sha, clears it
+        const b = bs(e.branch), wf = e.workflow ?? "default";
+        if (e.state === "red" || e.conclusion === "failure") { b.ciRed = true; b.redSha = e.sha; b.redWf = wf; }
+        else if (!b.ciRed || !sameSha(b.redSha, e.sha) || (wf === b.redWf && isGreen(e))) b.ciRed = false;
+        b.headSha = e.sha;
       }
       ((ci[e.sha] ??= {})[e.workflow ?? "default"] = isGreen(e) ? "green" : isRed(e) ? "red" : "pending");
       break;
@@ -284,7 +309,7 @@ for (const raw of readFileSync(file, "utf8").split("\n")) {
       if (/^release\//.test(norm(e.ref)) && e.chained === false && e.by === profile.base_pusher) linePushes.add(e.sha);
       if (norm(e.ref) !== base) { if (e.sha) bs(norm(e.ref)).headSha = e.sha; break; }
       if (e.chained !== false) v(["DEC-06", "OPR-03"], n, `base ${base} pushed chained after another command`);
-      if (e.by !== profile.base_pusher) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
+      if (e.by !== profile.base_pusher && !(profile.base_pusher === "owner" && goPushes.has(`${e.session} ${e.sha}`))) v(["DEC-06", "OPR-03"], n, `base ${base} pushed by ${e.by ?? "unknown"}, the profile says ${profile.base_pusher}`);
       if (!merges[e.sha]) v(["DEC-06", "OPR-03"], n, `base ${base} pushed at ${short(e.sha)} with no merge_built for that sha before it`);
       basePushes.add(e.sha);
       if (relWhen === "change-set" && !relTool) {

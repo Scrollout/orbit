@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,12 @@ const ctx = (over = {}) => ({
   mergeHead: () => null,
   baseShas: () => [],
   readFile: (f) => files[f] ?? null,
+  alias: () => null,
+  refKind: () => ({ tag: false, branch: true, remote: true }),
+  head: () => "topic",
+  originHead: () => null,
+  commit: () => null,
+  followTags: () => false,
   ...over,
 });
 const op = { agent_type: "orbit:operator", cwd: "/r/main" };
@@ -57,8 +63,6 @@ const ALLOWED = [
   "cat >> .agents/operator.md <<'EOF'\n- note\nEOF",
   "sed -n '1,20p' README.md",
   "cp README.md /tmp/scratch/",
-  "git push origin HEAD:main",
-  "git -C /r/main-merge push origin HEAD:main",
   "grep -rn 'git commit' docs/ | head",
   "for f in a b; do echo $f; done",
   "echo $(git rev-parse HEAD)",
@@ -116,8 +120,9 @@ test("operator: every denied case is denied and names its rule id", () => {
   for (const [c, id] of DENIED) {
     const r = run(bash(c));
     assert.ok(r, `not denied: ${c}`);
-    assert.ok(r.includes(id), `${c}: ${r}`);
-    assert.match(r, /OPR-01/, `${c}: every operator deny names OPR-01`);
+    // 0.21.0: a destructive action is denied for every session with the outward shape, before OPR-01 runs.
+    assert.ok(r.includes(id) || r.startsWith("orbit · DENY · "), `${c}: ${r}`);
+    assert.match(r, /OPR-01|^orbit · DENY · /, `${c}: every operator deny names OPR-01 or is an outward deny`);
   }
   assert.ok(ALLOWED.length + DENIED.length >= 30);
 });
@@ -127,7 +132,12 @@ test("operator: the base push needs a base_pusher and the profile's base", () =>
   assert.match(run(bash("git push origin HEAD:main"), none), /OPR-01.*base_pusher/);
   assert.match(run(bash("git push origin HEAD:main"), ctx({ profile: () => null })), /OPR-01/);
   assert.match(run(bash("git push origin HEAD:develop")), /OPR-01/);
-  assert.equal(run(bash("git push origin HEAD:main"), ctx({ profile: () => ({ base: "main", pusher: "agent", trailer: null }) })), null);
+  // 0.21.0: the lone base push asks the owner (was: allowed).
+  const agent = ctx({ profile: () => ({ base: "main", pusher: "agent", trailer: null }) });
+  for (const c of ["git push origin HEAD:main", "git -C /r/main-merge push origin HEAD:main"]) {
+    assert.match(run({ ...bash(c), permission_mode: "default" }, agent).ask, /^orbit · ASK · push to protected branch/, c);
+    assert.match(run(bash(c), agent), /^orbit · DENY · /, `${c}: no permission mode, no prompt`);
+  }
 });
 
 test("operator: Edit/Write/MultiEdit/NotebookEdit only on .agents/operator.md", () => {
@@ -288,10 +298,11 @@ test("finding 5: gh merges and ref writes are denied wherever the flags sit; rea
     "gh pr -R o/r merge 4", "gh -R o/r pr merge 4", "gh pr --repo o/r checkout 4", "gh --repo=o/r pr merge 4 --squash",
     "gh api -X PUT repos/o/r/pulls/4/merge", "gh api --method POST repos/o/r/merges -f base=main -f head=t",
     "gh api repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc", "gh api -XPATCH repos/o/r/git/refs/heads/main -f sha=abc",
-    "gh api --method=DELETE repos/o/r/git/refs/heads/t", "gh api -X PUT repos/o/r/contents/README.md --input body.json",
+    "gh api -X PUT repos/o/r/contents/README.md --input body.json",
     "gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'",
     "gh api graphql -f query=\"$Q\"",
   ]) deniedOp(c);
+  assert.match(run(bash("gh api --method=DELETE repos/o/r/git/refs/heads/t")), /^orbit · DENY · gh api DELETE/, "destructive for every session (0.21.0)");
   for (const c of [
     "gh api repos/o/r/pulls/4", "gh api repos/o/r/git/refs/heads/main", "gh api -X GET repos/o/r/contents/README.md",
     "gh api repos/o/r/issues/3/comments -f body=hi", "gh api graphql -f query='query { viewer { login } }'",
@@ -360,10 +371,10 @@ test("realCtx reads review_trailer and base_pusher from the profile", async () =
     spawnSync("git", ["init", "-q", "-b", "main", root]);
     mkdirSync(join(root, ".agents"));
     const prof = (lines) => { writeFileSync(join(root, ".agents/project.md"), "```yaml orbit-profile\n" + lines + "\n```\n"); return realCtx(root, {}).profile(root); };
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner"), { base: "main", pusher: "owner", trailer: "Reviewed-By" });
-    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null });
-    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By" });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: none\nbase_pusher: agent"), { base: "main", pusher: "agent", trailer: null, protected: [], checks: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: owner\nprotected_branches: [staging, TODO]\nrequired_checks: [ci, TODO]"), { base: "main", pusher: "owner", trailer: "Reviewed-By", protected: ["staging"], checks: ["ci"] });
+    assert.deepEqual(prof("base_branch: TODO\nreview_trailer: TODO\nbase_pusher: TODO"), { base: null, pusher: null, trailer: null, protected: [], checks: [] });
+    assert.deepEqual(prof("base_branch: main\nreview_trailer: Reviewed-By\nbase_pusher: operator"), { base: "main", pusher: "agent", trailer: "Reviewed-By", protected: [], checks: [] });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -430,6 +441,14 @@ test("round 2 graphql: a query from a file or --input is denied", () => {
   allowedOp("gh api graphql -f query='{ viewer { login } }' -F n=3");
 });
 
+test("#21 OPR-01: ghDeny reads GraphQL with the same allowlist (placeholder, clustered flag, endpoint spellings)", () => {
+  const m = "{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}";
+  for (const c of [`gh api graphql -F query='{owner}${m}'`, `gh api graphql -F query=':owner${m}'`, `gh api graphql -F query='{branch}${m}'`,
+    `gh api graphql -iFquery='mutation${m}' -f query='query{viewer{login}}'`,
+    `gh api /graphql -f query='mutation${m}'`, `gh api https://api.github.com/graphql -f query='mutation${m}'`, `gh api GRAPHQL -f query='mutation${m}'`]) deniedOp(c);
+  allowedOp("gh api graphql -f query='query{viewer{login}}'");
+});
+
 test("round 2 DEC-08: global -c and -C do not hide a worker's merge", () => {
   const w = { agent_id: "w1", agent_type: "orbit:coder", cwd: "/r/main" };
   for (const c of ["git -c user.name=x merge --no-ff -m x topic", "git -C \"$DIR\" merge --no-ff -m x topic", "git -C /r/main-topic -c a.b=c merge --no-ff topic"]) {
@@ -464,4 +483,46 @@ test("a newline inside the argument of node --eval= or env -S is still a scripte
   deniedOp("node $'--print=1\\n'");
   deniedOp("env $'-Ssh -c \"touch f\"\\n'");
   deniedOp("env $'--split-string=touch f\\n'");
+});
+
+// Orbit #8: the review_trailer floor (and the base push grant) come from the main checkout; a worktree profile only tightens.
+test("realCtx: a worktree profile cannot drop the main checkout's review_trailer or grant base_pusher; it can add a trailer", async () => {
+  const { realCtx } = await import("../hooks/guard.mjs");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "guard-wt-")));
+  const g = (...a) => spawnSync("git", ["-C", join(root, "main"), "-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { encoding: "utf8" });
+  const write = (dir, lines) => { mkdirSync(join(dir, ".agents"), { recursive: true }); writeFileSync(join(dir, ".agents/project.md"), "```yaml orbit-profile\n" + lines + "\n```\n"); };
+  try {
+    mkdirSync(join(root, "main"));
+    g("init", "-q", "-b", "main"); g("commit", "-q", "--allow-empty", "-m", "c"); g("worktree", "add", "-q", "-b", "topic", join(root, "wt"));
+    write(join(root, "main"), "base_branch: main\nreview_trailer: Reviewed-by\nbase_pusher: owner");
+    write(join(root, "wt"), "base_branch: topic\nreview_trailer: none\nbase_pusher: agent\nprotected_branches: [staging]");
+    const p = realCtx(join(root, "wt"), {}).profile(join(root, "wt"));
+    assert.equal(p.trailer, "Reviewed-by", "the worktree cannot drop the trailer");
+    assert.equal(p.base, "main", "nor move the base that exempts catch-up merges");
+    assert.equal(p.pusher, "owner", "nor grant the base push");
+    assert.ok(p.protected.includes("staging") && p.protected.includes("topic"), "it can only add protected branches");
+    write(join(root, "main"), "base_branch: main\nreview_trailer: none\nbase_pusher: owner");
+    write(join(root, "wt"), "base_branch: main\nreview_trailer: Signed-off-by\nbase_pusher: agent");
+    const q = realCtx(join(root, "wt"), {}).profile(join(root, "wt"));
+    assert.equal(q.trailer, "Signed-off-by", "a worktree profile may add a trailer");
+    assert.equal(q.pusher, "owner");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("#22 OPR-01: ghDeny denies a control character, an unknown gh api flag, an odd endpoint and xargs around gh api", () => {
+  const m = "{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}";
+  for (const c of [`gh api graphql -f query='query A{viewer{login}}#\rmutation B${m}' -f operationName=B`,
+    `gh api -iX POST graphql -f query='mutation${m}'`, `gh api -iq .x graphql -f query='mutation${m}'`, `gh api -iH 'Accept: x' graphql -f query='mutation${m}'`,
+    `gh api -ip x graphql -f query='mutation${m}'`, `gh api -it x graphql -f query='mutation${m}'`,
+    `gh api /%67raphql -f query='mutation${m}'`, `gh api https://api.github.com/./graphql -f query='mutation${m}'`,
+    "printf -- --input m.json | xargs gh api graphql -f query='{viewer{login}}'"]) deniedOp(c);
+  allowedOp("gh api graphql -f query='query{viewer{login}}'");
+  allowedOp("gh api repos/o/r/pulls --jq '.[].number'");
+});
+
+test("#24 OPR-01: ghDeny denies any gh call under xargs, find -exec, fd -x or parallel", () => {
+  for (const c of ["printf merge | xargs -I{} gh pr {} 1", "echo delete 5 --yes | xargs gh issue", "echo 1 --approve | xargs gh pr review", "echo exec x | xargs gh extension",
+    "find . -exec gh pr merge {} \\;", "find . -execdir gh issue view {} \\;", "fd -x gh pr view", "fd -X gh issue list", "parallel gh pr view ::: 1"]) deniedOp(c);
+  allowedOp("find . -name gh");
+  allowedOp("gh pr view 4");
 });

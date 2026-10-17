@@ -1,0 +1,32 @@
+{
+  "description": "issue closed with no base push of the merge sha before it",
+  "expect": {
+    "exit": 1,
+    "violations": {
+      "DEC-07": 1,
+      "OPR-04": 1
+    }
+  },
+  "ledger": [
+    "{\"ts\":\"2026-10-14T10:00:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"triage\",\"topic\":\"feat-x\",\"sec\":\"yes\",\"door\":\"no\",\"prod\":\"no\",\"track\":\"full review\",\"files\":[\".github/workflows/ci.yml\",\"src/a.go\"]}",
+    "{\"ts\":\"2026-10-14T10:01:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"engineer\",\"model\":\"sonnet\",\"topic\":\"feat-x\"}",
+    "{\"ts\":\"2026-10-14T10:02:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"security\",\"model\":\"opus\",\"topic\":\"feat-x\"}",
+    "{\"ts\":\"2026-10-14T10:03:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"techlead\",\"model\":\"opus\",\"topic\":\"feat-x\"}",
+    "{\"ts\":\"2026-10-14T10:04:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"reviewer\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"design\"}",
+    "{\"ts\":\"2026-10-14T10:05:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"coder\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"build\",\"worker\":\"w1\"}",
+    "{\"ts\":\"2026-10-14T10:06:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"push\",\"ref\":\"feat-x\",\"sha\":\"1111111111111111111111111111111111111111\",\"chained\":false,\"by\":\"agent\"}",
+    "{\"ts\":\"2026-10-14T10:07:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"ci_run\",\"branch\":\"feat-x\",\"sha\":\"1111111111111111111111111111111111111111\",\"workflow\":\"checks\",\"conclusion\":\"success\"}",
+    "{\"ts\":\"2026-10-14T10:08:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"reviewer\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"delivery\"}",
+    "{\"ts\":\"2026-10-14T10:09:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"review_start\",\"branch\":\"feat-x\",\"sha\":\"1111111111111111111111111111111111111111\",\"ci_state\":\"green\"}",
+    "{\"ts\":\"2026-10-14T10:10:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"coder\",\"model\":\"opus\",\"topic\":\"feat-x\",\"phase\":\"fix\",\"fix_scope\":\"code\",\"worker\":\"w1\",\"resumed\":true}",
+    "{\"ts\":\"2026-10-14T10:11:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"push\",\"ref\":\"feat-x\",\"sha\":\"2222222222222222222222222222222222222222\",\"chained\":false,\"by\":\"agent\"}",
+    "{\"ts\":\"2026-10-14T10:12:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"ci_run\",\"branch\":\"feat-x\",\"sha\":\"2222222222222222222222222222222222222222\",\"workflow\":\"checks\",\"conclusion\":\"success\"}",
+    "{\"ts\":\"2026-10-14T10:13:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"agent_start\",\"role\":\"re-reviewer\",\"model\":\"opus\",\"topic\":\"feat-x\",\"fix_scope\":\"code\"}",
+    "{\"ts\":\"2026-10-14T10:14:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"review_start\",\"branch\":\"feat-x\",\"sha\":\"2222222222222222222222222222222222222222\",\"ci_state\":\"green\",\"role\":\"re-reviewer\"}",
+    "{\"ts\":\"2026-10-14T10:15:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"push\",\"ref\":\"feat-x\",\"sha\":\"3333333333333333333333333333333333333333\",\"chained\":false,\"by\":\"agent\"}",
+    "{\"ts\":\"2026-10-14T10:16:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"ci_run\",\"branch\":\"feat-x\",\"sha\":\"3333333333333333333333333333333333333333\",\"workflow\":\"checks\",\"conclusion\":\"success\"}",
+    "{\"ts\":\"2026-10-14T10:17:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"merge_built\",\"branch\":\"feat-x\",\"merge_sha\":\"9999999999999999999999999999999999999999\",\"tree_equal\":true,\"ci_state\":\"green\"}",
+    "{\"ts\":\"2026-10-14T10:18:00Z\",\"session\":\"s1\",\"rule_version\":{\"decide\":\"1.3.1\",\"operator\":\"1.2.0\",\"rules\":\"1.3.0\"},\"kind\":\"issue_close\",\"n\":12,\"origin_base_sha\":\"9999999999999999999999999999999999999999\",\"merge_sha\":\"9999999999999999999999999999999999999999\"}",
+    ""
+  ]
+}

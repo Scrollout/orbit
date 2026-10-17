@@ -571,3 +571,22 @@ test("ledger.mjs appends the intent, handoff and owner_go kinds and the audit ac
   add("handoff", "topic=big", "from=decide", "to=intent");
   assert.match(spawnSync("node", [audit, f, "--profile", profile], { encoding: "utf8" }).stdout, /^DEC-03 line 8: big: second handoff decide -> intent/m);
 });
+
+test("#20 row 3: the default go log is under the OS user's home, not HOME; a non-default --go-log shows in the report header", () => {
+  const sc = JSON.parse(readFileSync(join(here, "..", "scenarios", "dec-06-go-base-push-owner-ok.json"), "utf8"));
+  const root = mkdtempSync(join(tmpdir(), "golog-")), h = mkdtempSync(join(tmpdir(), "golog-home-"));
+  mkdirSync(join(root, ".agents"));
+  writeFileSync(join(root, ".agents", "project.md"), readFileSync(profile, "utf8"));
+  writeFileSync(join(root, "ledger.jsonl"), sc.ledger.join("\n"));
+  mkdirSync(join(h, ".claude", "orbit", "unattended"), { recursive: true });
+  const log = join(h, ".claude", "orbit", "unattended", "go-log.jsonl");
+  writeFileSync(log, sc.go_log.join("\n"));
+  const a = (...extra) => spawnSync("node", [audit, join(root, "ledger.jsonl"), "--root", root, ...extra], { encoding: "utf8", env: { ...process.env, HOME: h } });
+  const byHome = a();
+  assert.equal(byHome.status, 1, byHome.stdout);
+  assert.match(byHome.stdout, /DEC-06/, "a go log under an agent-set HOME grants nothing");
+  assert.doesNotMatch(byHome.stdout, /^go-log: /m);
+  const named = a("--go-log", log);
+  assert.equal(named.status, 0, named.stdout);
+  assert.equal(named.stdout.split("\n")[0], `go-log: ${log} (not default)`);
+});

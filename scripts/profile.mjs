@@ -19,6 +19,10 @@ export const FIELDS = {
   production_env: { required: false },
   standing_waivers: { required: false, list: true },
   ledger_path: { required: false },
+  // Branches the outward guard protects in addition to its fixed floor (main, master, release/*, origin/HEAD, base_branch); add-only.
+  protected_branches: { required: false, list: true },
+  // GitHub Actions workflow names an unattended base push needs green on the merged branch, beyond those green on the base tip; add-only.
+  required_checks: { required: false, list: true },
   // Releases (OPR-09). Optional: unset means the audit checks release events but not when they are due.
   release_when: { required: false, enum: ["change-set", "milestone", "never"] },
   release_via: { required: false, enum: ["ci", "session"] },
@@ -31,6 +35,11 @@ export const FIELDS = {
   // the targeted-test command (e.g. `make test-one PKG={pkg}`); required with tdd: yes or auto
   targeted_test: { required: false },
   test_first_commit: { required: false, enum: ["no", "yes"] },
+  // Tracker (scripts/tracker.mjs): a `no` or `off` beats detection; Projects only with github_projects: on.
+  milestones: { required: false, enum: ["yes", "no"] },
+  issue_types: { required: false, enum: ["yes", "no"] },
+  github_projects: { required: false, enum: ["off", "on"] },
+  areas: { required: false, list: true },   // area labels: one per issue when listed
 };
 export const RELEASE_FIELDS = ["release_when", "release_via", "release_tool", "changelog", "version_files"];
 

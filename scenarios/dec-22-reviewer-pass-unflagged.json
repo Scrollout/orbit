@@ -1,0 +1,14 @@
+{
+  "description": "reviewer's proof check finds the proof test passes with the production part reverted but raises no CONFIRMED finding: a proof gap",
+  "report": {
+    "role": "reviewer"
+  },
+  "expect": {
+    "report_exit": 2,
+    "report_gaps": [
+      "TestCartTotal: passes without the change but no CONFIRMED \"proof does not prove\" finding names it"
+    ]
+  },
+  "report_md": "PROOF CHECK TestCartTotal -- passes\n    ok  \texample/cart\t0.010s\n\n1. src/cart.go:40 - PLAUSIBLE: rounding on an empty cart.\n",
+  "coder_md": "Files changed: src/cart.go, src/cart_test.go, docs/cart.md.\n\nRED TestCartTotal -- --- FAIL: TestCartTotal (0.00s)\nRED TestCartTotal --     cart_test.go:21: total = 0, want 300\nGREEN TestCartTotal -- --- PASS: TestCartTotal (0.00s)\nGREEN TestCartTotal -- ok  \texample/cart\t0.012s\nCANNOT FAIL FIRST docs -- docs-only change, no test can fail before it\n"
+}

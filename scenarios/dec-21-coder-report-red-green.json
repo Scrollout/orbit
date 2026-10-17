@@ -1,0 +1,11 @@
+{
+  "description": "coder report with red-then-green lines for the proof test and a reasoned CANNOT FAIL FIRST for the docs part: passes",
+  "report": {
+    "role": "coder",
+    "tests": [
+      "TestCartTotal"
+    ]
+  },
+  "expect": {},
+  "report_md": "Files changed: src/cart.go, src/cart_test.go, docs/cart.md.\n\nRED TestCartTotal -- --- FAIL: TestCartTotal (0.00s)\nRED TestCartTotal --     cart_test.go:21: total = 0, want 300\nGREEN TestCartTotal -- --- PASS: TestCartTotal (0.00s)\nGREEN TestCartTotal -- ok  \texample/cart\t0.012s\nCANNOT FAIL FIRST docs -- docs-only change, no test can fail before it\n"
+}

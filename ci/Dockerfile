@@ -49,14 +49,20 @@ COPY --from=shellcheck /bin/shellcheck /usr/local/bin/shellcheck
 COPY --from=tools /out/ /usr/local/bin/
 # eslint and its plugin, from the lockfile (integrity hashes), outside the repo: the repo mount is read-only.
 WORKDIR /opt/ci
+# Claude Code for `claude plugin validate` (make plugin-validate) is pinned by the same lockfile; its install script is
+# not run (--ignore-scripts): the platform package's binary is linked instead.
 COPY package.json package-lock.json eslint.config.mjs eslint.security.mjs eslint-format.mjs ./
-RUN npm ci --ignore-scripts --no-audit --no-fund && npm cache clean --force
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in amd64) cc_arch=x64 ;; arm64) cc_arch=arm64 ;; *) echo "unsupported architecture '${TARGETARCH}'" >&2; exit 1 ;; esac \
+ && npm ci --ignore-scripts --no-audit --no-fund && npm cache clean --force \
+ && ln -s "/opt/ci/node_modules/@anthropic-ai/claude-code-linux-${cc_arch}/claude" /usr/local/bin/claude \
+ && claude --version
 # Marker that in-toolbox.sh trusts (an env var set on the host could not be told from it).
 RUN touch /etc/orbit-ci-toolbox
 # Versions the report records (ci/scripts/lib.sh).
 ENV HOME=/tmp \
     SHELLCHECK_VERSION=0.11.0 GITLEAKS_VERSION=8.30.1 ACTIONLINT_VERSION=1.7.12 HADOLINT_VERSION=2.14.0 \
-    ESLINT_VERSION=9.39.5 ESLINT_PLUGIN_SECURITY_VERSION=4.0.1
+    ESLINT_VERSION=9.39.5 ESLINT_PLUGIN_SECURITY_VERSION=4.0.1 CLAUDE_CODE_VERSION=2.1.288
 # A fixed non-root user; make runs the container with the caller's uid instead (ci/scripts/in-toolbox.sh).
 RUN useradd --system --uid 10001 --no-create-home ci
 USER 10001
