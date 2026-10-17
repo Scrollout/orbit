@@ -1,0 +1,9 @@
+{
+  "entries": [
+    { "rule": "CKV_DOCKER_2", "file": "ci/Dockerfile", "count": 1, "reason": "fixture" },
+    { "rule": "checkov-skip/CKV_GHA_7", "file": ".github/workflows/ci.yml", "count": 1, "reason": "fixture" },
+    { "rule": "javascript.lang.security.x", "file": "hooks/a.mjs", "count": 1, "reason": "fixture" },
+    { "rule": "opengrep-error/PartialParsing", "file": "scripts/b.mjs", "count": 1, "reason": "fixture" },
+    { "rule": "opengrep-error/Timeout", "file": "hooks/a.mjs", "count": 1, "reason": "fixture" }
+  ]
+}

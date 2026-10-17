@@ -5,3 +5,4 @@
 !eslint.config.mjs
 !eslint.security.mjs
 !eslint-format.mjs
+!checkov-requirements.txt

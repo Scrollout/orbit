@@ -1,34 +1,35 @@
 # CI for the Orbit repo
 
-**TL;DR:** `make ci` runs vet, quality and security inside a pinned toolbox image (host needs git, make, docker) and prints a Markdown report; GitHub Actions runs the same as parallel jobs (one toolbox image build; the job `ci` is the required check) once per push, and publishes it as the job summary. Everything lives under `ci/`, plus the root `Makefile` and `.github/workflows/ci.yml`; no plugin file is touched or needed by CI.
+**TL;DR:** `make ci` runs vet, quality, security and sast inside a pinned toolbox image (host needs git, make, docker) and prints a Markdown report; GitHub Actions runs the same as parallel jobs (one toolbox image build; the job `ci` is the required check) once per push, and publishes it as the job summary. Everything lives under `ci/`, plus the root `Makefile` and `.github/workflows/ci.yml`; no plugin file is touched or needed by CI.
 
 ## Targets
 | Target | Does |
 |---|---|
 | `make help` | lists targets |
 | `make toolbox` | builds `orbit-ci-toolbox:dev` from `ci/Dockerfile` (context `ci/` only) |
-| `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test, `claude plugin validate` and its self-test |
+| `make vet` | shellcheck, `node --check` on every `.mjs`, JSON validity, actionlint (workflows and `templates/*.yml`), hadolint, report self-test, SAST baseline self-test (`ci/scripts/sast-baseline.test.mjs` on `ci/fixtures/sast/`), `claude plugin validate` and its self-test |
 | `make plugin-validate` | `claude plugin validate` on `.` (the marketplace) and `.claude-plugin/plugin.json` (the plugin) alone (`ci/scripts/plugin-validate.sh`): offline, no auth; fails on an error or any warning but `CLAUDE.md` at the plugin root, also one in another form (any output line outside the known shapes); `ci/scripts/plugin-validate.test.sh` (in `make vet`) runs it on fixture plugins: clean passes, a planted warning or an error fails |
 | `make quality` | eslint (`ci/eslint.config.mjs`), `tsc -p .` (JSDoc types, `ci/tsc-baseline.json`), `npm test` |
 | `make security` | gitleaks on the tree and the history (findings as file:line and rule, never the secret), eslint-plugin-security (`ci/eslint.security.mjs`), dependency check |
+| `make sast` | Opengrep and Checkov over the tree, offline, against `ci/sast-baseline.json` (see SAST below) |
 | `make report` | prints the Markdown report of the last run |
 | `make report-test` | renderer self-test on `ci/fixtures/` (pass, fail, skipped, oversize); also run by `make vet` |
-| `make ci` | vet, quality, security; every check runs even after a failure; prints the report; exit status is the failure; clears `ci/out` first |
+| `make ci` | vet, quality, security, sast; every check runs even after a failure; prints the report; exit status is the failure; clears `ci/out` first |
 | `make bump V=x.y.z [RULES=x.y.z]` | version ritual: `plugin.json`, optional `rules/rules.json` version, `manifest --update` |
 
-Details of the long-form targets: `make toolbox` rebuilds from the docker layer cache, and `SKIP_TOOLBOX_BUILD=1` reuses an already loaded image (the workflow's jobs do); `make plugin-validate` fails on any warning but `CLAUDE.md` at the root; `make ci` clears `ci/out`, runs vet, quality and security in that order even after a failure, prints the report and fails if any failed; `make bump` sets `plugin.json` (and `rules/rules.json` with `RULES=`), refuses a `V` or `RULES` that is not `X.Y.Z`, and runs `manifest --update`; `scenarios/pin.json` stays by hand.
+Details of the long-form targets: `make toolbox` rebuilds from the docker layer cache, and `SKIP_TOOLBOX_BUILD=1` reuses an already loaded image (the workflow's jobs do); `make plugin-validate` fails on any warning but `CLAUDE.md` at the root; `make ci` clears `ci/out`, runs vet, quality, security and sast in that order even after a failure, prints the report and fails if any failed; `make bump` sets `plugin.json` (and `rules/rules.json` with `RULES=`), refuses a `V` or `RULES` that is not `X.Y.Z`, and runs `manifest --update`; `scenarios/pin.json` stays by hand.
 
 A check prints `<target>/<check>: pass|fail|skipped`, a target `PASS`/`FAIL`.
 
 ## The container
-`ci/scripts/in-toolbox.sh` runs it as the calling user, with the repository mounted read-only, `ci/out/` writable (the report), a tmpfs `/tmp`, a read-only root filesystem, `--network none`, `--cap-drop ALL`, no secrets, no docker socket. No Docker-in-Docker: no check builds or runs a container; only `make toolbox` talks to docker, on the host. The network is needed only to build the image.
+`ci/scripts/in-toolbox.sh` runs it as the calling user, with the repository mounted read-only, `ci/out/` writable (the report), a tmpfs `/tmp`, `noexec` (docker's default) for every command but `sh ci/scripts/sast.sh` (make sast), which gets it `exec`: the Opengrep binary unpacks itself there and runs what it unpacked, a read-only root filesystem, `--network none`, `--cap-drop ALL`, no secrets, no docker socket. No Docker-in-Docker: no check builds or runs a container; only `make toolbox` talks to docker, on the host. The network is needed only to build the image.
 
 ## Report
 Each check appends one JSON line to `ci/out/<target>.jsonl` (gitignored, truncated per run); `ci/scripts/report.mjs` renders them: a table per target, totals, a collapsed `<details>` per failing check, truncated below 1 MiB between whole blocks, with a note. A target with no records (or an empty or missing file) is shown failed ("no result recorded"), a corrupt line as a failed `corrupt record`; excerpts are neutralised (no HTML, fences or backticks). The workflow appends it to `$GITHUB_STEP_SUMMARY` and uploads `ci/out/` (records and logs) as artifact `ci-report` (7 days). Each check's full output is `ci/out/<target>.<check>.log` (first and last 128 KiB if longer); a failing check also prints the tail of its log to the console.
 
 | Field | Meaning |
 |---|---|
-| `check`, `target` | check name; `vet`, `quality` or `security` |
+| `check`, `target` | check name; `vet`, `quality`, `security` or `sast` |
 | `status` | `pass`, `fail`, `skipped` |
 | `duration_s` | seconds |
 | `tool`, `version` | the tool and its pinned version |
@@ -60,8 +61,36 @@ Base images are pinned by version and digest; binaries by version and the releas
 | eslint-plugin-security | 4.0.1 |
 | typescript, @types/node | 6.0.3, 24.19.0 |
 | @anthropic-ai/claude-code | 2.1.288 |
+| opengrep | 1.30.1 |
+| opengrep-rules (commit) | f1d2b562b414783763fd02a6ed2736eaed622efa |
+| checkov | 3.3.20 (with its dependencies: `ci/checkov-requirements.txt`) |
+| python3 (Debian, for Checkov) | bookworm's, 3.11, not pinned |
 
-To bump: change the `ARG` version and sha256 (from the release's checksum file) or the digest in `ci/Dockerfile`, the `ENV` version, and this table; for npm, edit `ci/package.json` and run `npm install --package-lock-only` in `ci/`. Then `make ci`.
+To bump: change the `ARG` version and sha256 (from the release's checksum file) or the digest in `ci/Dockerfile`, the `ENV` version, and this table; for npm, edit `ci/package.json` and run `npm install --package-lock-only` in `ci/`; for Checkov, regenerate `ci/checkov-requirements.txt` (below). Then `make ci`.
 
 ## Tuning and baseline
-Rules turned off are in `ci/eslint*.mjs`, each with its reason. Findings still in plugin files are listed per file in `ci/eslint-baseline.json` (reason each, Scrollout/orbit#3 for the regex rules); `ci/scripts/eslint-baseline.mjs` records the expected hit count per file and rule and fails on any other finding, on a count that grows (a new hit in a baselined file) and on one that shrinks (stale), so fixing shrinks the list. The baseline holds one entry today: the reference regexes of `scripts/rx-diff.test.mjs`, kept on purpose as the oracle of its differential test (Scrollout/orbit#3 fixed every plugin finding); add an entry only with a reason. Types: `tsconfig.json` checks `hooks/`, `scripts/` and `ci/scripts/` `.mjs` files from their JSDoc (`npx tsc -p .` with typescript installed, or `make quality`); `ci/scripts/tsc-baseline.mjs` counts findings per file and code in `ci/tsc-baseline.json` like the eslint baseline, and its `skip` list holds files not counted yet. Findings left unfixed on purpose are reported to the owner, not hidden. Semgrep is not used: it needs a Python stack with no hash-pinned install here; eslint-plugin-security and shellcheck cover the JS and shell.
+Rules turned off are in `ci/eslint*.mjs`, each with its reason. Findings still in plugin files are listed per file in `ci/eslint-baseline.json` (reason each, Scrollout/orbit#3 for the regex rules); `ci/scripts/eslint-baseline.mjs` records the expected hit count per file and rule and fails on any other finding, on a count that grows (a new hit in a baselined file) and on one that shrinks (stale), so fixing shrinks the list. The baseline holds one entry today: the reference regexes of `scripts/rx-diff.test.mjs`, kept on purpose as the oracle of its differential test (Scrollout/orbit#3 fixed every plugin finding); add an entry only with a reason. Types: `tsconfig.json` checks `hooks/`, `scripts/` and `ci/scripts/` `.mjs` files from their JSDoc (`npx tsc -p .` with typescript installed, or `make quality`); `ci/scripts/tsc-baseline.mjs` counts findings per file and code in `ci/tsc-baseline.json` like the eslint baseline, and its `skip` list holds files not counted yet. Findings left unfixed on purpose are reported to the owner, not hidden. Semgrep-style rules run in `make sast` (below), next to eslint-plugin-security and shellcheck.
+
+## SAST (make sast)
+`ci/scripts/sast.sh`, offline like every lane (`--network none`); GitHub's CodeQL default setup keeps running alongside, outside this workflow.
+
+| Check | Runs | Output in `ci/out` |
+|---|---|---|
+| `scope` | fails when `.semgrepignore`, `.semgrep.yml`, `.semgrep.yaml`, `.checkov.yaml`, `.checkov.yml` or `.checkov.baseline` is in the tree or tracked anywhere: the scanners read them from the scanned tree, so one could drop paths, rules or checks with no baseline entry | its log |
+| `opengrep` | `opengrep scan --config /opt/opengrep-rules --taint-intrafile --disable-nosem` (intra-file taint; a `nosemgrep` comment hides nothing) with the rule packs below, over the tree (git-ignored files skipped) | `sast-opengrep.json`, `.sarif` |
+| `checkov` | frameworks `dockerfile` and `github_actions` (secrets are gitleaks', `make security`), `--skip-download` | `checkov/results_json.json`, `results_sarif.sarif` |
+| `baseline` | `ci/scripts/sast-baseline.mjs` applies `ci/sast-baseline.json` | its log |
+
+- **Rule packs**: from `opengrep/opengrep-rules` (the fork of semgrep-rules kept under LGPL-2.1 with the Commons Clause; current semgrep-rules has a licence that limits use and redistribution), security directories only: `javascript/*/security` (the language's and the libraries', with their `audit` rules), `bash/*/security`, `dockerfile/security`, `yaml/github-actions/security`, `generic/ci/security`, `generic/unicode`; rule files only (test targets dropped), in the image at `/opt/opengrep-rules`, not in the repo (the marketplace installs the repo). No secrets pack (gitleaks), no TypeScript pack (the only `.ts` file is the declaration file `types/orbit.d.ts`, nothing to scan). No `correctness`, `best-practice` or other non-security rules: this lane looks for security problems, and correctness and style are eslint's (`make quality`), shellcheck's and hadolint's (`make vet`); with them the first full CI run had 256 more findings (227 `missing-template-string-indicator` on `${...}` text meant literally) and a rule timeout on `hooks/guard.mjs`.
+- **Locale**: `sast.sh` sets `PYTHONUTF8=1` and `LC_ALL=C.UTF-8` (built into bookworm's libc): the image's locale is ASCII and Opengrep failed with `UnicodeDecodeError` reading the UTF-8 rule files.
+- **Scope**: Opengrep gets its rules only from `--config`; Checkov gets its directory and frameworks on the command line, and its config file or baseline would come from the tree, which the `scope` check refuses.
+- **Baseline**: an entry is `{ rule, file, count, reason }` and needs a reason. The check fails on a finding not in the baseline, an entry whose count grows (a new finding; all of the pair's are printed) or shrinks (stale), a Checkov parsing error, and a missing or empty result. Two more kinds count as findings, so only a reasoned entry lets them pass: an Opengrep scanner error (it exits 0 on a parse error or a rule timeout, leaving a file scanned in part or not at all) as rule `opengrep-error/<type>` on its file, and a Checkov inline skip (`# checkov:skip=`) as rule `checkov-skip/<check id>` (no file scanned, a framework not reported). Each finding prints as `path:line rule: message`; a failing run prints its whole log to the console and ends with the proposed `ci/sast-baseline.json` (every current finding by rule and file, the reason of a matching entry or an empty one, which fails until written).
+- **First run**: the baseline started empty; the first CI run listed the findings: Checkov's `CKV_DOCKER_2` on `ci/Dockerfile` (no `HEALTHCHECK`; the toolbox is a short-lived job container, not a service) is baselined; so are, each with its reason, Opengrep's `html-in-template-string` hits (placeholders like `<id>` in plain-text messages, test inputs, and the job summary's `<details>` line, whose values `cell()` escapes), one `detect-non-literal-regexp` and one `insecure-object-assign` on fixed, repo-owned input, and `PartialParsing` errors on four POSIX sh scripts and `templates/release.yml` (parser limits; shellcheck and actionlint check them). Fix a new finding, or copy the proposed block from the CI log into `ci/sast-baseline.json` with a reason for each entry.
+
+| Pin | Source | Verified (2026-10-17) |
+|---|---|---|
+| opengrep 1.30.1 (2026-09-21) | `https://github.com/opengrep/opengrep/releases/download/v1.30.1/opengrep_manylinux_{x86,aarch64}` | sha256 of the downloaded files, equal to the release assets' GitHub digests (the release has cosign signatures, no checksum file); trust on first download: the cosign signatures were not verified, so the pin proves only that the binary has not changed since |
+| opengrep-rules f1d2b562 | `https://github.com/opengrep/opengrep-rules/archive/f1d2b562b414783763fd02a6ed2736eaed622efa.tar.gz` | sha256 of the downloaded tarball (GitHub publishes none) |
+| checkov 3.3.20 (2026-09-27) and dependencies | PyPI | `pip download --only-binary=:all: --python-version 3.11` for `manylinux*_x86_64` and `_aarch64`, sha256 of each wheel equal to PyPI's digest, each version at least two weeks old |
+
+Regenerate `ci/checkov-requirements.txt`: `pip download` checkov with those flags (one run per architecture, the `--platform manylinux_2_x_<arch>` tags up to bookworm's glibc 2.36), cap any dependency newer than two weeks, then list every wheel as `name==version` with the `--hash=sha256:` of each architecture's wheel.

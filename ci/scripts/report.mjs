@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const LIMIT = 1000000; // bytes; GitHub's job summary limit is 1 MiB (1048576)
-export const TARGETS = ["vet", "quality", "security"];
+export const TARGETS = ["vet", "quality", "security", "sast"];
 const ICON = { pass: "✅", fail: "❌", skipped: "⏭️" };
 // Text from a log or a file name goes into table cells and code fences: no HTML, no backticks, no pipes, no line breaks.
 const cell = (s) => String(s).replace(/\\/g, "\\\\").replace(/[|]/g, "\\|").replace(/[\r\n]/g, " ").replace(/</g, "&lt;").replace(/`/g, "'");

@@ -12,12 +12,13 @@ const wellFormed = (md) => {
   assert.equal(count(md, /^```$/gm) % 2, 0, "odd number of fences");
 };
 
-test("mixed: icons, totals, a table per target, details only for the failure, missing target failed", () => {
+test("mixed: icons, totals, a table per target, details only for the failure, missing targets failed", () => {
   const md = render(fx("mixed"));
   assert.match(md, /# CI report: ❌ failed/);
-  assert.match(md, /1 passed, 2 failed, 1 skipped, 3 s/);
-  assert.match(md, /## vet[\s\S]*## quality[\s\S]*## security/);
-  assert.match(md, /\| ❌ \| \(target\) \| - \| - \| 1 \| 0 \|/); // quality has no file
+  assert.match(md, /1 passed, 3 failed, 1 skipped, 3 s/);
+  assert.match(md, /## vet[\s\S]*## quality[\s\S]*## security[\s\S]*## sast/);
+  assert.match(md, /\| ❌ \| \(target\) \| - \| - \| 1 \| 0 \|/); // quality and sast have no file
+  assert.match(md, /sast\/\(target\): 1 finding/);
   assert.match(md, /no result recorded/);
   assert.match(md, /\| ✅ \| shellcheck \| shellcheck \| 0\.11\.0 \| 0 \| 1 \|/);
   assert.match(md, /\| ⏭️ \| npm-audit \(no dependencies\)/);
@@ -28,7 +29,7 @@ test("mixed: icons, totals, a table per target, details only for the failure, mi
 
 test("all targets passing renders passed and no details", () => {
   const ok = (target) => ({ check: "c", target, status: "pass", duration_s: 1, tool: "t", version: "1", findings: 0, excerpts: [] });
-  const md = render(["vet", "quality", "security"].map(ok));
+  const md = render(["vet", "quality", "security", "sast"].map(ok));
   assert.match(md, /✅ passed/);
   assert.doesNotMatch(md, /<details>/);
 });

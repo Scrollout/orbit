@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# Sourced by vet.sh, quality.sh, security.sh. Provides:
+# Sourced by vet.sh, quality.sh, security.sh, sast.sh. Provides:
 #   start <target>                      truncates ci/out/<target>.jsonl
 #   check <name> <tool> <version> <cmd...>   runs the command, keeps its full output in ci/out/<target>.<name>.log
 #                                       (capped, ci/scripts/record.mjs), records one JSON line, prints a pass/fail line

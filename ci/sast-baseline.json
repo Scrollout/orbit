@@ -1,0 +1,106 @@
+{
+  "entries": [
+    {
+      "rule": "CKV_DOCKER_2",
+      "file": "ci/Dockerfile",
+      "count": 1,
+      "reason": "no HEALTHCHECK: the toolbox image is a short-lived CI job container, not a service, so a health check has no consumer"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "ci/scripts/report.mjs",
+      "count": 1,
+      "reason": "the <details><summary> line is Markdown for the GitHub job summary, which GitHub sanitizes; every interpolated value goes through cell(), which escapes < as &lt;, so text from a log cannot open a tag"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "hooks/guard.mjs",
+      "count": 1,
+      "reason": "<owner> and <reason> are placeholders in a plain-text hook deny message shown in the CLI; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/decision-lint.mjs",
+      "count": 2,
+      "reason": "<reason> is a placeholder in plain-text lint gaps printed to the terminal; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/intent-plan.mjs",
+      "count": 1,
+      "reason": "human:<id> is a placeholder in a plain-text lint gap printed to the terminal; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/okf-lib.mjs",
+      "count": 2,
+      "reason": "<producer>/<version> and human:<id> are placeholders in plain-text docs-lint warnings printed to the terminal; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/pointers.test.mjs",
+      "count": 1,
+      "reason": "the literal <orbit> in a node:test assertion message names the token the test forbids; it goes to the test output, nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/proof-check.mjs",
+      "count": 1,
+      "reason": "<sha> is a placeholder in a plain-text proof gap printed to the terminal; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/tracker.mjs",
+      "count": 2,
+      "reason": "<number>, <step>, <file>, <type> and <area: ...> are placeholders in gh CLI command lines printed for the owner to fill in; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.html-in-template-string",
+      "file": "scripts/unattended.test.mjs",
+      "count": 6,
+      "reason": "test inputs: <<EOF here-documents and an <x@example.com> trailer in shell command strings fed to the guard under test; nothing is rendered as HTML"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.audit.detect-non-literal-regexp",
+      "file": "scripts/rx-diff.test.mjs",
+      "count": 1,
+      "reason": "the RegExp is the test's reference implementation; heading comes only from the test's fixed list [\"Steps\", \"Exit tests\"], never from input, so no attacker controls the pattern"
+    },
+    {
+      "rule": "opt.opengrep-rules.javascript.lang.security.insecure-object-assign",
+      "file": "scripts/scenarios.mjs",
+      "count": 1,
+      "reason": "merges a scenario's expect object, read from the plugin's own scenarios/<name>.json, over a fresh object of defaults for a local test comparison; no user or request input, no web response"
+    },
+    {
+      "rule": "opengrep-error/PartialParsing",
+      "file": "ci/scripts/in-toolbox.sh",
+      "count": 1,
+      "reason": "Opengrep's bash parser does not parse this POSIX sh script (a parser limit, not a finding); shellcheck checks every tracked .sh file in make vet"
+    },
+    {
+      "rule": "opengrep-error/PartialParsing",
+      "file": "ci/scripts/lib.sh",
+      "count": 1,
+      "reason": "Opengrep's bash parser does not parse this POSIX sh script (a parser limit, not a finding); shellcheck checks every tracked .sh file in make vet"
+    },
+    {
+      "rule": "opengrep-error/PartialParsing",
+      "file": "ci/scripts/lib.test.sh",
+      "count": 1,
+      "reason": "Opengrep's bash parser does not parse this POSIX sh script (a parser limit, not a finding); shellcheck checks every tracked .sh file in make vet"
+    },
+    {
+      "rule": "opengrep-error/PartialParsing",
+      "file": "hooks/operator-context.test.sh",
+      "count": 1,
+      "reason": "Opengrep's bash parser does not parse this POSIX sh script (a parser limit, not a finding); shellcheck checks every tracked .sh file in make vet"
+    },
+    {
+      "rule": "opengrep-error/PartialParsing",
+      "file": "templates/release.yml",
+      "count": 1,
+      "reason": "the github-actions curl-eval rule parses a run: script as bash and stops at the case pattern *-*) (a parser limit, not a finding); actionlint, with shellcheck on run: scripts, checks templates/*.yml in make vet"
+    }
+  ]
+}
