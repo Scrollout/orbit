@@ -278,8 +278,8 @@ const HELPER_CALL_MS = 3000;     // one helper git call
 const todo = (v) => typeof v !== "string" || !v.trim() || /^TODO\b/i.test(v.trim());
 
 // The path with symlinks resolved, for the part of it that exists; a dangling link is followed to where it points (so a
-// write through it lands there). null: a link it cannot resolve (a loop, more than 40 hops, unreadable); callers that
-// protect a directory treat null as inside it.
+// write through it lands there), each hop against the link's real directory, as the kernel does. null: a link it cannot
+// resolve (a loop, more than 40 hops, unreadable); callers that protect a directory treat null as inside it.
 const LINK_HOPS = 40;
 export function realOrNull(f) {
   let path = f;
@@ -292,7 +292,7 @@ export function realOrNull(f) {
       try { st = lstatSync(cur); } catch { /* missing: go up */ }
       if (st?.isSymbolicLink()) {
         if (++hops > LINK_HOPS) return null;
-        try { next = join(resolve(dirname(cur), readlinkSync(cur)), ...rest); } catch { return null; }
+        try { next = join(resolve(realpathSync(dirname(cur)), readlinkSync(cur)), ...rest); } catch { return null; }
         break;
       }
       if (st) return null;   // it exists, yet realpath failed
@@ -580,6 +580,7 @@ function ghParse(args) {
     if (/^(-X|--method=)./.test(a)) { method = a.replace(/^(-X|--method=)/, ""); continue; }
     if (["-f", "-F", "--field", "--raw-field"].includes(a)) { fields.push(args[i + 1] ?? { lit: null }); i++; continue; }
     if (/^(--field|--raw-field)=/.test(a)) { fields.push({ lit: a.replace(/^[^=]*=/, "") }); continue; }
+    if (/^-[fF]./.test(a)) { fields.push({ lit: a.slice(2) }); continue; }
     if (a === "--input" || a.startsWith("--input=")) { input = true; if (a === "--input") i++; continue; }
     if (a === "-R" || a === "--repo") { repo = args[i + 1]?.lit ?? null; i++; continue; }
     if (a.startsWith("--repo=")) { repo = a.slice(7); continue; }
@@ -1158,9 +1159,10 @@ function gitOut(r, st, getCtx, add, depth, loose = false) {
 // only top-level fields of the one mutation.
 const TRACKER_MUTATIONS = new Set(["updateIssueIssueType", "createProjectV2", "linkProjectV2ToRepository", "addProjectV2ItemById", "updateProjectV2ItemFieldValue"]);
 // The top-level field names of a single GraphQL mutation (aliases included as names), or null when it is anything else or
-// holds what this reader does not model (comments, block strings, fragments, directives, a second operation).
+// holds what this reader does not model (comments, block strings, fragments, directives, a second operation, a placeholder
+// gh fills in -F values: {owner}, {repo}, {branch}, :owner, :repo, :branch).
 export function mutationFields(q) {
-  if (q.includes('"""')) return null;
+  if (q.includes('"""') || /\{(?:owner|repo|branch)\}|:(?:owner|repo|branch)\b/.test(q)) return null;
   const t = q.replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
   if (/[#@]|\.\.\./.test(t) || !/^\s*mutation\b/.test(t)) return null;
   const names = [];
@@ -1234,10 +1236,11 @@ function ghOut(r, add, loose = false) {
   const unread = p.input || p.fields.some((x) => x.lit === null || /^[^=]*=@/.test(x.lit));
   const body = p.fields.map((x) => x.lit ?? "").join("\n");
   if (ep === "graphql") {
-    if (unread || !/\bmutation\b/.test(body)) return unread ? f("shared", "GraphQL mutation", "gh api graphql") : undefined;
+    const queries = p.fields.filter((x) => x.lit?.startsWith("query="));
+    if (unread || !queries.length) return f("shared", "GraphQL mutation (or a query it cannot read)", "gh api graphql");
+    if (!/\bmutation\b/.test(body)) return;
     if (/\b(createCheckRun|updateCheckRun|createCheckSuite)\b/.test(body)) return f("destructive", "GraphQL check run write", "gh api graphql");
     if (/\b(deleteRef|deleteRepository|archiveRepository)\b/.test(body) || (/\bupdateRefs?\b/.test(body) && /\bforce\s*[:=]\s*true\b/.test(body))) return f("destructive", "GraphQL delete, archive or forced ref update", "gh api graphql");
-    const queries = p.fields.filter((x) => x.lit.startsWith("query="));
     const top = queries.length === 1 ? mutationFields(queries[0].lit.slice(6)) : null;
     if (top && top.length && top.every((x) => TRACKER_MUTATIONS.has(x))) return;
     return f("shared", "GraphQL mutation", "gh api graphql");
@@ -1448,10 +1451,10 @@ const stateDeny = (what, action, input) => outwardReason("DENY", { what, action 
 
 // A shell write (redirect, a listed writer, a script that names it) into a ~/.claude dir: its text, else null.
 function claudeWrite(cmds, st, dirs) {
-  const hit = (w) => {
+  const hit = (w, base = st.cwd) => {
     const e = expOf(w, st);
-    if (e == null || (!isAbsolute(e) && !st.cwd)) return w.raw.includes(".claude") ? w.raw : null;
-    const f = realOrNull(resolve(st.cwd ?? "/", e));
+    if (e == null || (!isAbsolute(e) && !base)) return w.raw.includes(".claude") ? w.raw : null;
+    const f = realOrNull(resolve(base ?? "/", e));
     return f === null || dirs.some((d) => inside(d, f)) ? w.raw : null;
   };
   for (const cmd of cmds) {
@@ -1482,7 +1485,19 @@ function claudeWrite(cmds, st, dirs) {
     for (const t of targets) { const h = hit(t); if (h) return h; }
     // A link to a ~/.claude path (ln in any mode, cp -s or -l) is a way to write it later: every operand counts.
     if (r.name === "ln" || (r.name === "cp" && r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit)))) {
-      for (const t of positionals(r.args, WRITERS[r.name].opts)) { const h = hit(t); if (h) return h; }
+      const pos = positionals(r.args, WRITERS[r.name].opts);
+      for (const t of pos) { const h = hit(t); if (h) return h; }
+      // A symbolic link's relative target resolves against the link's directory (the kernel's view), not the cwd: the
+      // -t directory, else the last operand (a directory) or its parent.
+      if (r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*s[a-zA-Z]*|--symbolic(-link)?)$/.test(w.lit))) {
+        const ti = r.args.findIndex((w) => w.lit === "-t" || w.lit?.startsWith("--target-directory="));
+        const dw = ti < 0 ? (pos.length > 1 ? pos[pos.length - 1] : null) : r.args[ti].lit === "-t" ? r.args[ti + 1] : val(r.args[ti], 19);
+        const d = dw ? expOf(dw, st) : st.cwd;
+        const at = d == null || (!isAbsolute(d) && !st.cwd) ? null : resolve(st.cwd ?? "/", d);
+        for (const base of at === null ? [null] : ti < 0 && dw ? [at, dirname(at)] : [at]) {
+          for (const t of pos) { if (t === dw) continue; const h = hit(t, base); if (h) return h; }
+        }
+      }
     }
   }
   return null;

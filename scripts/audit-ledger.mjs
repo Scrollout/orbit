@@ -1,6 +1,7 @@
 // Replays a session ledger against the `script`-tagged rules and prints violations by rule id. Zero dependencies.
 //   node <plugin>/scripts/audit-ledger.mjs <ledger.jsonl> [--root .] [--profile .agents/project.md] [--go-log <file>]
-//   --go-log: the capture hook's go log (default ~/.claude/orbit/unattended/go-log.jsonl, which the guard keeps agents from writing).
+//   --go-log: the capture hook's go log (default ~/.claude/orbit/unattended/go-log.jsonl under the OS user's home, not HOME, which the
+//   guard keeps agents from writing); any other path is named in the report's first line as `go-log: <path> (not default)`.
 // The ledger defaults to the profile's ledger_path. Exit 64: no readable ledger. Exit 1 on any violation, invalid line, empty ledger or profile gap. Every event has ts (ISO 8601 with UTC offset,
 // non-decreasing per session), session, rule_version and kind. Kinds and their fields (README, Session ledger):
 //   triage{topic,sec,door,prod,track,files?,tdd?,trigger?,why?,decision_topic?}   topic is the branch name; tdd: true when the profile says tdd: yes (sticky per topic)
@@ -31,6 +32,7 @@
 // The ledger is self-reported by the operator: the audit finds drift, it does not prove honesty.
 import { semverExec } from "./rx.mjs";
 import { existsSync, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { resolve } from "node:path";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,7 +93,12 @@ const sawCi = new Set(), warns = [];   // sawCi: topics (branches) with a ci_run
 let n = 0, events = 0;
 // The unattended go is the owner's approval (threat model): a base push its `go` event records (same session, sha, exit 0) is the
 // owner's push for DEC-06, only when the go log (written by the capture hook under ~/.claude, guard-protected) has the same record.
-const goLogFile = flag("go-log") ?? (process.env.HOME ? join(process.env.HOME, ".claude", "orbit", "unattended", "go-log.jsonl") : null);
+// The default comes from the OS user's home, which an agent cannot set (HOME it can); a chosen path is named in the report.
+// No passwd entry for the user (userInfo throws): no default, so no go log unless one is named.
+const osHome = (() => { try { return userInfo().homedir || null; } catch { return null; } })();
+const goLogDefault = osHome && join(osHome, ".claude", "orbit", "unattended", "go-log.jsonl");
+const goLogFile = flag("go-log") ?? goLogDefault;
+if (goLogFile && resolve(goLogFile) !== goLogDefault) console.log(`go-log: ${goLogFile} (not default)`);
 const goLogged = new Set();
 if (goLogFile && existsSync(goLogFile)) {
   for (const raw of readFileSync(goLogFile, "utf8").split("\n")) {

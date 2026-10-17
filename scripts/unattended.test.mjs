@@ -12,6 +12,7 @@ import { FAIL, guard, realCtx } from "../hooks/guard.mjs";
 import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
 import { onPrompt } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
+import { plan } from "./tracker.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SID = "sess-1";
@@ -394,4 +395,52 @@ test("#16 finding 9: capture writes the go's actions to the go log under ~/.clau
     assert.deepEqual({ ...lines[0], ts: undefined }, { ts: undefined, session: SID, subcommand: "push", ref: "main", sha: M, exit_code: 0 });
     assert.equal(kind(guard(bash(`echo '{}' >> ${log}`), env, ctx())), "deny");
   });
+});
+
+// ---------- fix-round 2 re-review of 0.21.0 (Orbit #20) ----------
+test("#20 row 1: a gh placeholder in a GraphQL query is shared when attended and denied under the go; the tracker's --plan commands stay silent", () => {
+  const attack = "GH_REPO=x/mergePullRequest gh api graphql -F query='mutation{updateIssueIssueType(input:{}){issue{id}} {repo}(input:{pullRequestId:\"PR_x\"}){pullRequest{id}}}'";
+  const attended = { ...MAIN, permission_mode: "default" };
+  withGo((env) => {
+    for (const c of [attack, "gh api graphql -F query='mutation{updateIssueIssueType(input:{}){issue{id}} {owner}(input:{}){x{id}}}'", "gh api graphql -F query='mutation{createProjectV2(input:{title:\":branch\"}){projectV2{id}}}'"]) {
+      assert.equal(kind(guard(bash(c, attended), env, ctx())), "ask", `attended: ${c}`);
+      const r = guard(bash(c), env, ctx());
+      assert.equal(kind(r), "deny", `under the go: ${c}`);
+      assert.match(r, /needs the owner/, c);
+    }
+    const all = { issues: true, labels: true, milestones: true, issue_types: true, projects: true };
+    const cmds = plan({ repo: "o/r" }, all, "M1 plan", ["core"]).filter((l) => l.startsWith("gh ")).map((l) => l.replace(/<[^>]*>/g, "X"));
+    assert.ok(cmds.some((c) => c.includes("graphql")), "the plan holds the issue type mutation");
+    for (const c of cmds) assert.equal(guard(bash(c, attended), env, ctx()), null, c);
+  });
+});
+
+test("#20 row 4: attached -f/-F query forms are read; a gh api graphql whose query the guard did not read is shared", () => {
+  const attended = { ...MAIN, permission_mode: "default" };
+  withGo((env) => {
+    for (const c of ["gh api graphql -fquery='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'", "gh api graphql -Fquery=@file",
+      "gh api graphql -Fquery='mutation{mergePullRequest(input:{pullRequestId:\"x\"}){clientMutationId}}'", "gh api graphql", "gh api graphql -f q='mutation{x}'"]) {
+      assert.equal(kind(guard(bash(c, attended), env, ctx())), "ask", `attended: ${c}`);
+      assert.equal(kind(guard(bash(c), env, ctx())), "deny", `under the go: ${c}`);
+    }
+    assert.equal(kind(guard(bash("gh api graphql -fquery='mutation{deleteRef(input:{refId:\"x\"}){clientMutationId}}'", attended), env, ctx())), "deny", "attached form reaches the deleteRef denial");
+    assert.equal(guard(bash("gh api graphql -fquery='query{viewer{login}}'", attended), env, ctx()), null, "a read query stays silent");
+  });
+});
+
+test("#20 row 2: a link hop resolves against the link's real directory; an ln -s relative target resolves against the link's directory", () => {
+  const h = home(), env = { HOME: h }, w = realpathSync(mkdtempSync(join(tmpdir(), "orbit-wt-")));
+  try {
+    mkdirSync(join(h, "x", "y"), { recursive: true });
+    mkdirSync(join(h, "proj"));
+    symlinkSync(join(h, "x", "y"), join(w, "a"));                                   // w/a -> a real dir two levels deep in HOME
+    symlinkSync(`../../.claude/orbit/unattended/go-${SID}.json`, join(h, "x", "y", "l"));   // dangling; from x/y, ../../ is HOME
+    for (const mode of ["default", "bypassPermissions"]) {
+      const t = (command, cwd = w) => guard({ session_id: SID, cwd, permission_mode: mode, tool_name: "Bash", tool_input: { command } }, env, ctx());
+      for (const c of ["echo x > a/l", `printf x > ${w}/a/l`]) assert.equal(kind(t(c)), "deny", `${mode} ${c}`);
+      assert.equal(kind(t(`ln -s ../.claude/orbit/unattended/go-${SID}.json ${h}/proj/l`)), "deny", `${mode} ln -s from another cwd`);
+      assert.equal(kind(t(`ln -s ../.claude/orbit/unattended/go-${SID}.json ${h}/proj`)), "deny", `${mode} ln -s into a directory`);
+      assert.equal(t(`ln -s ../notes.md ${h}/proj/l`), null, `${mode} a relative link outside ~/.claude stays allowed`);
+    }
+  } finally { rmSync(h, { recursive: true, force: true }); rmSync(w, { recursive: true, force: true }); }
 });
