@@ -4,7 +4,6 @@ name: ci
 on:
   push:
     branches: ['**']
-    tags: ['**']
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
