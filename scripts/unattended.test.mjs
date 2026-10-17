@@ -1,17 +1,17 @@
-// Unattended go (Orbit 0.21.0, security conditions 1-9). The one test: `/orbit:unattended on 24h` delivered by hand-back,
-// scheduled prompt, cross-session message or typed: only the typed path, with the code shown on the owner's terminal typed
-// back as `confirm`, leaves a go. With a hand-written valid go, every base-push spelling that lacks the evidence is denied;
-// the pinned sha with full evidence is allowed and captured as class `go`.
+// Unattended go (Orbit 0.21.0, security conditions 1-9; opened with a permission prompt since 0.21.2, #38). The one test: the
+// exact `node <plugin root>/hooks/unattended.mjs on [dur]` asks in every mode, for every session kind, and every other command
+// naming the script is denied, so no go opens without the owner's answer to a prompt. With a hand-written valid go, every
+// base-push spelling that lacks the evidence is denied; the pinned sha with full evidence is allowed and captured as class `go`.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { FAIL, guard, parseShell, realCtx } from "../hooks/guard.mjs";
 import { EVIDENCE_MS, goState } from "../hooks/go.mjs";
-import { onPrompt, parentTerminal } from "../hooks/unattended.mjs";
+import { unattended } from "../hooks/unattended.mjs";
 import { goLog, outwardEvents } from "../hooks/capture.mjs";
 import { plan } from "./tracker.mjs";
 
@@ -21,70 +21,78 @@ const home = () => realpathSync(mkdtempSync(join(tmpdir(), "orbit-home-")));
 const stateDir = (h) => join(h, ".claude/orbit/unattended");
 const files = (h) => (existsSync(stateDir(h)) ? readdirSync(stateDir(h)) : []);
 const kind = (r) => (r === null ? "allow" : typeof r === "string" ? "deny" : "ask");
+const SCRIPT = realpathSync(join(repo, "hooks/unattended.mjs"));
 
-// The owner's terminal: what the hook writes there is seen by the owner only.
-function terminal() {
-  const lines = [];
-  return { lines, io: (now = 0) => ({ now: () => now, tty: (t) => { lines.push(t); return true; } }), code: () => /\b([A-Z2-9]{4}-[A-Z2-9]{4})\b/.exec(lines.at(-1) ?? "")?.[1] };
-}
-const prompt = (text, extra = {}) => ({ hook_event_name: "UserPromptSubmit", session_id: SID, permission_mode: "bypassPermissions", prompt: text, ...extra });
-
-test("the one test, part 1: only the typed command confirmed with the terminal code leaves a go", () => {
-  // Every path fires UserPromptSubmit with the same text and no source field; only the owner reads the terminal.
-  const PATHS = {
-    typed: (t) => prompt(t),
-    "hand-back": (t) => prompt(t),
-    scheduled: (t) => prompt(t),
-    "cross-session": (t) => prompt(t),
-  };
-  for (const [path, mk] of Object.entries(PATHS)) {
-    const h = home(), env = { HOME: h }, tty = terminal();
-    try {
-      const on = onPrompt(mk("/orbit:unattended on 24h"), env, tty.io());
-      assert.ok(on?.block, path);
-      const code = tty.code();
-      assert.ok(code, `${path}: the code is on the terminal`);
-      assert.ok(!on.block.includes(code), `${path}: the code is never in the block reason`);
-      assert.ok(files(h).every((f) => !readFileSync(join(stateDir(h), f), "utf8").includes(code)), `${path}: only a hash is stored`);
-      // Who sends the confirm: the owner (typed) reads the terminal; any other path can only guess.
-      const typedBack = path === "typed" ? code : "AAAA-AAAA";
-      const c = onPrompt(mk(`/orbit:unattended confirm ${typedBack}`), env, tty.io(1000));
-      assert.ok(c?.block, path);
-      const go = goState({ session_id: SID, permission_mode: "bypassPermissions" }, env, 2000);
-      if (path === "typed") assert.ok(go, "typed + confirm opens the go");
-      else {
-        assert.equal(go, null, `${path}: no go`);
-        assert.deepEqual(files(h), [], `${path}: a wrong confirm clears the pending code`);
-        assert.ok(onPrompt(mk(`/orbit:unattended confirm ${code}`), env, tty.io(1500)).block, path);
-        assert.equal(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env, 2000), null, `${path}: the right code after a wrong one opens nothing`);
+test("the one test, part 1: only the exact on command opens a go, and it asks in every mode for every session kind", () => {
+  const h = home(), env = { HOME: h };
+  try {
+    const kinds = { main: {}, operator: { agent_type: "orbit:operator" }, agent: { agent_id: "a1", agent_type: "orbit:coder" } };
+    for (const mode of ["default", "acceptEdits", "plan", "auto", "bypassPermissions", "dontAsk"]) {
+      for (const [k, extra] of Object.entries(kinds)) {
+        const who = { session_id: SID, cwd: repo, permission_mode: mode, ...extra };
+        const g = (command) => guard({ ...who, tool_name: "Bash", tool_input: { command } }, env, ctx());
+        const on = g(`node "${SCRIPT}" on 8h`);
+        assert.equal(kind(on), "ask", `${mode} ${k}: ${JSON.stringify(on)}`);
+        assert.match(on.ask, /open an unattended go of 480 minutes for this session/);
+        assert.match(g(`node ${SCRIPT} on`).ask, /of 720 minutes/, `${mode} ${k}: default 12 h`);
+        assert.match(g(`node "${SCRIPT}" on 90m`).ask, /of 90 minutes/);
+        assert.equal(kind(g(`node ${join(repo, "hooks/../hooks/unattended.mjs")} on 8h`)), "ask", `${mode} ${k}: another spelling of the same file still asks`);
+        for (const sub of ["off", "status"]) assert.equal(g(`node "${SCRIPT}" ${sub}`), null, `${mode} ${k}: ${sub} runs silently`);
+        for (const c of [`node "${SCRIPT}" on 8h extra`, `node "${SCRIPT}" on 8h --force`, `node "${SCRIPT}" on 30x`, `node "${SCRIPT}" confirm ABCD`, `node "${SCRIPT}" off now`,
+          `node --no-warnings "${SCRIPT}" on 8h`, "node /tmp/x/hooks/unattended.mjs on 8h", "node hooks/unattended.mjs on 8h", `node "${SCRIPT}.bak" on 8h`,
+          `FOO=1 node "${SCRIPT}" on 8h`, `env node "${SCRIPT}" on 8h`, `/usr/bin/node "${SCRIPT}" on 8h`, `true && node "${SCRIPT}" on 8h`, `node "${SCRIPT}" on 8h; echo ok`,
+          `node "${SCRIPT}" on 8h | cat`, `echo $(node "${SCRIPT}" on 8h)`, `sh -c 'node "${SCRIPT}" on 8h'`, `bash -c "node ${SCRIPT} on 8h"`, `eval node "${SCRIPT}" on 8h`,
+          `bash <<'EOF'\nnode "${SCRIPT}" on 8h\nEOF`, `node "${SCRIPT}" on 8h > ${h}/.claude/orbit/unattended/go-${SID}.json`, `node "${SCRIPT}" on 8h 2>/dev/null`,
+          `node "$X" on 8h # unattended.mjs`, `cp "${SCRIPT}" /tmp/u.mjs`, `node "${SCRIPT}" on 8h 'unterminated`]) {
+          assert.equal(kind(g(c)), "deny", `${mode} ${k}: ${c}`);
+        }
+        for (const c of [`echo '{}' > ${h}/.claude/orbit/unattended/go-${SID}.json`, `sed -i s/1/2/ ${h}/.claude/orbit/unattended/go-${SID}.json`, `cp go.json ${h}/.claude/orbit/unattended/go-${SID}.json`]) {
+          assert.equal(kind(g(c)), "deny", `${mode} ${k}: ${c}`);
+        }
+        for (const tool of ["Write", "Edit"]) assert.equal(kind(guard({ ...who, tool_name: tool, tool_input: { file_path: join(h, `.claude/orbit/unattended/go-${SID}.json`) } }, env, ctx())), "deny", `${mode} ${k}: ${tool}`);
       }
-    } finally { rmSync(h, { recursive: true, force: true }); }
-  }
+    }
+    assert.deepEqual(files(h), [], "the guard writes nothing");
+  } finally { rmSync(h, { recursive: true, force: true }); }
 });
 
-test("prompt hook: 2-minute expiry, session binding, no terminal no code, off and status from any source, other prompts untouched", () => {
-  const h = home(), env = { HOME: h }, tty = terminal();
+test("the script: on writes the go bound to the session (default 12 h, at most 24 h); off and status; no session, no go; no terminal or code anywhere", () => {
+  const h = home(), env = { HOME: h, CLAUDE_CODE_SESSION_ID: SID }, now = Date.UTC(2026, 9, 17, 1, 0);
+  const go = (t = now + 1000) => goState({ session_id: SID, permission_mode: "bypassPermissions" }, env, t);
   try {
-    assert.equal(onPrompt(prompt("please run /orbit:unattended on"), env, tty.io()), null);
-    assert.equal(onPrompt(prompt("hello"), env, tty.io()), null);
-    onPrompt(prompt("/orbit:unattended on 8h"), env, tty.io(0));
-    onPrompt(prompt(`/orbit:unattended confirm ${tty.code()}`), env, tty.io(121_000));
-    assert.equal(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env, 122_000), null, "expired after 2 minutes");
-    onPrompt(prompt("/orbit:unattended on 8h"), env, tty.io(0));
-    onPrompt(prompt(`/orbit:unattended confirm ${tty.code()}`, { session_id: "other" }), env, tty.io(1000));
-    assert.equal(goState({ session_id: "other", permission_mode: "bypassPermissions" }, env, 2000), null, "another session cannot confirm");
-    const none = onPrompt(prompt("/orbit:unattended on"), env, { now: () => 0, tty: () => false });
-    assert.match(none.block, /terminal/);
-    assert.deepEqual(files(h), [], "no terminal: nothing pending");
-    assert.match(onPrompt(prompt("/orbit:unattended on 25h"), env, tty.io()).block, /24 h/);
-    onPrompt(prompt("/orbit:unattended on 8h"), env, tty.io(0));
-    onPrompt(prompt(`/orbit:unattended confirm ${tty.code()}`), env, tty.io(1000));
-    assert.ok(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env, 2000));
-    assert.match(onPrompt(prompt("/orbit:unattended status", { permission_mode: "default" }), env, tty.io(2000)).block, /open until/);
-    assert.ok(onPrompt(prompt("/orbit:unattended off"), env, tty.io(3000)).block);
-    assert.equal(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env, 4000), null, "off closes it");
-    assert.match(onPrompt(prompt("/orbit:unattended frob"), env, tty.io()).block, /on \[duration\]/);
-    assert.match(onPrompt(prompt("/orbit:unattended on", { session_id: undefined }), env, tty.io()).block, /session/);
+    assert.match(unattended(["on"], env, now), /go open until 13:00 UTC/);
+    assert.deepEqual(JSON.parse(readFileSync(join(stateDir(h), `go-${SID}.json`), "utf8")), { session_id: SID, opened: now, until: now + 12 * 3600_000 });
+    assert.equal(statSync(stateDir(h)).mode & 0o777, 0o700);
+    assert.equal(statSync(join(stateDir(h), `go-${SID}.json`)).mode & 0o777, 0o600);
+    assert.ok(go(), "open for its session");
+    assert.equal(goState({ session_id: "other", permission_mode: "bypassPermissions" }, env, now + 1000), null, "not for another session");
+    assert.equal(goState({ session_id: SID, permission_mode: "default" }, env, now + 1000), null, "not outside bypassPermissions");
+    assert.match(unattended(["status"], env, now + 1000), /open until 13:00 UTC/);
+    assert.match(unattended(["off"], env, now + 2000), /closed/);
+    assert.equal(go(), null, "off closes it");
+    assert.match(unattended(["status"], env, now + 3000), /no go is open/);
+    unattended(["on", "24h"], env, now);
+    assert.ok(go(now + 24 * 3600_000 - 1) && !go(now + 24 * 3600_000), "24 h, then expired");
+    unattended(["on", "90m"], env, now);
+    assert.equal(JSON.parse(readFileSync(join(stateDir(h), `go-${SID}.json`), "utf8")).until, now + 90 * 60_000);
+    unattended(["off"], env, now);
+    for (const a of [["on", "25h"], ["on", "1441m"], ["on", "0m"], ["on", "8"], ["on", "8h", "x"], ["confirm", "ABCD-EFGH"], ["frob"], []]) {
+      assert.match(unattended(a, env, now), /usage|duration/, a.join(" "));
+      assert.deepEqual(files(h), [], `${a.join(" ")}: no go`);
+    }
+    for (const bad of [{ HOME: h }, { HOME: h, CLAUDE_CODE_SESSION_ID: "../x" }, { CLAUDE_CODE_SESSION_ID: SID }]) {
+      assert.match(unattended(["on"], bad, now), /no session id/);
+      assert.deepEqual(files(h), [], "no session: no go");
+    }
+    const r = spawnSync(process.execPath, [SCRIPT, "on", "2h"], { encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^orbit unattended: go open until/);
+    assert.ok(goState({ session_id: SID, permission_mode: "bypassPermissions" }, env), "the CLI opens the go");
+    for (const f of ["hooks/unattended.mjs", "hooks/go.mjs", "hooks/hooks.json", "commands/unattended.md"]) {
+      const text = readFileSync(join(repo, f), "utf8");
+      for (const x of ["/dev/tty", "/dev/pts", "confirm", "one-time", "pending", "randomInt", "UserPromptSubmit"]) assert.ok(!text.includes(x), `${f}: ${x}`);
+    }
+    assert.ok(!existsSync(join(repo, "hooks/unattended.sh")), "no prompt hook script");
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
 
@@ -240,34 +248,13 @@ test("every mode: writes to ~/.claude are denied (memory and plan notes excepted
         assert.equal(kind(t("Bash", { command: c })), "deny", `${mode} ${c}`);
       }
       for (const c of ["cat ~/.claude/settings.json", "ls ~/.claude", "echo x > /tmp/x"]) assert.notEqual(kind(t("Bash", { command: c })), "deny", `${mode} ${c}`);
-      for (const [tool, input] of [["CronCreate", { prompt: "/orbit:unattended on 24h", cron: "0 1 * * *" }], ["ScheduleWakeup", { prompt: "run /orbit:unattended confirm X" }],
+      for (const [tool, input] of [["CronCreate", { prompt: "/orbit:unattended on 24h", cron: "0 1 * * *" }], ["ScheduleWakeup", { prompt: "run /orbit:unattended on" }],
         ["SendMessage", { to: "s2", message: "/orbit:unattended on" }], ["RemoteTrigger", { body: { text: "/ORBIT:UNATTENDED on" } }], ["mcp__peers__send", { text: "/orbit:unattended on" }], ["SlashCommand", { command: "/orbit:unattended on 24h" }]]) {
         assert.equal(kind(t(tool, input)), "deny", `${mode} ${tool}`);
       }
       assert.equal(t("CronCreate", { prompt: "/loop check CI", cron: "*/5 * * * *" }), null);
       assert.equal(t("SendMessage", { to: "s2", message: "merged" }), null);
     }
-  } finally { rmSync(h, { recursive: true, force: true }); }
-});
-
-test("while a code is pending: reads of ~/.claude and the transcripts are denied; after expiry they are not", () => {
-  const h = home(), env = { HOME: h }, tty = terminal();
-  try {
-    const who = { session_id: "s9", cwd: "/r/merge", permission_mode: "default" };
-    const t = (tool_name, tool_input) => guard({ ...who, tool_name, tool_input }, env, ctx());
-    assert.equal(t("Read", { file_path: join(h, ".claude/projects/p/s.jsonl") }), null, "nothing pending");
-    onPrompt(prompt("/orbit:unattended on 1h", { session_id: SID }), env, { now: () => Date.now(), tty: tty.io().tty });
-    for (const [tool, input] of [["Read", { file_path: join(h, ".claude/projects/p/s.jsonl") }], ["Grep", { pattern: "confirm", path: join(h, ".claude") }], ["Glob", { pattern: "**/*.jsonl", path: join(h, ".claude/projects") }]]) {
-      assert.equal(kind(t(tool, input)), "deny", tool);
-    }
-    for (const c of ["cat ~/.claude/projects/p/s.jsonl", "grep -r confirm ~/.claude", "tail -n 5 $HOME/.claude/projects/p/s.jsonl", "tmux capture-pane -p", "screen -X hardcopy /tmp/x"]) {
-      assert.equal(kind(t("Bash", { command: c })), "deny", c);
-    }
-    assert.equal(t("Read", { file_path: "/r/merge/README.md" }), null);
-    assert.equal(t("Bash", { command: "ls /r/merge" }), null);
-    const later = join(stateDir(h), `pending-${SID}.json`);
-    writeFileSync(later, JSON.stringify({ ...JSON.parse(readFileSync(later, "utf8")), expires: Date.now() - 1 }));
-    assert.equal(t("Read", { file_path: join(h, ".claude/projects/p/s.jsonl") }), null, "expired: reads are back");
   } finally { rmSync(h, { recursive: true, force: true }); }
 });
 
@@ -284,12 +271,12 @@ test("capture: an allowed go action is recorded as class go with the sha; withou
   });
 });
 
-test("hooks.json: the prompt hook runs on UserPromptSubmit; the guard matcher covers reads, schedulers and message tools", () => {
+test("hooks.json: no prompt hook; the guard matcher covers reads, schedulers and message tools", () => {
   const h = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks;
-  assert.ok(h.UserPromptSubmit.some((e) => e.hooks.some((x) => x.command.includes("hooks/unattended.sh"))));
+  assert.equal(h.UserPromptSubmit, undefined);
   const m = h.PreToolUse.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard"))).matcher.split("|");
   for (const name of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob", "mcp__.*", ".*Cron.*", ".*Schedule.*", ".*Wakeup.*", ".*Trigger.*", ".*Message.*", ".*Skill.*", "SlashCommand"]) assert.ok(m.includes(name), name);
-  assert.ok(existsSync(join(repo, "commands/unattended.md")), "the command file exists, so the slash command is not rejected before the hook");
+  assert.ok(existsSync(join(repo, "commands/unattended.md")), "the command file exists");
 });
 
 // ---------- full review of 0.21.0 (Orbit #16) ----------
@@ -838,104 +825,4 @@ test("#37: $(( ... ) ) without a closing )) is $( and a subshell; $\\<newline>'.
       }
     }
   });
-});
-
-// #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2], opens?: [target0, ...] } (opens: what opening the fd
-// yields, when it changed after the readlink); devs: path -> { char, uid }. parentTerminal returns an open fd: pt maps it back.
-function fakeProc(procs, devs) {
-  const no = () => { throw new Error("ENOENT"); };
-  const open = [], dev = (fd) => devs[open[fd - 100]] ?? no();
-  return {
-    readlinkSync: (p) => {
-      const [, pid, fd] = /^\/proc\/(\d+|self)\/fd\/(\d+)$/.exec(p) ?? [];
-      return pid === "self" ? open[fd - 100] ?? no() : procs[pid]?.fd[fd] ?? no();
-    },
-    readFileSync: (p) => { const pid = /^\/proc\/(\d+)\/stat$/.exec(p)?.[1]; return procs[pid] ? `${pid} (a) b) S ${procs[pid].ppid} 1 1 0 -1` : no(); },
-    openSync: (p) => { const [, pid, fd] = /^\/proc\/(\d+)\/fd\/(\d)$/.exec(p) ?? []; const t = procs[pid]?.opens?.[fd] ?? procs[pid]?.fd[fd] ?? no(); return open.push(t) + 99; },
-    fstatSync: (fd) => { const d = dev(fd); return { isCharacterDevice: () => d.char, uid: d.uid }; },
-    isatty: (fd) => dev(fd).char,
-    closeSync: () => {},
-    open,
-  };
-}
-const pt = (procs, devs, pid, uid) => { const f = fakeProc(procs, devs), fd = parentTerminal(f, pid, uid); return fd === null ? null : f.open[fd - 100]; };
-
-test("#30: parentTerminal opens the first parent's own pts or tty; pipes, files, /dev/null, other users, swapped fds and deep or looping chains give none", () => {
-  const devs = { "/dev/pts/3": { char: true, uid: 7 }, "/dev/pts/4": { char: true, uid: 7 }, "/dev/pts/9": { char: true, uid: 0 }, "/dev/null": { char: true, uid: 7 }, "/home/u/f": { char: false, uid: 7 }, "/dev/tty2": { char: true, uid: 7 } };
-  const chain = { 40: { ppid: 30, fd: ["pipe:[5]", "/dev/null", "/home/u/f"] }, 30: { ppid: 20, fd: ["socket:[6]", "/dev/pts/9", "/dev/ptmx"] }, 20: { ppid: 10, fd: ["/dev/null", "/dev/pts/3"] }, 10: { ppid: 1, fd: ["/dev/pts/4"] } };
-  assert.equal(pt(chain, devs, 40, 7), "/dev/pts/3", "the nearest parent with a terminal of this user");
-  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/tty2"] } }, devs, 5, 7), "/dev/tty2");
-  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"] } }, { "/dev/pts/3": { char: false, uid: 7 } }, 5, 7), null, "not a character device");
-  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"], opens: ["/home/u/f"] } }, devs, 5, 7), null, "the fd changed to a file after the readlink: the opened fd is checked");
-  assert.equal(pt({ 5: { ppid: 1, fd: ["/dev/pts/3"], opens: ["/dev/null"] } }, devs, 5, 7), null, "the fd changed to /dev/null after the readlink");
-  assert.equal(pt({ 40: chain[40], 30: { ...chain[30], ppid: 1 } }, devs, 40, 7), null, "pipe, file, /dev/null, socket, ptmx, another user's pts");
-  const deep = { 50: { ppid: 49, fd: [] }, 49: { ppid: 48, fd: [] }, 48: { ppid: 47, fd: [] }, 47: { ppid: 46, fd: [] }, 46: { ppid: 1, fd: ["/dev/pts/3"] } };
-  assert.equal(pt(deep, devs, 50, 7), null, "at most 4 parents");
-  assert.equal(pt({ 8: { ppid: 8, fd: ["pipe:[1]"] } }, devs, 8, 7), null, "a loop ends");
-  assert.equal(pt({}, devs, 8, 7), null, "no /proc (macOS)");
-});
-
-// #30: Claude Code runs the hook with no controlling terminal (new session, stdio piped), so /dev/tty fails. A real pty plays the
-// owner's terminal: an orphaned "Claude Code" (no outer terminal in its parent chain) holds it as stdio and controlling terminal and
-// starts the hook in a new session with piped stdio, as Claude Code does. Mode "none": the same without any terminal.
-const PTY_HARNESS = String.raw`
-import os, sys, pty, fcntl, termios, subprocess, time, select
-mode, root, home, inp, out = sys.argv[1:6]
-master, slave = pty.openpty()
-if os.fork() == 0:
-    os.setsid()
-    mid = os.getpid()
-    if os.fork(): os._exit(0)
-    while os.getppid() == mid: time.sleep(0.01)
-    os.setsid()
-    if mode == "pty":
-        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-        for fd in (0, 1, 2): os.dup2(slave, fd)
-    else:
-        os.dup2(os.open("/dev/null", os.O_RDWR), 0)
-        r, w = os.pipe(); os.dup2(w, 1)
-        os.dup2(os.open(out + ".file", os.O_WRONLY | os.O_CREAT, 0o600), 2)
-    os.close(master); os.close(slave)
-    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=root, HOME=home)
-    p = subprocess.run(["sh", "-c", 'sh "$CLAUDE_PLUGIN_ROOT/hooks/unattended.sh"'], input=open(inp, "rb").read(), capture_output=True, env=env, start_new_session=True)
-    open(out + ".stdout", "wb").write(p.stdout); open(out + ".stderr", "wb").write(p.stderr)
-    open(out + ".done", "w").close()
-    os._exit(0)
-os.close(slave)
-got, end = b"", time.time() + 20
-while time.time() < end:
-    if select.select([master], [], [], 0.2)[0]:
-        try: d = os.read(master, 4096)
-        except OSError: break  # no process holds the pty any more
-        got += d
-    elif os.path.exists(out + ".done"): break
-while not os.path.exists(out + ".done") and time.time() < end: time.sleep(0.05)
-open(out + ".tty", "wb").write(got)
-`;
-const ptySkip = process.platform !== "linux" || !existsSync("/proc/self/fd") ? "needs Linux /proc"
-  : spawnSync("python3", ["-c", "import pty, termios"]).status !== 0 ? "needs python3 with pty and termios" : false;
-
-test("#30: a real pty: the code reaches the terminal of the hook's parent, never the hook's output; confirm opens the go; no terminal, no code", { skip: ptySkip }, () => {
-  for (const mode of ["pty", "none"]) {
-    const h = home(), out = join(h, "run"), inp = join(h, "in.json");
-    try {
-      writeFileSync(inp, JSON.stringify(prompt("/orbit:unattended on 12h", { cwd: h, transcript_path: join(h, "t.jsonl") })));
-      const r = spawnSync("python3", ["-c", PTY_HARNESS, mode, repo, h, inp, out], { encoding: "utf8", timeout: 30_000 });
-      assert.equal(r.status, 0, r.stderr);
-      const tty = readFileSync(`${out}.tty`, "utf8"), stdout = readFileSync(`${out}.stdout`, "utf8"), stderr = readFileSync(`${out}.stderr`, "utf8");
-      const reason = JSON.parse(stdout).reason;
-      const code = /code: ([A-Z2-9]{4}-[A-Z2-9]{4})/.exec(tty)?.[1];
-      if (mode === "none") {
-        assert.equal(code, undefined, "no terminal anywhere: no code");
-        assert.match(reason, /cannot reach your terminal/);
-        assert.deepEqual(files(h), [], "nothing pending");
-        continue;
-      }
-      assert.ok(code, `the code is on the pty: ${JSON.stringify(tty)} / reason: ${reason}`);
-      assert.ok(!stdout.includes(code) && !stderr.includes(code) && !reason.includes(code), "the code is never in the hook's output");
-      assert.match(reason, /one-time code is on your terminal/);
-      onPrompt(prompt(`/orbit:unattended confirm ${code}`), { HOME: h });
-      assert.ok(goState({ session_id: SID, permission_mode: "bypassPermissions" }, { HOME: h }), "confirm with the pty code opens the go");
-    } finally { rmSync(h, { recursive: true, force: true }); }
-  }
 });

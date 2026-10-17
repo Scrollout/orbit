@@ -1,21 +1,14 @@
-// UserPromptSubmit hook: `/orbit:unattended on [dur] | confirm <code> | off | status`. Zero dependencies.
-// The prompt hook fires the same way for a typed prompt, a subagent's hand-back, a scheduled prompt and a cross-session message,
-// with no field naming the source, so `on` opens nothing: it writes a one-time code to the owner's terminal (/dev/tty, never the
-// block reason, which may reach the transcript; when the hook has no controlling terminal, the terminal of the Claude Code that ran it, #30) and stores only its hash for 2 minutes. `confirm <code>` with that code opens the
-// go for this session; one wrong confirm clears the pending code. `off` and `status` are accepted from any source (they only close
-// or show). Every handled prompt is blocked, so the model never sees it. Without a terminal no code is issued: no go.
-import { createHash, randomInt, timingSafeEqual } from "node:crypto";
-import { chmodSync, closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readlinkSync, rmSync, writeFileSync, writeSync } from "node:fs";
-import { isatty } from "node:tty";
+// `node <plugin root>/hooks/unattended.mjs on [dur] | off | status`: the one Bash call of /orbit:unattended (commands/unattended.md).
+// Zero dependencies. The guard (hooks/guard.mjs) answers `on` with a permission "ask" in every mode, bypassPermissions too: the
+// owner's answer to that prompt is the proof (the model can ask for it, not answer it). `off` and `status` run silently. The
+// session is CLAUDE_CODE_SESSION_ID, which Claude Code sets in the Bash environment (the hook input's session_id).
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { GO_MAX_MS, PENDING_MS, goState, stateDir, validSession } from "./go.mjs";
+import { GO_MAX_MS, goState, stateDir, validSession } from "./go.mjs";
 
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const DEFAULT_MS = 12 * 3600_000;
-const USAGE = "usage: /orbit:unattended on [duration] (like 8h or 90m, at most 24 h; default 12h) | confirm <code> | off | status";
-const hash = (sid, code) => createHash("sha256").update(`${sid}:${code}`).digest();
-const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
+const USAGE = "usage: /orbit:unattended on [duration] (like 8h or 90m, at most 24 h; default 12h) | off | status";
 const at = (ms) => new Date(ms).toISOString().slice(11, 16) + " UTC";
 
 function duration(arg) {
@@ -25,91 +18,30 @@ function duration(arg) {
   return Number(m[1]) * (m[2] === "h" ? 3600_000 : 60_000);
 }
 
-// Claude Code starts hooks without a controlling terminal, so /dev/tty fails (#30). Linux: the first of fd 0-2 of the hook's
-// nearest parents (Claude Code) that links to /dev/pts/N or /dev/ttyN is opened through /proc/<pid>/fd/<n> itself, and that open
-// fd must be a terminal (character device, isatty) of this user whose own link is still /dev/pts/N or /dev/ttyN. Never a pipe,
-// file, socket or /dev/null, never the hook's own stdio (the agent can read those). Returns the open fd; elsewhere (no /proc) or
-// none found: null, no code.
-const TTY = /^\/dev\/(pts\/\d+|tty\d+)$/;
-export function parentTerminal(fs = { readlinkSync, readFileSync, openSync, fstatSync, closeSync, isatty }, pid = process.ppid, uid = process.getuid?.()) {
-  for (let i = 0; i < 4 && pid > 1; i++) {
-    for (const n of [0, 1, 2]) {
-      const p = `/proc/${pid}/fd/${n}`;
-      let fd = null;
-      try {
-        if (!TTY.test(fs.readlinkSync(p))) continue;
-        fd = fs.openSync(p, constants.O_WRONLY | constants.O_NOCTTY);
-        const s = fs.fstatSync(fd);
-        if (s.isCharacterDevice() && s.uid === uid && fs.isatty(fd) && TTY.test(fs.readlinkSync(`/proc/self/fd/${fd}`))) return fd;
-      } catch { /* gone or not ours */ }
-      if (fd !== null) try { fs.closeSync(fd); } catch { /* already closed */ }
-    }
-    try { pid = Number(/\) \S+ (\d+)[^)]*$/.exec(fs.readFileSync(`/proc/${pid}/stat`, "utf8"))?.[1]); } catch { return null; }
-  }
-  return null;
-}
-
-function writeFd(fd, text) {
-  try { if (!isatty(fd)) return false; writeSync(fd, text); return true; } catch { return false; } finally { try { closeSync(fd); } catch { /* closing a terminal that went away */ } }
-}
-
-function writeTty(text) {
-  let fd = null;
-  try { fd = openSync("/dev/tty", constants.O_WRONLY | constants.O_NOCTTY); } catch { /* no controlling terminal */ }
-  if (fd !== null && writeFd(fd, text)) return true;
-  fd = parentTerminal();
-  return fd !== null && writeFd(fd, text);
-}
-
-function save(dir, name, data) {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  chmodSync(dir, 0o700);
-  writeFileSync(join(dir, name), JSON.stringify(data), { mode: 0o600 });
-}
-
-// io: { now(): ms, tty(text): boolean, code?(): string } (tests pass their own). Returns { block: reason } or null.
-export function onPrompt(input, env, io = { now: Date.now, tty: writeTty }) {
-  const text = typeof input?.prompt === "string" ? input.prompt.trim() : "";
-  if (text !== "/orbit:unattended" && !text.startsWith("/orbit:unattended ")) return null;
-  const [sub, arg, ...extra] = text.split(/\s+/).slice(1);
-  const block = (reason) => ({ block: `orbit unattended: ${reason}` });
-  const sid = input?.session_id, dir = stateDir(env), now = io.now();
-  if (!validSession(sid) || !dir) return block("this prompt has no session id (or no home directory), so no go can open.");
-  const pending = join(dir, `pending-${sid}.json`), goFile = join(dir, `go-${sid}.json`);
-  const clear = (...f) => { for (const x of f) rmSync(x, { force: true }); };
-  if (sub === "off" && arg === undefined) { clear(goFile, pending); return block("off. The go for this session is closed."); }
+// Returns the line to print.
+export function unattended(args, env, now = Date.now()) {
+  const [sub, arg, ...extra] = args;
+  const sid = env?.CLAUDE_CODE_SESSION_ID, dir = stateDir(env);
+  const say = (text) => `orbit unattended: ${text}`;
+  if (!validSession(sid) || !dir) return say("no session id (CLAUDE_CODE_SESSION_ID) or no home directory, so no go can open.");
+  const goFile = join(dir, `go-${sid}.json`);
+  if (sub === "off" && arg === undefined) { rmSync(goFile, { force: true }); return say("off. The go for this session is closed."); }
   if (sub === "status" && arg === undefined) {
-    const g = goState({ ...input, permission_mode: "bypassPermissions", agent_id: undefined }, env, now);
-    return block(g ? `open until ${at(g.until)} for this session (it counts only in bypassPermissions mode, in the main thread).` : "no go is open for this session.");
+    const g = goState({ session_id: sid, permission_mode: "bypassPermissions" }, env, now);
+    return say(g ? `open until ${at(g.until)} for this session (it counts only in bypassPermissions mode, in the main thread).` : "no go is open for this session.");
   }
   if (sub === "on" && extra.length === 0) {
     const ms = duration(arg);
-    if (ms === null || ms < 60_000 || ms > GO_MAX_MS) return block(`the duration must be like 8h or 90m, from 1m to 24 h. ${USAGE}`);
-    const code = io.code?.() ?? Array.from({ length: 8 }, () => ALPHABET[randomInt(ALPHABET.length)]).join("").replace(/^(.{4})/, "$1-");
-    clear(pending);
-    if (!io.tty(`\r\n  Orbit unattended go code: ${code}  (2 minutes)\r\n  type: /orbit:unattended confirm ${code}\r\n\r\n`)) return block("Orbit cannot reach your terminal, so no code was issued and no go can open.");
-    save(dir, `pending-${sid}.json`, { session_id: sid, hash: hash(sid, code).toString("hex"), expires: now + PENDING_MS, duration_ms: ms });
-    return block(`a one-time code is on your terminal (not in this conversation). Type /orbit:unattended confirm <code> within 2 minutes to open a go of ${Math.round(ms / 60_000)} minutes. If you did not ask for this, ignore it.`);
+    if (ms === null || ms < 60_000 || ms > GO_MAX_MS) return say(`the duration must be like 8h or 90m, from 1m to 24 h. ${USAGE}`);
+    const until = now + ms;
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    writeFileSync(goFile, JSON.stringify({ session_id: sid, opened: now, until }), { mode: 0o600 });
+    return say(`go open until ${at(until)} for this session. It counts only in bypassPermissions mode, in the main thread; it allows only the pinned base push of a verified merge and the delete of a merged topic branch. Close it with /orbit:unattended off.`);
   }
-  if (sub === "confirm" && arg !== undefined && extra.length === 0) {
-    const p = readJson(pending);
-    clear(pending);   // one try: right or wrong, the pending code is spent
-    if (!p || p.session_id !== sid || !(p.expires > now) || typeof p.hash !== "string" || !Number.isFinite(p.duration_ms)) return block("no code is pending for this session (or it expired), so no go opened.");
-    const want = Buffer.from(p.hash, "hex"), got = hash(sid, arg.toUpperCase());
-    if (want.length !== got.length || !timingSafeEqual(want, got)) return block("wrong code. The pending code is cleared; start again with /orbit:unattended on.");
-    const until = now + Math.min(p.duration_ms, GO_MAX_MS);
-    save(dir, `go-${sid}.json`, { session_id: sid, opened: now, until });
-    return block(`go open until ${at(until)} for this session. It counts only in bypassPermissions mode, in the main thread; it allows only the pinned base push of a verified merge and the delete of a merged topic branch. Close it with /orbit:unattended off.`);
-  }
-  return block(USAGE);
+  return say(USAGE);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  let r = null, raw = "";
-  try { raw = readFileSync(0, "utf8"); r = onPrompt(JSON.parse(raw), process.env); } catch {
-    // An error on our own command still keeps it (and any code in it) away from the model; no go opens.
-    r = raw.includes("/orbit:unattended") ? { block: "orbit unattended: the hook failed, so no go opened." } : null;
-  }
-  if (r) process.stdout.write(JSON.stringify({ decision: "block", reason: r.block }) + "\n");
-  process.exit(0);
+  process.stdout.write(unattended(process.argv.slice(2), process.env) + "\n");
 }

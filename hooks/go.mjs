@@ -1,12 +1,11 @@
 // The unattended go (Orbit 0.21.0): its state, and the evidence for the only two shared actions it allows. Zero dependencies.
-// The owner opens a go with `/orbit:unattended on [dur]` and `confirm <code>` (hooks/unattended.mjs). The state file is
+// The owner opens a go with `/orbit:unattended on [dur]` (hooks/unattended.mjs, behind a permission prompt). The state file is
 // forgeable by any program the agent runs, so the go is intent only: safety rests on the evidence below, checked on GitHub and
 // in git for the exact object pushed. A go counts only for its own session's main thread under bypassPermissions, at most 24 h.
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename, isAbsolute, join } from "node:path";
 
 export const GO_MAX_MS = 24 * 3600_000;
-export const PENDING_MS = 120_000;
 export const EVIDENCE_MS = 6000;   // every gh and git evidence call of one hook run shares it
 const SID = /^[\w-]{1,128}$/;
 
@@ -30,14 +29,6 @@ export function goSession(input, env, now = Date.now()) {
 export function goState(input, env, now = Date.now()) {
   if (!input || (input.agent_id !== undefined && input.agent_id !== null)) return null;
   return goSession(input, env, now);
-}
-
-// True while any session has a confirm code pending (unexpired).
-export function anyPending(env, now = Date.now()) {
-  const dir = stateDir(env);
-  let names = [];
-  try { names = dir ? readdirSync(dir) : []; } catch { return false; }
-  return names.some((n) => n.startsWith("pending-") && n.endsWith(".json") && (readJson(join(dir, n))?.expires ?? 0) > now);
 }
 
 // DEC-08's trailer rule: the key's line in the last paragraph, with every Co-Authored-By line.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.2
+The unattended go opens with a permission prompt, no code (rules 1.15.8, command `unattended` 1.1.0; scenario pin and manifest updated). Fixes #38.
+- **Open with an ask** (`commands/unattended.md`, `hooks/unattended.mjs`, `hooks/guard.mjs`): `/orbit:unattended on [dur] | off | status` has the model run one Bash call, `node <plugin root>/hooks/unattended.mjs <args>`. The guard answers the exact `on` command with a permission prompt in every mode, `bypassPermissions` too ("open an unattended go of N minutes for this session"); the owner's answer is the proof, which the model can ask for but not answer, the same in the terminal, the IDE and Claude on the web. `off` and `status` in that shape run silently. Any other command naming the script (another path, an option, an env prefix, a compound, `sh -c`, a here-doc, a redirect) is denied. The go binds to `CLAUDE_CODE_SESSION_ID`; default 12 h, at most 24 h, as before.
+- **Removed**: the UserPromptSubmit hook (`hooks/unattended.sh`), the one-time code, its terminal write (the screen redraw garbled it), `confirm`, the 2 minute pending window and the reads denied while a code was pending.
+- **Docs**: README (Unattended go) and [docs/threat-model.md](docs/threat-model.md) state that the proof is the owner's answer to the permission prompt.
+
 ## 0.21.1
 Guard residuals accepted at 0.21.0 (rules 1.15.7; scenario pin and manifest updated). Fixes #25, #27 to #36.
 - **Glob options**: on a line with `shopt`, `BASHOPTS` or a command whose program the guard cannot tell (also inside `sh -c` or `eval`), every glob in a write target or a link or copy operand is shared: `shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json` no longer passes silently. `rm *.log` stays silent, also after `set -euo pipefail` (no `set` option widens matching).

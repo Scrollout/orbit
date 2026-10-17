@@ -14,9 +14,9 @@
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
-import { EVIDENCE_MS, anyPending, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
+import { EVIDENCE_MS, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
 const EDIT_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
@@ -1656,9 +1656,8 @@ function unreadableDecision(input, env = {}) {
 
 // ---------- the unattended go's own state, in every mode ----------
 // ~/.claude (and CLAUDE_CONFIG_DIR) holds Claude Code's settings, plugins and transcripts and Orbit's go state: no session
-// writes it (memory and plan notes excepted), and while a confirm code is pending no session reads it.
+// writes it (memory and plan notes excepted).
 const CORE_TOOLS = new Set(["Bash", ...EDIT_TOOLS, "Read", "Grep", "Glob", "Agent", "Task"]);
-const PENDING_TEXT = [".claude", "capture-pane", "hardcopy", "/proc/", "/dev/pts", "/dev/tty", "CLAUDE_CONFIG_DIR"];
 function claudeDirs(env) {
   const d = [];
   if (typeof env.HOME === "string" && isAbsolute(env.HOME)) d.push(real(join(env.HOME, ".claude")));
@@ -1671,6 +1670,25 @@ const noteFile = (rel) => {
   return (seg[0] === "projects" && seg[2] === "memory" && seg.length >= 4) || (seg[0] === "plans" && seg.length === 2);
 };
 const stateDeny = (what, action, input) => outwardReason("DENY", { what, action }, input, { do: "the owner does it, outside the agent" });
+
+// The go's one opening command, `node <plugin root>/hooks/unattended.mjs on [dur]`, alone and literal: ask in every mode, the
+// owner's answer is the proof. `off` or `status` in the same shape: allowed. Any other command naming the script (another path,
+// an option, an env prefix, a compound, sh -c, a here-doc, a redirect): denied. undefined: the command does not name it.
+const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "hooks", "unattended.mjs"));
+function goCommand(cmds, text, input) {
+  if (!text.includes("unattended.mjs")) return undefined;
+  const c = cmds.length === 1 && !cmds.complex ? cmds[0] : null;
+  const w = c && !c.depth && !c.redirs.length && c.heredoc === null && c.words.every((x) => x.lit !== null) ? c.words.map((x) => x.lit) : [];
+  if (w[0] === "node" && isAbsolute(w[1] ?? "") && realOrNull(w[1]) === GO_SCRIPT) {
+    const m = w.length === 4 ? /^(\d{1,4})([mh])$/.exec(w[3]) : null;
+    if (w[2] === "on" && (w.length === 3 || m)) {
+      const min = m ? Number(m[1]) * (m[2] === "h" ? 60 : 1) : 720;
+      return { ask: outwardReason("ASK", { what: `open an unattended go of ${min} minutes for this session`, action: `/orbit:unattended on${m ? ` ${w[3]}` : ""}` }, input, { do: "approve only if you typed /orbit:unattended on" }) };
+    }
+    if ((w[2] === "off" || w[2] === "status") && w.length === 3) return null;
+  }
+  return stateDeny("a command naming the unattended go's script", "only the exact /orbit:unattended command runs it", input);
+}
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
 // An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
@@ -1841,19 +1859,6 @@ function claudeWrite(cmds, st, dirs) {
   return null;
 }
 
-// While a code is pending: a read of a ~/.claude path, the transcripts, a pane capture or a pty, by any tool.
-function pendingRead(tool, ti, cwd, dirs, env) {
-  const inDirs = (p) => { if (typeof p !== "string" || !p) return false; const f = realOrNull(resolve(cwd ?? "/", p)); return f === null || dirs.some((d) => inside(d, f)); };
-  if (tool === "Read" || tool === "NotebookRead") return inDirs(ti.file_path ?? ti.notebook_path) || (typeof ti.file_path === "string" && ti.file_path.includes(".claude"));
-  if (tool === "Grep" || tool === "Glob") return inDirs(ti.path ?? cwd ?? "/") || JSON.stringify(ti).includes(".claude");
-  if (tool !== "Bash") return false;
-  const text = typeof ti.command === "string" ? ti.command : "";
-  if (!text || PENDING_TEXT.some((x) => text.includes(x)) || inDirs(cwd)) return true;
-  let cmds;
-  try { cmds = parseShell(text, env); } catch { return true; }
-  return cmds.some((c) => [...c.words, ...c.redirs.map((x) => x.target)].some((w) => w.exp === null || (isAbsolute(w.exp) && inDirs(w.exp))));
-}
-
 // Under the go: the pinned base push and the literal delete of a merged topic branch. null: not one of them (classify as
 // usual); { allow: true }; or the deny reason naming the check that failed.
 function goAction(cmds, cwd, input, getCtx) {
@@ -1887,7 +1892,6 @@ export function guard(input, env = {}, ctx = null) {
   const cwd = typeof input?.cwd === "string" && input.cwd ? resolve(input.cwd) : null;
   const getCtx = () => ctx ?? (ctx = realCtx(cwd ?? env.CLAUDE_PROJECT_DIR ?? process.cwd(), env));
   const dirs = claudeDirs(env);
-  if (anyPending(env) && pendingRead(tool, ti, cwd, dirs, env)) return stateDeny("read while an unattended code is pending", `${safe(String(tool))} of a Claude Code file, a pane or a pty`, input);
   if (typeof tool === "string" && !CORE_TOOLS.has(tool) && JSON.stringify(ti).toLowerCase().includes("orbit:unattended")) return stateDeny("a scheduled or sent /orbit:unattended", safe(tool), input);
   if (EDIT_TOOLS.includes(tool)) {
     const fp = ti.file_path ?? ti.notebook_path;
@@ -1910,9 +1914,12 @@ export function guard(input, env = {}, ctx = null) {
   if (typeof ti.command !== "string") return op ? `OPR-01: the operator session does not run a Bash call without a command string; ${DELEGATE}.` : null;
   let cmds;
   try { cmds = parseShell(ti.command, env); } catch (e) {
+    if (ti.command.includes("unattended.mjs")) return goCommand([], ti.command, input);
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
+  const gc = goCommand(cmds, ti.command, input);
+  if (gc !== undefined) return gc;
   const links = [];
   const w = claudeWrite(cmds, { cwd, env, assigned: new Set(), temp: new Set(), complex: cmds.complex, links, globOpts: GLOB_OPTS.test(ti.command) }, dirs);
   if (w) return stateDeny("write to ~/.claude", safe(w), input);
