@@ -58,7 +58,8 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
           `node ${repo}/hooks/unattended''.mjs on 24h; x=(a)`, `a=(1); node ${repo}/hooks/unattende?.mjs on 24h`, `bash -c 'a=(1); node ${repo}/hooks/unattende?.mjs on 24h'`,
           `eval 'a=(1); node ${repo}/hooks/unattende?.mjs on 24h'`, `a=(1); node ${repo}/hooks/u*.mjs on 24h`,
           `find ${repo}/hooks -name '*.test.mjs' -prune -o -exec node {} on 24h \\;`, `find ${repo}/hooks ! -name zz -exec node {} on 24h \\;`,
-          `find ${repo}/hooks -not -name zz -exec node {} on 24h \\;`, `find ${repo}/hooks -name zz -o -exec node {} on 24h \\;`,
+          `find ${repo}/hooks -not -name zz -exec node {} on 24h \\;`, `find ${repo}/hooks -name zz -o -exec node {} on 24h \\;`, `find ${repo}/hooks -name zz , -exec node {} on 24h \\;`,
+          `a=(1); node ${repo}/hooks/una\\\ntt*.mjs on 24h`, `a=(1); no\\\nde ${repo}/hooks/unatt*.mjs on 24h`, `a=(1); node $'${repo}/hooks/\\165nattended.mjs' on 24h`, `a=(1); node $'${repo}/hooks/\\x75nattended.mjs' on 24h`,
           `find ${repo}/hooks -name 'unattende?.mjs' -exec timeout 9 node {} on 24h \\;`, `find ${repo}/hooks -name 'unattende?.mjs' -exec command node {} on 24h \\;`,
           `find ${repo}/hooks -name 'unattende?.mjs' -exec env node {} on 24h \\;`, `find ${repo}/hooks -name 'unattende?.mjs' -exec nice node {} on 24h \\;`,
           `find ${repo}/hooks -name 'unattende?.mjs' -exec xargs node \\;`]) {
@@ -66,7 +67,8 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
         }
         // A glob that cannot match unattended.mjs, or a variable operand, is not the go's command: this rule does not deny it.
         for (const c of ["node --test scripts/*.test.mjs", "node --check scripts/*.test.mjs", "cd hooks && node --test *.test.mjs", 'node "$HOME/x.mjs"',
-          'node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs"', 'node "$X" on 24h', "find . -name '*.test.mjs' -exec node --test {} +", "x=(a); node --test scripts/*.test.mjs", "a=(1); ls hooks", "bash -c 'a=(1); node --check x.mjs'"]) {
+          'node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs"', 'node "$X" on 24h', "find . -name '*.test.mjs' -exec node --test {} +", "x=(a); node --test scripts/*.test.mjs", "a=(1); ls hooks", "bash -c 'a=(1); node --check x.mjs'",
+          "a=(1); node --test scripts/unattended.test.mjs", "a=(1); grep -n unattended README.md && node -v", 'a=(1); git commit -m "guard: unattended go fixes" && node scripts/check.mjs']) {
           const r = g(c);
           assert.doesNotMatch(String(r?.ask ?? r ?? ""), /unattended go's script/, `${mode} ${k}: ${c}`);
         }

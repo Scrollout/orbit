@@ -1678,20 +1678,24 @@ const stateDeny = (what, action, input) => outwardReason("DENY", { what, action 
 // A command names it (#38) when its text does, when a word (after the guard's expansion) does or resolves to it, when a glob
 // word can match it, when node, nodejs, bun or deno (also through xargs) has a glob word whose last segment can match
 // unattended.mjs, when a find whose -name or -path can match it (or that has none) runs one of them by -exec or into xargs,
-// or when the command inside sh -c, bash -c or eval does, or when a text the guard cannot parse has unatt or such a glob next to a runtime. A name held in a variable, a program the model writes first or
+// or when the command inside sh -c, bash -c or eval does, or when a text the guard cannot parse has a runtime word and a token that is or can match unattended.mjs. A name held in a variable, a program the model writes first or
 // another interpreter is not seen: the go is intent, the evidence gates carry the safety there.
 const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "hooks", "unattended.mjs"));
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
 const goGlob = (e) => (braces(e) ?? [null]).some((a) => a === null || segMatch(a.split("/").pop(), basename(GO_SCRIPT)));
 const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
-// A text the guard cannot parse: it names the go when, quotes and backslashes removed, it has "unatt" or a glob that can match
-// the script, next to a runtime word.
+// A text the guard cannot parse: denied when it has a runtime word and a token that is, or can match, the script name. The
+// text is cleaned first: line continuations removed, $'...' escapes decoded, quotes and backslashes removed; the tokens are
+// the pieces between whitespace and shell operators.
 const RUNTIME_WORD = /(?<![\w.-])(node|nodejs|bun|deno)(?![\w.-])/;
+const ansiC = (b) => b.replace(/\\(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|([\s\S]))/g, (m, o, x, u, U, c) =>
+  o ? String.fromCharCode(parseInt(o, 8) & 255) : x ? String.fromCharCode(parseInt(x, 16)) : u || U ? String.fromCodePoint(Math.min(parseInt(u || U, 16), 0x10ffff)) : c);
 function unparsedGo(text) {
-  const t = text.replace(/\$'|['"\\]/g, "");
-  return RUNTIME_WORD.test(t) && (t.includes("unatt") || (t.match(/[^\s;|&()<>]*[*?[{][^\s;|&()<>]*/g) ?? []).some(goGlob));
+  const t = text.replace(/\\\n/g, "").replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_, b) => ansiC(b)).replace(/\$'|['"\\]/g, "");
+  const name = basename(GO_SCRIPT);
+  return RUNTIME_WORD.test(t) && t.split(/[\s;|&()<>]+/).some((k) => (/[*?[{]/.test(k) ? goGlob(k) : k.split("/").pop() === name));
 }
-const FIND_OPS = new Set(["-o", "-or", "!", "-not", "-prune"]);
+const FIND_OPS = new Set(["-o", "-or", ",", "!", "-not", "-prune"]);
 function namesGo(cmds, text, cwd, env) {
   if (text.includes("unattended.mjs")) return true;
   const runs = (c) => { const r = resolveCmd(c.words); return RUNTIMES.has(r?.name) && r; };
@@ -1733,7 +1737,7 @@ function goCommand(cmds, text, input, cwd, env) {
   }
   return goDeny(input);
 }
-const goDeny = (input) => stateDeny("a command naming the unattended go's script, or a glob or spelling that can match it", "only the exact /orbit:unattended command runs it", input);
+const goDeny = (input) => stateDeny("a command naming the unattended go's script, or a word that can match it", "only the exact /orbit:unattended command runs it", input);
 
 // ---------- globs in an ln/cp operand or a write target (#22) ----------
 // An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
