@@ -40,12 +40,14 @@ export function trailerOk(msg, key) {
 }
 
 // The go's command shapes, exactly, alone in the call (Anything else, another spelling, an option, a variable, is not a go action):
-// - base: `git [-C <dir>] push origin <40-hex>:refs/heads/<branch>` ({ sha }), or `<branch>`, `HEAD:<branch>`, `<branch>:<branch>`
-//   ({ src }: the local ref the push sends, resolved by the evidence);
+// - base: `git [-C <dir>] push origin <40-hex>:refs/heads/<branch>` ({ sha });
+// - tag: `git [-C <dir>] push origin <40-hex>:refs/tags/<vX.Y.Z>` ({ sha }: the tag object, or the commit of a lightweight tag; #41);
+//   pinned only: git re-resolves a ref at push time, so the go allows exactly the object it checked. The ref forms `<branch>`,
+//   `HEAD:<branch>`, `<branch>:<branch>` ({ src }) and `vX.Y.Z`, `refs/tags/vX.Y.Z` ({ ref: true }) are read only to deny them
+//   with the pinned command to run instead;
 // - delete: `git [-C <dir>] push origin --delete <branch>`;
-// - tag: `git [-C <dir>] push origin <vX.Y.Z | refs/tags/vX.Y.Z>`, one semver tag (0.22.1, #41);
-// - release: `gh release create <vX.Y.Z>` with only -R/--repo, -t/--title, -F/--notes-file (a path with no dot segment),
-//   -n/--notes, --verify-tag, --latest, --target (all literal; the guard checks repo, target and the tag).
+// - release: `gh release create <vX.Y.Z>` with only -R/--repo, -t/--title, -n/--notes, --verify-tag, --latest, --target (all
+//   literal; the guard checks repo, target and the tag). No -F/--notes-file: gh would read any path (/proc/self/environ, /dev/stdin).
 export const SEMVER_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export function goForm(cmds) {
   if (cmds.length !== 1 || cmds.complex) return null;
@@ -62,10 +64,14 @@ export function goForm(cmds) {
     const dst = rest[0].slice(52);
     return name(dst) ? { kind: "base", dir, sha: rest[0].slice(0, 40), dst } : null;
   }
+  if (rest.length === 1 && /^[0-9a-f]{40}:refs\/tags\//.test(rest[0])) {
+    const tag = rest[0].slice(51);
+    return SEMVER_TAG.test(tag) ? { kind: "tag", dir, sha: rest[0].slice(0, 40), tag } : null;
+  }
   if (rest.length === 2 && rest[0] === "--delete" && name(rest[1])) return { kind: "delete", dir, name: rest[1] };
   if (rest.length !== 1) return null;
   const r = rest[0], t = r.startsWith("refs/tags/") ? r.slice(10) : r;
-  if (SEMVER_TAG.test(t)) return { kind: "tag", dir, tag: t };
+  if (SEMVER_TAG.test(t)) return { kind: "tag", dir, tag: t, ref: true };
   const [src, dst, extra] = r.split(":");
   if (extra !== undefined) return null;
   if (dst === undefined) return name(src) ? { kind: "base", dir, src, dst: src } : null;
@@ -74,7 +80,7 @@ export function goForm(cmds) {
 
 function releaseForm(w) {
   if (w[1] !== "release" || w[2] !== "create") return null;
-  const VAL = { "-R": "repo", "--repo": "repo", "-t": "title", "--title": "title", "-F": "file", "--notes-file": "file", "-n": "notes", "--notes": "notes", "--target": "target" };
+  const VAL = { "-R": "repo", "--repo": "repo", "-t": "title", "--title": "title", "-n": "notes", "--notes": "notes", "--target": "target" };
   const o = { kind: "release", dir: null, tag: null, repo: null, target: null };
   const seen = new Set();
   for (let i = 3; i < w.length; i++) {
@@ -84,7 +90,6 @@ function releaseForm(w) {
       const v = eq > 0 ? a.slice(eq + 1) : w[++i];
       if (v === undefined || v.startsWith("-") || seen.has(VAL[f])) return null;
       seen.add(VAL[f]);
-      if (VAL[f] === "file" && (!v || v.split("/").some((s) => s.startsWith(".")) || v.startsWith("~"))) return null;
       if (VAL[f] === "repo" || VAL[f] === "target") o[VAL[f]] = v;
       continue;
     }
@@ -118,14 +123,16 @@ export function githubRepo(url) {
 
 // ev: { git(dir, ...args), gh(apiPath) }, each { code, out } or a failure without a code (a timeout or an error).
 const out = (r) => (r && r.code === 0 && typeof r.out === "string" ? r.out : null);
-// The URL `git push origin` uses: the push URL (pushurl, pushInsteadOf) must equal the fetch URL (insteadOf applied) and be a
-// github.com repository; every later read (ls-remote, the gh owner/repo) goes to it. null on any mismatch or failure.
+// The URL `git push origin` uses: origin has exactly one fetch URL and one push URL (get-url --all), and the push URL (pushurl,
+// pushInsteadOf) equals the fetch URL (insteadOf applied) on github.com; the gh owner/repo comes from it. Every ref read is
+// `git ls-remote origin`, so git applies the same single url rewrite as the push (the rewritten URL would be rewritten again).
+// null on any mismatch or failure.
 export function pushUrl(ev, dir) {
-  const fetch = out(ev.git(dir, "remote", "get-url", "origin")), push = out(ev.git(dir, "remote", "get-url", "--push", "origin"));
+  const fetch = out(ev.git(dir, "remote", "get-url", "--all", "origin")), push = out(ev.git(dir, "remote", "get-url", "--push", "--all", "origin"));
   return fetch && push && fetch === push && !fetch.includes("\n") && githubRepo(fetch) ? fetch : null;
 }
-const remoteTip = (ev, dir, url, b) => {
-  const l = out(ev.git(dir, "ls-remote", url, `refs/heads/${b}`))?.split("\n").filter(Boolean);
+const remoteTip = (ev, dir, b) => {
+  const l = out(ev.git(dir, "ls-remote", "origin", `refs/heads/${b}`))?.split("\n").filter(Boolean);
   if (!l || l.length !== 1) return null;
   const [sha, ref] = l[0].split("\t");
   return ref === `refs/heads/${b}` && /^[0-9a-f]{40}$/.test(sha) ? sha : null;
@@ -150,7 +157,7 @@ export function baseEvidence(ev, dir, sha, base, trailerKey, requiredChecks = []
   const parents = g("rev-list", "--parents", "-n", "1", sha)?.split(/\s+/);
   if (!parents || parents.length !== 3 || parents[0] !== sha) return "it is not a two-parent merge";
   const [, p1, p2] = parents;
-  const head = remoteTip(ev, dir, url, base);
+  const head = remoteTip(ev, dir, base);
   if (head !== p1 && !(pushed && head === sha)) return pushed ? `it is neither the tip of origin/${base} nor its next merge` : `its first parent is not the tip of origin/${base}`;
   const trees = g("rev-parse", `${sha}^{tree}`, `${p2}^{tree}`)?.split("\n");
   if (!trees || trees.length !== 2 || !trees[0] || trees[0] !== trees[1]) return "its tree differs from the branch it merges";
@@ -181,25 +188,26 @@ export function baseEvidence(ev, dir, sha, base, trailerKey, requiredChecks = []
   return null;
 }
 
-// A colon-less refspec could be remapped by remote.origin.push, and push.followTags would send more tags: both must be unset
-// (git config exits 1) for the ref and tag forms. null when they are, else the reason.
+// What else a pinned push could send: remote.origin.push must be unset, push.followTags and submodule.recurse off, and
+// push.recurseSubmodules unset or no (git config exits 1 when unset). null when they hold, else the reason.
 export function pushConfigEvidence(ev, dir) {
-  const unset = (k) => { const r = ev.git(dir, "config", "--get-all", k); return r && r.code === 1; };
-  if (!unset("remote.origin.push")) return "remote.origin.push is set or cannot be read";
-  const ft = ev.git(dir, "config", "--bool", "--get", "push.followTags");
-  if (!(ft && (ft.code === 1 || (ft.code === 0 && ft.out === "false")))) return "push.followTags is on or cannot be read";
+  const r = (...a) => ev.git(dir, "config", ...a), off = (x, no) => x && (x.code === 1 || (x.code === 0 && x.out === no));
+  if (!off(r("--get-all", "remote.origin.push"), null)) return "remote.origin.push is set or cannot be read";
+  if (!off(r("--bool", "--get", "push.followTags"), "false")) return "push.followTags is on or cannot be read";
+  if (!off(r("--get-all", "push.recurseSubmodules"), "no")) return "push.recurseSubmodules is not no or cannot be read";
+  if (!off(r("--bool", "--get", "submodule.recurse"), "false")) return "submodule.recurse is on or cannot be read";
   return null;
 }
 
-// The commit a local ref names (rev-parse --verify), or null.
+// The commit a local ref or object names (rev-parse --verify), or null.
 export function localCommit(ev, dir, ref) {
   const s = out(ev.git(dir, "rev-parse", "--verify", "-q", `${ref}^{commit}`));
   return s && /^[0-9a-f]{40}$/.test(s) ? s : null;
 }
 
-// The commit a remote tag peels to, read from the push URL: the ^{} line of an annotated tag, else the tag's own line.
-export function remoteTagCommit(ev, dir, url, tag) {
-  const l = out(ev.git(dir, "ls-remote", url, `refs/tags/${tag}`))?.split("\n").filter(Boolean).map((x) => x.split("\t"));
+// The commit a remote tag peels to, read through origin: the ^{} line of an annotated tag, else the tag's own line.
+export function remoteTagCommit(ev, dir, tag) {
+  const l = out(ev.git(dir, "ls-remote", "origin", `refs/tags/${tag}`))?.split("\n").filter(Boolean).map((x) => x.split("\t"));
   if (!l || !l.length || l.length > 2 || l.some(([s]) => !/^[0-9a-f]{40}$/.test(s))) return null;
   const own = l.filter(([, r]) => r === `refs/tags/${tag}`), peeled = l.filter(([, r]) => r === `refs/tags/${tag}^{}`);
   if (own.length !== 1 || peeled.length !== l.length - 1) return null;
@@ -210,9 +218,9 @@ export function remoteTagCommit(ev, dir, url, tag) {
 export function deleteEvidence(ev, dir, name, base) {
   const url = pushUrl(ev, dir);
   if (!url) return "origin's push URL is not its fetch URL on github.com";
-  const tip = remoteTip(ev, dir, url, name);
+  const tip = remoteTip(ev, dir, name);
   if (!tip) return "the branch is not on origin";
-  const bt = remoteTip(ev, dir, url, base);
+  const bt = remoteTip(ev, dir, base);
   if (!bt) return `origin/${base} cannot be read in time`;
   return out(ev.git(dir, "merge-base", "--is-ancestor", tip, bt)) === null ? `it is not merged into origin/${base}` : null;
 }

@@ -1940,9 +1940,10 @@ function claudeWrite(cmds, st, dirs) {
   return null;
 }
 
-// Under the go: the base push of a verified merge (pinned sha, or a ref naming it), the literal delete of a merged topic branch,
-// and the release steps bound to a verified merge (its semver tag push and gh release create, #41). null: not one of them
-// (classify as usual); { allow: true }; or the deny reason naming the check that failed.
+// Under the go: the base push of a verified merge (pinned sha), the literal delete of a merged topic branch, and the release
+// steps bound to a verified merge (its pinned semver tag push and gh release create, #41). A ref form is denied with the pinned
+// command to run (git re-resolves a ref at push time). null: not one of them (classify as usual); { allow: true }; or the
+// deny reason naming the check that failed.
 function goAction(cmds, cwd, input, getCtx, env) {
   const g = goForm(cmds);
   if (!g) return null;
@@ -1951,9 +1952,9 @@ function goAction(cmds, cwd, input, getCtx, env) {
   // A ref-form push to a branch other than the base is no go action: it is classified as usual (a topic push).
   if (g.kind === "base" && g.src !== undefined && (base === FAIL || !base || g.dst !== base)) return null;
   const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha ? g.sha.slice(0, 12) : safe(g.src)}` : g.kind === "delete" ? `git push --delete → origin/${safe(g.name)}`
-    : g.kind === "tag" ? `git push → origin tag ${g.tag}` : `gh release create ${g.tag}`;
+    : g.kind === "tag" ? `git push → origin tag ${g.tag}${g.sha ? ` at ${g.sha.slice(0, 12)}` : ""}` : `gh release create ${g.tag}`;
   const what = { base: "unattended base push", delete: "unattended branch delete", tag: "unattended tag push", release: "unattended release" }[g.kind];
-  const no = (why) => outwardReason("DENY", { what, action }, input, { note: why, do: "leave it for the owner" });
+  const no = (why, run) => outwardReason("DENY", { what, action }, input, { note: why, do: run ? `run the pinned form instead: ${run}` : "leave it for the owner" });
   if (!dir) return no("the directory is unknown");
   if (base === FAIL || !base || !/^[\w./-]+$/.test(base)) return no("origin/HEAD cannot be read");
   // The base, the review trailer and the required checks come from the main checkout's profile (an agent can edit a worktree's).
@@ -1965,13 +1966,20 @@ function goAction(cmds, cwd, input, getCtx, env) {
     if (["co-authored-by", "signed-off-by"].includes(key.toLowerCase())) return no("the profile's review_trailer is not a review");
     const ev = c.evidence(dir);
     const verified = (sha, pushed) => baseEvidence(ev, dir, sha, base, key, floor.checks ?? [], pushed);
-    if (g.kind === "base" && g.sha) { const why = verified(g.sha, false); return why ? no(why) : { allow: true }; }
     if (g.kind === "base" || g.kind === "tag") {
+      if (!g.sha) {
+        // A ref form: name the object it would send today, pinned (git would resolve the ref again at push time).
+        const t = g.kind === "tag" && ev.git(dir, "rev-parse", "--verify", "-q", `refs/tags/${g.tag}`);
+        const o = g.kind === "tag" ? (t?.code === 0 ? t.out : null) : localCommit(ev, dir, g.src === "HEAD" ? "HEAD" : `refs/heads/${g.src}`);
+        const pin = o && /^[0-9a-f]{40}$/.test(o) ? o : g.kind === "tag" ? "<tag object sha>" : "<merge sha>";
+        const run = `git ${g.dir === null ? "" : `-C ${safe(g.dir)} `}push origin ${pin}:refs/${g.kind === "tag" ? `tags/${g.tag}` : `heads/${base}`}`;
+        return no("the go pushes only a pinned sha, which git cannot re-resolve", run);
+      }
       const cfg = pushConfigEvidence(ev, dir);
       if (cfg) return no(cfg);
-      // The ref the push sends, read where git push reads it: HEAD, refs/heads/<base> or refs/tags/<tag>.
-      const sha = localCommit(ev, dir, g.kind === "tag" ? `refs/tags/${g.tag}` : g.src === "HEAD" ? "HEAD" : `refs/heads/${g.src}`);
-      if (!sha) return no(g.kind === "tag" ? "the local tag does not name a commit" : "the ref it pushes does not name a commit");
+      // The pinned object, the tag object of an annotated tag or the commit itself, must peel to a verified merge.
+      const sha = g.kind === "tag" ? localCommit(ev, dir, g.sha) : g.sha;
+      if (!sha) return no("the object it pushes does not name a local commit");
       const why = verified(sha, g.kind === "tag");
       return why ? no(why) : { allow: true };
     }
@@ -1981,7 +1989,7 @@ function goAction(cmds, cwd, input, getCtx, env) {
     if ((env.GH_HOST && env.GH_HOST !== "github.com") || (g.repo === null && env.GH_REPO)) return no("GH_HOST or GH_REPO points gh elsewhere");
     if (g.repo !== null && g.repo !== repo && g.repo !== `github.com/${repo}`) return no(`-R is not ${repo}`);
     if (g.repo === null && ev.git(dir, "remote")?.out !== "origin") return no("without -R, origin must be the only remote");
-    const sha = remoteTagCommit(ev, dir, url, g.tag);
+    const sha = remoteTagCommit(ev, dir, g.tag);
     if (!sha) return no(`the tag ${g.tag} is not on origin`);
     if (g.target !== null && g.target !== sha) return no("--target is not the tag's merge commit");
     const why = verified(sha, true);

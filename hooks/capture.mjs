@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { loadProfile } from "../scripts/profile.mjs";
 import { FAIL, classifyOutward, isOperator, parseShell, realCtx, safe } from "./guard.mjs";
-import { goForm, goState, localCommit, stateDir } from "./go.mjs";
+import { goForm, goState, stateDir } from "./go.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REF_SRC = /^\+?[\w./@^~-]+$/;
@@ -109,17 +109,12 @@ export function outwardEvents(event, getCtx, env = {}) {
   const g = goForm(cmds);
   if (g && goState(event, env)) {
     const dir = g.dir === null ? cwd : resolve(cwd, g.dir);
-    // A ref-form push is the go's only when it went to origin/HEAD's branch (else it was a topic push); its sha is the ref's now.
-    let sha = g.sha;
-    if (g.kind === "base" && g.src !== undefined) {
-      const c = getCtx(), base = c.originHead(dir);
-      sha = base === g.dst ? localCommit(c.evidence(dir), dir, g.src === "HEAD" ? "HEAD" : `refs/heads/${g.src}`) : null;
-    }
-    if (g.kind !== "base" || sha) {
-      const sub = { base: "push", delete: "push --delete", tag: "push tag", release: "release create" }[g.kind];
+    // Only a pinned push is the go's (a ref form was denied, so if it ran it was not by the go); its sha is what was pushed.
+    if ((g.kind !== "base" && g.kind !== "tag") || g.sha) {
+      const sub = { base: "push", delete: "push --delete", tag: "push tag", release: "release create" }[g.kind], sha = g.sha;
       const ref = g.kind === "base" ? `origin/${safe(g.dst)}` : g.kind === "delete" ? `origin/${safe(g.name)}` : g.tag;
-      return [{ dir, go: { subcommand: sub, ref: g.kind === "base" ? g.dst : g.kind === "delete" ? g.name : g.tag, ...(g.kind === "base" ? { sha } : {}), exit_code: code }, argv: ["outward", "class=go", `subcommand=${sub}`, `refs:=${JSON.stringify([ref])}`,
-        ...(g.kind === "base" ? [`sha=${sha}`] : []), `session_kind=${kind}`, `exit_code:=${code}`] }];
+      return [{ dir, go: { subcommand: sub, ref: g.kind === "base" ? g.dst : g.kind === "delete" ? g.name : g.tag, ...(sha ? { sha } : {}), exit_code: code }, argv: ["outward", "class=go", `subcommand=${sub}`, `refs:=${JSON.stringify([ref])}`,
+        ...(sha ? [`sha=${sha}`] : []), `session_kind=${kind}`, `exit_code:=${code}`] }];
     }
   }
   return classifyOutward(cmds, text, cwd, env, after).findings.filter((f) => f.cls === "shared" || f.cls === "destructive").map((f) => ({
