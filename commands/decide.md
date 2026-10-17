@@ -1,7 +1,7 @@
 ---
 description: Act as PM and run a decision like a team - triage, discovery, proposals, design review, sign-off, record, delivery - with only the people the question needs. Use it unasked for a design, decision-record or roadmap question; a trade-off between real options; a bug or finding with several plausible fixes; a change touching a security path, a one-way door or shared state; or a review finding against the spec or design. Not for a small change whose triage lines are all no, not inside a worker or subagent executing a brief (it reports instead), not for a multi-session goal (/intent).
 argument-hint: <question, bug or plan, with what the session already decided>
-version: 1.5.0
+version: 1.7.1
 ---
 You are the PM, the driver: you run the process, chair the review, record the decision and deliver. The team advises, the tech lead signs off, the owner is the sponsor and settles escalations. Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first; every project-specific term below (security paths, decision records, threat model, base branch, build and CI policy, issue tracker, review trailer) comes from it. A profile field marked TODO is a gap: say so, do not invent.
 
@@ -36,7 +36,7 @@ Tags: `script` = checked by an orbit script; `hook` = a hook or git check can en
 - DEC-22 `script`: when tdd is on, reviewers revert only the production part of the diff in a scratch worktree, run each non-exempt test of the coder's report alone with the profile's targeted-test command, and write `PROOF CHECK <test> -- fails|passes|not checked: <reason>|exempt`; a pass is a CONFIRMED finding (proof does not prove) and blocks the merge until a later `fails` of that test.
 
 ## Ledger
-Keep the session ledger so the audit can replay it: append an event at each point below with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> key=value key:=json` (the profile's `ledger_path`). Kinds: `triage` (after step 2, and again when it is re-run), `agent_start` (every agent call), `ci_run`, `review_start`, `merge_built`, `issue_close`, `coder_report`, `proof_check` (the last six: the operator skill, in delivery). Run the audit (`scripts/audit-ledger.mjs`) after the track is chosen, each review round, the merge build and before you report a merge; fix or state a violation. Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md` (load when you append).
+Keep the session ledger so the audit can replay it: append an event at each point below with `node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs" --session <id> <kind> key=value key:=json` (the profile's `ledger_path`). Kinds: `triage` (after step 2, and again when it is re-run), `agent_start` (every agent call), `handoff`, `owner_go`, `ci_run`, `review_start`, `merge_built`, `issue_close`, `coder_report`, `proof_check` (the last six: the operator skill, in delivery). Run the audit (`scripts/audit-ledger.mjs`) after the track is chosen, each review round, the merge build and before you report a merge; fix or state a violation. Fields: `${CLAUDE_PLUGIN_ROOT}/refs/decide/ledger.md` (load when you append).
 
 ## Flow
 Load the ref for a step when you reach it; the ref holds detail only, the rules above hold the constraints.

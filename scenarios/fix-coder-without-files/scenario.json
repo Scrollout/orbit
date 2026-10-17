@@ -1,0 +1,3 @@
+{
+  "description": "a fix coder run stamped with rules 1.12.1 records no files, so the fix_scope check cannot run"
+}

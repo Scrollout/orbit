@@ -27,6 +27,7 @@ generated: { by: process:orbit-okf-init, at: {{TIMESTAMP}} }
 ## 4. Goal-driven execution
 - Turn imperative tasks into verifiable goals (a failing test or check first).
 - For multi-step tasks, state a brief plan with a verification checkpoint per step.
+- Every loop (retries, review rounds, fix rounds, reflection) has a stated cap; at the cap, stop and report what is left.
 
 ## 5. Subagents for wide reading
 Research, big specs and code review run in a subagent; only the digest returns.

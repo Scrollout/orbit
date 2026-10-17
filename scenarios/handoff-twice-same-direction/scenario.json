@@ -1,0 +1,3 @@
+{
+  "description": "decide hands the same topic to intent twice: at most one handoff each way"
+}

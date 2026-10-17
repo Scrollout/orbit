@@ -1,13 +1,16 @@
 // Checks a milestone plan written by the intent skill before the owner approves it. Zero dependencies.
-//   node <plugin>/scripts/intent-plan.mjs --root . --plan <path|-> [--plan <path> ...] [--profile path] [--max-chars n]
+//   node <plugin>/scripts/intent-plan.mjs --root . --plan <path|-> [--plan <path> ...] [--profile path] [--max-chars n] [--approved]
 // `-` reads the plan from stdin (the operator session writes nothing in the repo). Several --plan docs are one plan
 // split by track: step ids are unique across them and Depends may cross them.
 // Each doc gets the OKF per-doc checks (scripts/okf-lib.mjs; --max-chars, else maxDocChars in .agents/okf.json, else
-// 4000) plus the plan rules: an `## Intent` section; `## Steps` with Step, Builds, Files, Proof, Depends and Hint
+// 4000) plus the plan rules: frontmatter `type: Roadmap`, a title `M<n> plan: <Title>`, tags roadmap, milestones and m<n> (the same
+// n in every doc), `status: draft`; an `## Intent` section; `## Steps` with Step, Builds, Files, Proof, Depends and Hint
 // columns (by header name); `## Exit tests` with Test and Step. A gap: a placeholder or empty Builds, Proof or Intent;
 // no Files on a step that is not decide-first; a wildcard outside the last segment; an unknown or cyclic Depends;
-// an exit test naming no or an unknown step; a Hint other than `sec=yes|no door=yes|no [prod=yes|no]` (prod required
+// no `## Carried` section in any doc; an exit test naming no or an unknown step; a Hint other than `sec=yes|no door=yes|no [prod=yes|no]` (prod required
 // when the profile names a production_env) or `decide-first`.
+// --approved (after the owner approved, step 7 of the intent skill): `status: stable` and a `verified` entry by a human
+// (`human:<id>`, no email address) instead of draft.
 // Files entries are paths, directories ending in `/`, or a wildcard in the last segment. A step whose entries may touch a
 // profile security path is forced to sec=yes: an exact path by the glob itself, a directory or wildcard by its literal
 // prefix (one prefix inside the other), which over-reports and never misses ("may touch").
@@ -16,13 +19,14 @@
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { gaps, globMatch, loadProfile } from "./profile.mjs";
-import { checkDoc } from "./okf-lib.mjs";
+import { checkDoc, isMap, parseYaml } from "./okf-lib.mjs";
 import { sectionBodies } from "./rx.mjs";
 
 const args = process.argv.slice(2);
 const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
 const plans = args.flatMap((a, i) => (args[i - 1] === "--plan" ? [a] : []));
-const usage = "usage: intent-plan.mjs --root . --plan <path|-> [--plan <path> ...] [--profile path] [--max-chars n]";
+const usage = "usage: intent-plan.mjs --root . --plan <path|-> [--plan <path> ...] [--profile path] [--max-chars n] [--approved]";
+const approved = args.includes("--approved");
 if (!plans.length || plans.some((p) => p === undefined || p.startsWith("--")) || plans.filter((p) => p === "-").length > 1) { console.error(usage); process.exit(64); }
 const root = resolve(flag("root") ?? ".");
 const texts = plans.map((p) => {
@@ -61,10 +65,33 @@ function table(text, heading) {
 const list = (s) => s.replace(/`/g, "").split(/<br\s*\/?>|[,;\s]+/i).map((x) => x.trim()).filter((x) => x && !/^(-|none)$/i.test(x));
 
 const steps = new Map(), exits = [];
+const milestones = new Set();
+let carried = false;
+// Frontmatter of a plan doc (Roadmap shape, step 5 of the intent skill); status and verified depend on --approved.
+function checkFrontmatter(name, text) {
+  const block = text.match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+  if (block === undefined) return;
+  const y = parseYaml(block);
+  if (y.type !== "Roadmap") gap(`${name}: type must be Roadmap, got ${JSON.stringify(y.type ?? null)}`);
+  const m = /^M(\d+) plan: \S/.exec(typeof y.title === "string" ? y.title : "");
+  if (!m) gap(`${name}: title must be 'M<n> plan: <Title>', got ${JSON.stringify(y.title ?? null)}`);
+  else {
+    milestones.add(m[1]);
+    const tags = Array.isArray(y.tags) ? y.tags : [];
+    for (const t of ["roadmap", "milestones", `m${m[1]}`]) if (!tags.includes(t)) gap(`${name}: tags must include ${t}`);
+  }
+  if (approved) {
+    if (y.status !== "stable") gap(`${name}: approved plan needs status: stable, got ${JSON.stringify(y.status ?? null)}`);
+    const list = Array.isArray(y.verified) ? y.verified : y.verified === undefined ? [] : [y.verified];
+    if (!list.some((v) => isMap(v) && /^human:[^\s@]+$/.test(v.by ?? "") && v.at)) gap(`${name}: approved plan needs a verified entry { by: human:<id>, at } (the owner's login, never an email address)`);
+  } else if (y.status !== "draft") gap(`${name}: status must be draft until the owner approves (got ${JSON.stringify(y.status ?? null)}); check the approved plan with --approved`);
+}
 for (const [name, text] of texts) {
   const doc = checkDoc(text, { maxChars });
   for (const m of doc.errors) gap(`${name}: okf: ${m}`);
   for (const m of doc.warnings) console.log(`warn: ${name}: okf: ${m}`);
+  checkFrontmatter(name, text);
+  if (/^## Carried[ \t]*$/m.test(text)) carried = true;
   const intent = text.match(/^## Intent[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m);
   if (!intent || placeholder(intent[1])) gap(`${name}: no ## Intent section, or it still has placeholders`);
   const rows = table(text, "Steps");
@@ -79,6 +106,8 @@ for (const [name, text] of texts) {
   for (const r of table(text, "Exit tests") ?? []) exits.push({ doc: name, test: r.test ?? "", rawSteps: r.step ?? "", steps: list(r.step ?? "") });
 }
 if (!exits.length) gap("no ## Exit tests table with a row (in any plan doc)");
+if (!carried) gap("no ## Carried section (in any plan doc)");
+if (milestones.size > 1) gap(`plan docs name different milestones (${[...milestones].map((n) => `M${n}`).join(", ")}): one plan, one milestone`);
 
 // Overlap, conservative: it may over-report, it must never miss. A Files entry with no wildcard and no trailing `/`
 // is one file. A directory entry (`dir/`) or a wildcard entry covers everything below what it matches, as a profile

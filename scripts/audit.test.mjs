@@ -212,7 +212,7 @@ test("ledger.mjs and audit-ledger.mjs default to the profile's ledger_path", () 
   const root = mkdtempSync(join(tmpdir(), "led-"));
   mkdirSync(join(root, ".agents"));
   writeFileSync(join(root, ".agents/project.md"), readFileSync(profile, "utf8").replace("ci_policy: ci-only", "ci_policy: ci-only\nledger_path: .agents/my.jsonl"));
-  assert.equal(sh("ledger.mjs", ["--root", root, "--session", "s", "triage", "topic=t", "sec=no", "door=no", "prod=no", "track=just do it", "files:=[]"]).status, 0);
+  assert.equal(sh("ledger.mjs", ["--root", root, "--session", "s", "triage", "topic=t", "sec=no", "door=no", "prod=no", "track=just do it", "trigger=asked", "files:=[]"]).status, 0);
   assert.ok(existsSync(join(root, ".agents/my.jsonl")));
   const a = sh("audit-ledger.mjs", ["--root", root], undefined);
   assert.equal(a.status, 0, a.stdout + a.stderr);
@@ -557,4 +557,17 @@ test("profile base_pusher: operator is agent: a base push by agent is no violati
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.doesNotMatch(r.stdout, /profile gap/);
   assert.ok(go(clean()).stdout.split("\n").some((l) => l.startsWith("DEC-06 ")));
+});
+
+test("ledger.mjs appends the intent, handoff and owner_go kinds and the audit accepts them", () => {
+  const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl");
+  const add = (...a) => assert.equal(sh("ledger.mjs", ["--ledger", f, "--session", "s", ...a]).status, 0);
+  add("handoff", "topic=big", "from=decide", "to=intent");
+  for (const phase of ["questions", "draft", "checked", "approved", "written"]) add("intent", "milestone=m3", `phase=${phase}`);
+  add("owner_go", "topic=big", "why=continue");
+  const r = spawnSync("node", [audit, f, "--profile", profile], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /audit ok: 7 events/);
+  add("handoff", "topic=big", "from=decide", "to=intent");
+  assert.match(spawnSync("node", [audit, f, "--profile", profile], { encoding: "utf8" }).stdout, /^DEC-03 line 8: big: second handoff decide -> intent/m);
 });
