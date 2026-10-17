@@ -66,14 +66,19 @@ test("the one test, part 1: only the exact on command opens a go, and it asks in
           // A word split by an empty expansion, or an extglob group, is still the script name (#38).
           ...['unattended$"".mjs', 'unattended.mj$"s"', "unattended$().mjs", "unattended.m$()js", "$(echo unattended).mjs", "`echo unattended`.mjs", "@(unattended).mjs",
             "unattended${x}.mjs", "unattended$x.mjs", "unattended${x:-}.mjs"].map((f) => `a=(1); node ${repo}/hooks/${f} on 24h`),
-          `a=(1)\nshopt -s extglob\nnode ${repo}/hooks/+(unattended).mjs on 24h`, `shopt -s extglob\nnode ${repo}/hooks/@(unattended).mjs on 24h`]) {
+          `a=(1)\nshopt -s extglob\nnode ${repo}/hooks/+(unattended).mjs on 24h`, `shopt -s extglob\nnode ${repo}/hooks/@(unattended).mjs on 24h`,
+          // Unparsable text that names the hooks folder (or unatt) and a runtime is denied whatever the spelling, with no stem or glob logic (#38).
+          ...['@(zz|u*).mjs', '*(zz|u*)', '+(zz|u*)', '?(zz|u*)nattended.mjs', '@(zz|[u]*).mjs', '@(zz|u?attended).mjs', '@(zz|u)nattended.mjs', 'u@(n|x)attended.mjs',
+            '@(u|x)n@(a|x)ttended.mjs', '!(zz|guard*|[a-t]*).mjs', 'una$"tt"ended.mjs', 'u$"n"attended.mjs', 'una$()ttended.mjs', 'una`true`ttended.mjs'].map((f) => `a=(1)\nshopt -s extglob\nnode ${repo}/hooks/${f} on 24h`),
+          `a=(1)\ncd ${repo}/hooks\nnode @(zz|u*).mjs on 24h`, `shopt -s extglob\nbash -c "a=(1); node ${repo}/hooks/@(zz|u*).mjs on 24h"`, "a=(1); cd hooks; node $(echo x).mjs",
+          `shopt -s nocaseglob\nnode ${repo}/hooks/U*.MJS on 24h`, `a=(1); shopt -s nocaseglob\nnode ${repo}/hooks/U*.MJS on 24h`, `shopt -s nocaseglob\nnode U*.MJS on 24h`]) {
           assert.equal(kind(g(c)), "deny", `${mode} ${k}: ${c}`);
         }
         // A glob that cannot match unattended.mjs, or a variable operand, is not the go's command: this rule does not deny it.
         for (const c of ["node --test scripts/*.test.mjs", "node --check scripts/*.test.mjs", "cd hooks && node --test *.test.mjs", 'node "$HOME/x.mjs"',
           'node "${CLAUDE_PLUGIN_ROOT}/scripts/ledger.mjs"', 'node "$X" on 24h', "find . -name '*.test.mjs' -exec node --test {} +", "x=(a); node --test scripts/*.test.mjs", "a=(1); ls hooks", "bash -c 'a=(1); node --check x.mjs'",
-          "a=(1); node --test scripts/unattended.test.mjs", "a=(1); grep -n unattended README.md && node -v", 'a=(1); git commit -m "guard: unattended go fixes" && node scripts/check.mjs',
-          "a=(1); node --test scripts/unattended.test.mjs", "a=(1); node scripts/check.mjs unattended", "a=(1); cat docs/unattended.md; node -v", "a=(1); grep -n unattended README.md; node -v"]) {
+          // An unparsable command naming neither hooks nor unatt is left alone (one that does is denied by design: see the denies above).
+          "a=(1); node --test scripts/guard.test.mjs", "a=(1); git log --oneline | head; node --version", "a=(1); grep -n go README.md && node -v"]) {
           const r = g(c);
           assert.doesNotMatch(String(r?.ask ?? r ?? ""), /unattended go's script/, `${mode} ${k}: ${c}`);
         }

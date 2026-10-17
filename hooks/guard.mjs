@@ -1684,28 +1684,28 @@ const GO_SCRIPT = real(join(dirname(dirname(fileURLToPath(import.meta.url))), "h
 const RUNTIMES = new Set(["node", "nodejs", "bun", "deno"]);
 const goGlob = (e) => (braces(e) ?? [null]).some((a) => a === null || segMatch(a.split("/").pop(), basename(GO_SCRIPT)));
 const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
-// A text the guard cannot parse: denied when it has a runtime word and a token that is, or can match, the script name. The
-// text is cleaned first: line continuations removed, $'...' escapes decoded, quotes and backslashes removed; the tokens are
-// the pieces between whitespace and shell operators.
+// A text the guard cannot parse (#38): denied when it has a runtime word and names the plugin's hooks folder (the segment
+// hooks as a path part), contains unatt, or runs with its cwd inside the hooks folder. No tokens, stems or globs: the text is
+// only cleaned first (line continuations removed, $'...' escapes decoded, quotes and backslashes removed). Cost: such a
+// command that merely mentions hooks (a=(1); node --check hooks/guard.mjs) is denied too.
 const RUNTIME_WORD = /(?<![\w.-])(node|nodejs|bun|deno)(?![\w.-])/;
 const ansiC = (b) => b.replace(/\\(?:([0-7]{1,3})|x([\da-fA-F]{1,2})|u([\da-fA-F]{1,4})|U([\da-fA-F]{1,8})|([\s\S]))/g, (m, o, x, u, U, c) =>
   o ? String.fromCharCode(parseInt(o, 8) & 255) : x ? String.fromCharCode(parseInt(x, 16)) : u || U ? String.fromCodePoint(Math.min(parseInt(u || U, 16), 0x10ffff)) : c);
-function unparsedGo(text) {
+function unparsedGo(text, cwd) {
   const t = text.replace(/\\\n/g, "").replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_, b) => ansiC(b)).replace(/\$'|['"\\]/g, "");
-  const name = basename(GO_SCRIPT);
-  // Script-involved: a token with the stem unatt and an expansion, glob or paren character, or ending in the script name, or
-  // a glob token that can match the name. Split only on whitespace and ; | &, so an expansion stays inside its word.
-  const involved = (k) => (k.includes("unatt") && (/[$`()?*[{@+!,]/.test(k) || k.endsWith(name))) || (/[*?[{]|[@+!]\(/.test(k) && goGlob(k));
-  return RUNTIME_WORD.test(t) && t.split(/[\s;|&]+/).some(involved);
+  const hooks = dirname(GO_SCRIPT);
+  return RUNTIME_WORD.test(t) && (/(?<![\w.-])hooks(?![\w.-])/.test(t) || t.includes("unatt") || (typeof cwd === "string" && cwd !== "" && inside(hooks, real(resolve(cwd)))));
 }
 const FIND_OPS = new Set(["-o", "-or", ",", "!", "-not", "-prune"]);
 function namesGo(cmds, text, cwd, env) {
   if (text.includes("unattended.mjs")) return true;
+  // nocaseglob changes what every glob matches: any command that sets it and has a runtime word is the script (#38).
+  if (text.includes("nocaseglob") && RUNTIME_WORD.test(text)) return true;
   const runs = (c) => { const r = resolveCmd(c.words); return RUNTIMES.has(r?.name) && r; };
   return cmds.some((c) => {
     const r = resolveCmd(c.words);
     if (r && "inner" in r && r.inner !== null) {
-      try { if (namesGo(parseShell(r.inner, env), r.inner, cwd, env)) return true; } catch { if (unparsedGo(r.inner)) return true; }
+      try { if (namesGo(parseShell(r.inner, env), r.inner, cwd, env)) return true; } catch { if (unparsedGo(r.inner, cwd)) return true; }
     }
     if (r?.name === "find") {
       const a = r.args.map((x) => x.lit);
@@ -1986,7 +1986,7 @@ export function guard(input, env = {}, ctx = null) {
   let cmds;
   try { cmds = parseShell(ti.command, env); } catch (e) {
     if (ti.command.includes("unattended.mjs")) return goCommand([], ti.command, input);
-    if (unparsedGo(ti.command)) return goDeny(input);
+    if (unparsedGo(ti.command, cwd)) return goDeny(input);
     if (ti.command.includes(".claude")) return stateDeny("write to ~/.claude", "a command it cannot parse that names it", input);
     return op ? `OPR-01: the operator session does not run a command it cannot parse (${e.message}); ${DELEGATE}.` : unreadableDecision(input, env);
   }
