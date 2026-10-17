@@ -790,6 +790,26 @@ test("#36: a command substitution inside an unquoted here-doc, ${...} or $((...)
   });
 });
 
+test("#36: a backslash-newline is removed before parsing, in a here-doc body, ${...}, double quotes and backticks", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const s of ["git push -f origin feat", "echo x > ~/.claude/settings.json"]) {
+        const bare = kind(guard(bash(`echo $(${s})`, who), env, ctx())), cs = s.replace(" ", " \\\n");
+        assert.notEqual(bare, "allow", `${m}: bare ${s}`);
+        for (const c of [`cat <<EOF\n$\\\n(${s})\nEOF`, `echo "\${x:-$\\\n(${s})}"`, `echo \${x:-$\\\n(${s})}`, `echo "$\\\n(${s})"`, `echo $((1 + $\\\n(${s})))`,
+          `echo \`${cs}\``, `cat <<EOF\n\`${cs}\`\nEOF`, `echo "\`${cs}\`"`]) {
+          assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${JSON.stringify(c)}`);
+        }
+        assert.equal(guard(bash(`cat <<'EOF'\n$\\\n(${s})\nEOF`, who), env, ctx()), null, `${m}: quoted here-doc ${s}`);
+      }
+      for (const c of ["cat <<EOF\nFix the parser\n\nCo-Authored-By: X <x@example.com>\nEOF", "cat <<EOF\nFix the parser, \\\nand the docs\nEOF", "cat <<EOF\nhome $\\\nHOME\nEOF"]) {
+        assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${JSON.stringify(c)}`);
+      }
+    }
+  });
+});
+
 // #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2], opens?: [target0, ...] } (opens: what opening the fd
 // yields, when it changed after the readlink); devs: path -> { char, uid }. parentTerminal returns an open fd: pt maps it back.
 function fakeProc(procs, devs) {

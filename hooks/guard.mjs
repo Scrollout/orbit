@@ -135,8 +135,9 @@ function heredocs(p, pending) {
 }
 
 // An unquoted here-doc body: its command substitutions ($(...) and `...`, also inside ${...} and $((...))) are parsed as
-// commands (#36); one it cannot parse is a parse error.
+// commands (#36); one it cannot parse is a parse error. Bash removes every backslash-newline first.
 function bodySubs(p, t, depth) {
+  t = t.replace(/\\[\s\S]/g, (m) => (m === "\\\n" ? "" : m));
   for (let j = 0; j < t.length; j++) {
     if (t[j] === "\\") { j++; continue; }
     if (t[j] === "`") {
@@ -160,34 +161,37 @@ function word(p, depth) {
   let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0, glob = false, ext = false, plainAt = -1, nested = false;
   const plain = new Set();
   const add = (t) => { lit += t; exp += t; litChars += t.length; };
+  const cont = (i) => { while (s.startsWith("\\\n", i)) i += 2; return i; };   // past the backslash-newlines bash removes (#36)
   const sub = () => { const from = p.cmds.length; list(p, depth + 1, ")"); subs.push([from, p.cmds.length]); dyn = unexp = true; };
   const dollar = () => {
     // A substitution inside $((...)) or ${...} is parsed as any other (#36); the word is then not only that substitution.
     const inner = () => {
-      if (s.startsWith("$(", p.i) && s[p.i + 2] !== "(") { p.i += 2; sub(); nested = true; return true; }
+      const k = s[p.i] === "$" ? cont(p.i + 1) : -1;
+      if (s[k] === "(" && s[cont(k + 1)] !== "(") { p.i = k + 1; sub(); nested = true; return true; }
       if (s[p.i] === "`") { backtick(); nested = true; return true; }
       if (s[p.i] === "\\") p.i++;
       return false;
     };
-    if (s.startsWith("$((", p.i)) {
+    const a = cont(p.i + 1);
+    if (s[a] === "(" && s[cont(a + 1)] === "(") {
       let n = 0;
       for (; p.i < s.length; p.i++) { if (inner()) p.i--; else if (s[p.i] === "(") n++; else if (s[p.i] === ")" && --n === 0) break; }
       if (p.i >= s.length) throw new ParseError("unclosed $((");
       p.i++; dyn = unexp = true; return;
     }
-    if (s[p.i + 1] === "(") { p.i += 2; sub(); return; }
+    if (s[a] === "(") { p.i = a + 1; sub(); return; }
     let name = null;
-    if (s[p.i + 1] === "{") {
-      const b = p.i + 2;
+    if (s[a] === "{") {
+      const b = a + 1;
       for (p.i = b; p.i < s.length && s[p.i] !== "}"; p.i++) if (inner()) p.i--;
       if (p.i >= s.length) throw new ParseError("unclosed ${");
       const e = p.i;
       p.i = e + 1;
       if (/^[A-Za-z_]\w*$/.test(s.slice(b, e))) name = s.slice(b, e); else { dyn = unexp = true; return; }
     } else {
-      const m = /^[A-Za-z_]\w*/.exec(s.slice(p.i + 1));
-      if (m) { name = m[0]; p.i += 1 + name.length; }
-      else if (/^[0-9@*#?$!-]/.test(s[p.i + 1] ?? "")) { p.i += 2; dyn = unexp = true; return; }
+      const m = /^[A-Za-z_]\w*/.exec(s.slice(a));
+      if (m) { name = m[0]; p.i = a + name.length; }
+      else if (/^[0-9@*#?$!-]/.test(s[a] ?? "")) { p.i = a + 1; dyn = unexp = true; return; }
       else { p.i++; add("$"); return; }
     }
     dyn = true; vars++; names.push(name);
@@ -196,7 +200,7 @@ function word(p, depth) {
   };
   const backtick = () => {
     let j = p.i + 1, inner = "";
-    for (; j < s.length && s[j] !== "`"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; inner += s[j]; } else inner += s[j]; }
+    for (; j < s.length && s[j] !== "`"; j++) { if (s[j] === "\\" && j + 1 < s.length) { j++; if (s[j] !== "\n") inner += s[j]; } else inner += s[j]; }
     if (j >= s.length) throw new ParseError("unclosed `");
     const q = { s: inner, i: 0, cmds: p.cmds, env: p.env, f: p.f }, from = p.cmds.length;
     list(q, depth + 1, null);
