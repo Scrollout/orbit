@@ -96,6 +96,15 @@ test("PM and tech lead verdicts that differ need an 'override tech lead:' line (
   assert.deepEqual(lint(rec(GOOD.replace("| PM | opus | adopt A |", "| PM | opus | Adopt  A |"))), [], "case and spacing do not make a difference");
 });
 
+test("DEC-12: only the PM's final verdict counts as adopted, not a tech lead pick the PM overruled", () => {
+  const rows = (pm, lead) => [`| PM | opus | adopt ${pm} | high | simplest | - | - |`, "| `engineer:root-fix` | sonnet | for A | medium | cheap | - | 12k |",
+    "| `security:authz` | opus | block B | high | breaks the boundary | - | 8k |", `| \`techlead:signoff\` | opus | adopt ${lead} | high | fits | - | 5k |`].join("\n");
+  const over = TRIAGE + SEC + "override tech lead: B breaks the boundary, security blocked it\n";
+  assert.deepEqual(lint(rec(rows("A", "B"), over)), [], "the tech lead adopted the blocked B, the PM adopted A: no security override");
+  assert.match(lint(rec(rows("B", "B")))[0], /security blocked b but a verdict adopts it/, "the PM adopting the blocked B needs the line");
+  assert.deepEqual(lint(rec(rows("B", "B"), TRIAGE + SEC + "override security: the owner accepted it\n")), []);
+});
+
 test("a security block that a verdict adopts needs an 'override security:' line (DEC-12)", () => {
   const blockA = GOOD.replace("| conditions | high | needs a deny test | C1: test the deny path |", "| block A | high | breaks the boundary | - |");
   assert.match(lint(rec(blockA))[0], /security blocked a but a verdict adopts it: add an "override security: <reason>" line/);

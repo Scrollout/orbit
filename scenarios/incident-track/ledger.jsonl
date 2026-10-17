@@ -1,6 +1,5 @@
 {"ts":"2026-10-14T10:00:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"triage","topic":"hotfix","sec":"no","door":"no","prod":"yes","track":"incident","files":["src/a.go"]}
-{"ts":"2026-10-14T10:01:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"security","model":"opus","topic":"hotfix"}
-{"ts":"2026-10-14T10:02:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"engineer","model":"sonnet","topic":"hotfix"}
-{"ts":"2026-10-14T10:03:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"techlead","model":"opus","topic":"hotfix"}
+{"ts":"2026-10-14T10:01:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"engineer","model":"sonnet","topic":"hotfix"}
+{"ts":"2026-10-14T10:02:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"techlead","model":"opus","topic":"hotfix"}
+{"ts":"2026-10-14T10:03:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"security","model":"opus","topic":"hotfix"}
 {"ts":"2026-10-14T10:04:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"agent_start","role":"coder","model":"opus","topic":"hotfix","phase":"build"}
-{"ts":"2026-10-14T10:04:00Z","session":"s1","rule_version":{"decide":"1.3.1","operator":"1.2.0","rules":"1.3.0"},"kind":"triage","topic":"hotfix","sec":"no","door":"no","prod":"yes","track":"incident","files":["src/a.go"]}

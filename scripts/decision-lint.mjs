@@ -9,7 +9,7 @@
 // (the last may be n/a when the profile defines none). Then the sections `Decision:`, `Track and why:`, `Lenses:`, `Actions taken:`,
 // `Open risks and revisit trigger:` and `Cost:` (same form; text after the label may follow on the next lines, but not a placeholder).
 // When the PM's verdict differs from the tech lead's, an `override tech lead: <reason>` line (DEC-10); when a security `block` is followed
-// by an adopt of the blocked proposal (or of any, when the block names none), an `override security: <reason>` line (DEC-12).
+// by the PM row adopting the blocked proposal (or any, when the block names none; the final decision, not a tech lead pick the PM overruled), an `override security: <reason>` line (DEC-12).
 // Output: one `decision gap: <what>` line per gap; exit 0 ok, 2 gaps, 64 bad usage. It checks the shape, not whether the call was right.
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -82,7 +82,7 @@ export function lint(text) {
   const reason = (label) => { const a = labelled(label); return a !== undefined && a.text !== "" && !placeholder(a.text); };
   const pm = calls.filter((c) => c.role === "pm").at(-1), lead = calls.filter((c) => /^(techlead|tech lead|architect)$/.test(c.role)).at(-1);
   if (pm && lead && pm.verdict.toLowerCase() !== lead.verdict.toLowerCase() && !reason("override tech lead")) gaps.push(`PM verdict ${JSON.stringify(pm.verdict)} differs from the tech lead's ${JSON.stringify(lead.verdict)}: add an "override tech lead: <reason>" line (DEC-10)`);
-  const adopted = calls.filter((c) => /^(pm|techlead|tech lead|architect)$/.test(c.role) && /^adopt\b/i.test(c.verdict)).map((c) => c.verdict.replace(/^adopt\s*/i, "").trim().toLowerCase());
+  const adopted = [pm].filter((c) => c && /^adopt\b/i.test(c.verdict)).map((c) => c.verdict.replace(/^adopt\s*/i, "").trim().toLowerCase());   // the PM row is the final decision
   for (const b of calls.filter((c) => c.role === "security" && /^block\b/i.test(c.verdict))) {
     const blocked = b.verdict.replace(/^block\s*/i, "").trim().toLowerCase();
     if (adopted.some((a) => !blocked || a === blocked) && !reason("override security")) gaps.push(`security blocked${blocked ? ` ${blocked}` : ""} but a verdict adopts it: add an "override security: <reason>" line (DEC-12; on a one-way door only the owner overrides)`);

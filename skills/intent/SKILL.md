@@ -1,7 +1,7 @@
 ---
 name: intent
 description: Turn a goal too big for one session into an approved milestone plan of small units, written as an OKF roadmap doc and checked by a script, before any build (the Inception step of AI-DLC). Use when the owner states a goal, feature or initiative that needs several worker sessions or branches, or asks to plan or break down a milestone. Not for a single bug, question or small change (use /decide), not for an existing /decide question or issue unless /decide or the operator hands it over as too big for one worker, not inside a worker or subagent executing a brief, and not while /okf-init fills its placeholder roadmap.
-version: 1.2.0
+version: 1.2.1
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. A field marked TODO is a gap: say so, never invent. The plan's units are then built through the usual flow: `/orbit:decide` per unit, or the operator's dispatch.
 
@@ -35,7 +35,7 @@ Pipe the rendered doc to `node "${CLAUDE_PLUGIN_ROOT}/scripts/intent-plan.mjs" -
 
 ## 7. Approval gate
 - Optional light review, only when the owner asks for it: `orbit:designer` as reviewer, focus `plan-sizing`, with the plan doc and the script's output as the brief; it reads nothing else. Apply what holds, re-run step 6.
-- A one-way-door goal (persistent data, migrations, API contract, security boundary, money or destructive operations, plus the profile's additions): run `/orbit:decide` on the plan as a roadmap question before approval. Steps forced to sec=yes or marked door=yes do not trigger it here; each is decided when its issue is built.
+- A one-way-door goal (persistent data, migrations, API contract, security boundary, money or destructive operations, plus the profile's additions): run `/orbit:decide` on the plan as a roadmap question before approval. Steps forced to sec=yes or marked door=yes do not trigger it here; each is decided when its issue is built. A step decided elsewhere (its design call ran under another topic, such as this plan's `/decide`) records that topic as `decision_topic` on its branch triage, so the merge check counts that topic's security and tech lead calls.
 - Show the owner the doc, the forced lines, the waves and the "decide first" list. Ask once for approval. A change the owner asks for goes back to step 5.
 - On approval set `status: stable`, `generated.at` to now and `verified:` as a list with `- { by: human:<id>, at: <now> }`. The id is the owner's GitHub login (`gh api user -q .login`), else ask once; never an email address. Re-run the script with `--approved` (it needs `status: stable` and that human `verified` entry), then append `intent ... phase=approved`.
 

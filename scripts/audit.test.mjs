@@ -22,9 +22,7 @@ const clean = () => [
   ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["docs/a.md", "Makefile"] }),
   ev("agent_start", { role: "engineer", model: "sonnet", topic: "t" }),
   ev("agent_start", { role: "security", model: "fable", topic: "t" }),
-  ev("agent_start", { role: "techlead", model: "fable", topic: "t" }),
   ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "build" }),
-  ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["docs/a.md", "Makefile"] }),
   ev("ci_run", { branch: "t", sha: SHA, workflow: "checks", conclusion: "success" }),
   ev("review_start", { branch: "t", sha: SHA, ci_state: "green" }),
   ev("merge_built", { branch: "t", merge_sha: MERGE, tree_equal: true, ci_state: "green" }),
@@ -41,49 +39,48 @@ const mutate = (fn) => { const e = clean(); fn(e); return e; };
 const eng = (o = {}) => ev("agent_start", { role: "engineer", model: "sonnet", topic: "t", ...o });
 const fix = (o = {}) => ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "fix", ...o });
 const SHA2 = "d".repeat(40);
-const retri = () => ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["docs/a.md", "Makefile"] });   // DEC-02: re-run after each coder run
 
 test("a clean ledger passes", () => {
   const r = run(clean());
   assert.equal(r.status, 0, r.stdout);
-  assert.match(r.stdout, /audit ok: 12 events/);
+  assert.match(r.stdout, /audit ok: 10 events/);
   assert.match(r.stdout, /decide=1\.0\.0/);
 });
 
 const bad = [
-  ["DEC-01", "reviewer started before green CI", (e) => { e[7].ci_state = "pending"; }],
-  ["DEC-01", "review_start with no recorded green run for that sha", (e) => { e.splice(6, 1); }],
-  ["DEC-01", "one workflow green, a second recorded workflow still pending", (e) => { e.splice(7, 0, ev("ci_run", { sha: SHA, workflow: "ui", state: "pending" })); }],
-  ["DEC-01", "a later red run of one workflow supersedes its earlier green", (e) => { e.splice(7, 0, ev("ci_run", { sha: SHA, workflow: "checks", conclusion: "failure" })); }],
-  ["DEC-16", "review sent on a red run", (e) => { e.splice(7, 0, ev("ci_run", { sha: SHA, workflow: "ui", conclusion: "failure" })); }],
+  ["DEC-01", "reviewer started before green CI", (e) => { e[5].ci_state = "pending"; }],
+  ["DEC-01", "review_start with no recorded green run for that sha", (e) => { e.splice(4, 1); }],
+  ["DEC-01", "one workflow green, a second recorded workflow still pending", (e) => { e.splice(5, 0, ev("ci_run", { sha: SHA, workflow: "ui", state: "pending" })); }],
+  ["DEC-01", "a later red run of one workflow supersedes its earlier green", (e) => { e.splice(5, 0, ev("ci_run", { sha: SHA, workflow: "checks", conclusion: "failure" })); }],
+  ["DEC-16", "review sent on a red run", (e) => { e.splice(5, 0, ev("ci_run", { sha: SHA, workflow: "ui", conclusion: "failure" })); }],
   ["DEC-02", "branch touches a security path but triage says sec=no", (e) => { e[0].sec = "no"; }],
   ["DEC-02", "a later triage with sec=no overwrites a yes", (e) => { e.splice(1, 0, ev("triage", { topic: "t", sec: "no", door: "no", prod: "no", track: "full review" })); }],
   ["DEC-03", "more engineers than the track allows", (e) => { e.splice(2, 0, eng(), eng()); }],
   ["DEC-03", "agent started on a topic with no triage", (e) => { e.splice(0, 1); }],
-  ["DEC-04", "coder on sonnet when security=yes", (e) => { e[4].model = "sonnet"; }],
-  ["DEC-19", "reviewer on sonnet", (e) => { e.splice(7, 0, ev("agent_start", { role: "reviewer", model: "sonnet", topic: "t", phase: "delivery" })); }],
-  ["DEC-19", "re-reviewer on sonnet after a code fix", (e) => { e.splice(8, 0, ev("agent_start", { role: "re-reviewer", model: "sonnet", topic: "t", fix_scope: "code" })); }],
-  ["DEC-14", "same sha reviewed twice with no fix between", (e) => { e.splice(8, 0, ev("review_start", { branch: "t", sha: SHA, ci_state: "green" })); }],
-  ["DEC-14", "fix-round review on the old sha", (e) => { e.splice(8, 0, fix(), retri(), ev("review_start", { branch: "t", sha: SHA, ci_state: "green", role: "re-reviewer" })); }],
-  ["DEC-14", "re-reviewer twice for one fix round", (e) => { e.splice(8, 0, fix(), retri(), ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" })); }],
-  ["DEC-20", "merge of a branch nobody reviewed, no waiver", (e) => { e.splice(6, 2); }],
-  ["DEC-20", "waived:true does not cite a standing waiver", (e) => { e.splice(6, 2); e[6].waived = true; }],
-  ["DEC-05", "tree mismatch", (e) => { e[8].tree_equal = false; }],
-  ["OPR-02", "merge built without green CI on the catch-up merge", (e) => { e[8].ci_state = "red"; }],
-  ["DEC-06", "chained base push", (e) => { e[10].chained = true; }],
-  ["OPR-03", "chained base push", (e) => { e[10].chained = true; }],
-  ["DEC-06", "base pushed by the agent when the profile says owner", (e) => { e[10].by = "agent"; }],
-  ["DEC-06", "base pushed with no merge_built for that sha", (e) => { e.splice(8, 1); }],
-  ["DEC-06", "HEAD:main counts as the base", (e) => { e[10].ref = "HEAD:main"; e[10].chained = true; }],
-  ["DEC-06", "origin/main counts as the base", (e) => { e[10].ref = "origin/main"; e[10].chained = true; }],
-  ["DEC-06", "refs/heads/main counts as the base", (e) => { e[10].ref = "refs/heads/main"; e[10].chained = true; }],
-  ["DEC-07", "issue closed before origin/base equals the merge sha", (e) => { e[11].origin_base_sha = "c".repeat(40); }],
-  ["DEC-07", "issue closed with no base push before it", (e) => { e.splice(10, 1); }],
-  ["DEC-07", "issue closed before the base push event", (e) => { e.splice(10, 0, e.pop()); }],
-  ["DEC-07", "close for a merge sha no merge_built built", (e) => { e[11].merge_sha = "e".repeat(40); e[11].origin_base_sha = e[11].merge_sha; }],
-  ["OPR-04", "issue closed before origin/base equals the merge sha", (e) => { e[11].origin_base_sha = "c".repeat(40); }],
+  ["DEC-04", "coder on sonnet when security=yes", (e) => { e[3].model = "sonnet"; }],
+  ["DEC-19", "reviewer on sonnet", (e) => { e.splice(5, 0, ev("agent_start", { role: "reviewer", model: "sonnet", topic: "t", phase: "delivery" })); }],
+  ["DEC-19", "re-reviewer on sonnet after a code fix", (e) => { e.splice(6, 0, ev("agent_start", { role: "re-reviewer", model: "sonnet", topic: "t", fix_scope: "code" })); }],
+  ["DEC-14", "same sha reviewed twice with no fix between", (e) => { e.splice(6, 0, ev("review_start", { branch: "t", sha: SHA, ci_state: "green" })); }],
+  ["DEC-14", "fix-round review on the old sha", (e) => { e.splice(6, 0, fix(), ev("review_start", { branch: "t", sha: SHA, ci_state: "green", role: "re-reviewer" })); }],
+  ["DEC-14", "re-reviewer twice for one fix round", (e) => { e.splice(6, 0, fix(), ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" })); }],
+  ["DEC-20", "merge of a branch nobody reviewed, no waiver", (e) => { e.splice(4, 2); }],
+  ["DEC-20", "waived:true does not cite a standing waiver", (e) => { e.splice(4, 2); e[4].waived = true; }],
+  ["DEC-05", "tree mismatch", (e) => { e[6].tree_equal = false; }],
+  ["OPR-02", "merge built without green CI on the catch-up merge", (e) => { e[6].ci_state = "red"; }],
+  ["DEC-06", "chained base push", (e) => { e[8].chained = true; }],
+  ["OPR-03", "chained base push", (e) => { e[8].chained = true; }],
+  ["DEC-06", "base pushed by the agent when the profile says owner", (e) => { e[8].by = "agent"; }],
+  ["DEC-06", "base pushed with no merge_built for that sha", (e) => { e.splice(6, 1); }],
+  ["DEC-06", "HEAD:main counts as the base", (e) => { e[8].ref = "HEAD:main"; e[8].chained = true; }],
+  ["DEC-06", "origin/main counts as the base", (e) => { e[8].ref = "origin/main"; e[8].chained = true; }],
+  ["DEC-06", "refs/heads/main counts as the base", (e) => { e[8].ref = "refs/heads/main"; e[8].chained = true; }],
+  ["DEC-07", "issue closed before origin/base equals the merge sha", (e) => { e[9].origin_base_sha = "c".repeat(40); }],
+  ["DEC-07", "issue closed with no base push before it", (e) => { e.splice(8, 1); }],
+  ["DEC-07", "issue closed before the base push event", (e) => { e.splice(8, 0, e.pop()); }],
+  ["DEC-07", "close for a merge sha no merge_built built", (e) => { e[9].merge_sha = "e".repeat(40); e[9].origin_base_sha = e[9].merge_sha; }],
+  ["OPR-04", "issue closed before origin/base equals the merge sha", (e) => { e[9].origin_base_sha = "c".repeat(40); }],
   ["LEDGER", "ts missing", (e) => { delete e[2].ts; }],
-  ["LEDGER", "ts goes backwards in a session", (e) => { e[4].ts = "2026-10-14T09:00:00Z"; }],
+  ["LEDGER", "ts goes backwards in a session", (e) => { e[3].ts = "2026-10-14T09:00:00Z"; }],
   ["LEDGER", "ts without a UTC offset", (e) => { e[1].ts = "2026-10-14T10:00:00"; }],
 ];
 for (const [id, name, fn] of bad) {
@@ -96,7 +93,7 @@ for (const [id, name, fn] of bad) {
 
 test("a delivery reviewer is not counted against the design-review caps (explicit phase, or by order after CI)", () => {
   const e = clean();
-  e.splice(7, 0, ev("agent_start", { role: "reviewer", model: "opus", topic: "t", phase: "delivery" }), ev("agent_start", { role: "reviewer", model: "opus", topic: "t" }));
+  e.splice(5, 0, ev("agent_start", { role: "reviewer", model: "opus", topic: "t", phase: "delivery" }), ev("agent_start", { role: "reviewer", model: "opus", topic: "t" }));
   e.splice(2, 0, ev("agent_start", { role: "reviewer", model: "opus", topic: "t", phase: "design" }));
   const r = run(e);
   assert.equal(r.status, 0, r.stdout);
@@ -106,14 +103,14 @@ test("a delivery reviewer is not counted against the design-review caps (explici
 
 test("branches interleave: state is per branch", () => {
   const e = clean();
-  e.splice(8, 0, ev("review_start", { branch: "u", sha: SHA2, ci_state: "green" }));
-  e.splice(7, 0, ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }));
+  e.splice(6, 0, ev("review_start", { branch: "u", sha: SHA2, ci_state: "green" }));
+  e.splice(5, 0, ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }));
   assert.equal(run(e).status, 0, run(e).stdout);
 });
 
 test("a fix round, new sha, one re-reviewer passes; a tests-or-docs fix may stay on sonnet", () => {
   const e = clean();
-  e.splice(8, 0, fix({ model: "sonnet", fix_scope: "tests-docs" }), retri(), ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }),
+  e.splice(6, 0, fix({ model: "sonnet", fix_scope: "tests-docs" }), ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }),
     ev("agent_start", { role: "re-reviewer", model: "sonnet", topic: "t", fix_scope: "tests-docs" }), ev("review_start", { branch: "t", sha: SHA2, ci_state: "green", role: "re-reviewer" }));
   assert.equal(run(e).status, 0, run(e).stdout);
 });
@@ -135,8 +132,8 @@ test("an empty ledger fails", () => {
 test("malformed line and unknown kind are reported", () => {
   const r = run([...clean(), "{not json", ev("mystery")]);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /^LEDGER line 13: invalid JSON/m);
-  assert.match(r.stdout, /^LEDGER line 14: unknown kind mystery/m);
+  assert.match(r.stdout, /^LEDGER line 11: invalid JSON/m);
+  assert.match(r.stdout, /^LEDGER line 12: unknown kind mystery/m);
 });
 
 test("a profile gap stops the audit instead of guessing", () => {
@@ -182,10 +179,10 @@ test("a ci_run without a branch counts for no topic", () => {
 
 test("a review_start on a branch with no triage topic warns without failing", () => {
   const e = clean();
-  e.splice(8, 0, ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }), ev("review_start", { branch: "orphan", sha: SHA2, ci_state: "green" }));
+  e.splice(6, 0, ev("ci_run", { sha: SHA2, workflow: "checks", conclusion: "success" }), ev("review_start", { branch: "orphan", sha: SHA2, ci_state: "green" }));
   const r = run(e);
   assert.equal(r.status, 0, r.stdout);
-  assert.match(r.stdout, /^warn: line 10: review_start branch orphan has no triage topic/m);
+  assert.match(r.stdout, /^warn: line 8: review_start branch orphan has no triage topic/m);
   assert.doesNotMatch(run(clean()).stdout, /warn: line/);
 });
 
@@ -256,11 +253,11 @@ test("required fields per kind: missing session, rule_version, sha, door, prod a
   const e = clean();
   delete e[1].session;
   delete e[2].rule_version;
-  delete e[6].sha;
+  delete e[4].sha;
   delete e[0].door;
   const r = run(e);
   assert.equal(r.status, 1);
-  for (const m of [/LEDGER line 2: missing session/, /LEDGER line 3: missing rule_version/, /LEDGER line 7: ci_run needs sha/, /LEDGER line 1: triage needs door/]) assert.match(r.stdout, m);
+  for (const m of [/LEDGER line 2: missing session/, /LEDGER line 3: missing rule_version/, /LEDGER line 5: ci_run needs sha/, /LEDGER line 1: triage needs door/]) assert.match(r.stdout, m);
   const w = clean();
   delete w[0].files;
   const r2 = run(w);
@@ -269,13 +266,13 @@ test("required fields per kind: missing session, rule_version, sha, door, prod a
 
 test("a force-push refspec still counts as the base (+main, +HEAD:main)", () => {
   for (const ref of ["+main", "+HEAD:main"]) {
-    const e = mutate((x) => { x[10].ref = ref; x[10].chained = true; });
+    const e = mutate((x) => { x[8].ref = ref; x[8].chained = true; });
     assert.match(run(e).stdout, /^DEC-06 /m, ref);
   }
 });
 
 test("waived must cite a standing waiver of the profile or be an owner waiver with a reason", () => {
-  const mk = (w, extra = {}) => { const e = clean(); e.splice(6, 2); e[6].waived = w; Object.assign(e[6], extra); return e; };
+  const mk = (w, extra = {}) => { const e = clean(); e.splice(4, 2); e[4].waived = w; Object.assign(e[4], extra); return e; };
   const p = mkProfile("standing_waivers: [docs-only]");
   const runP = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
   assert.equal(runP(mk("docs-only")).status, 0, runP(mk("docs-only")).stdout);
@@ -287,8 +284,8 @@ test("waived must cite a standing waiver of the profile or be an owner waiver wi
 
 test("a resumed coder cannot change model; ci-failed-twice needs opus", () => {
   const f = clean();
-  f.splice(6, 0, ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "fix", resumed: true }), retri());
-  f[4].model = "opus";
+  f.splice(4, 0, ev("agent_start", { role: "coder", model: "opus", topic: "t", phase: "fix", resumed: true }));
+  f[3].model = "opus";
   assert.equal(run(f).status, 0, run(f).stdout);
   const g = [ev("triage", { topic: "t", sec: "no", door: "no", prod: "no", track: "just do it", files: [] }),
     ev("agent_start", { role: "coder", model: "sonnet", topic: "t", phase: "build" }),
@@ -300,10 +297,10 @@ test("a resumed coder cannot change model; ci-failed-twice needs opus", () => {
 
 test("merge_built needs branch, with a clear message", () => {
   const e = clean();
-  delete e[8].branch;
+  delete e[6].branch;
   const r = run(e);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /^LEDGER line 9: merge_built needs branch/m);
+  assert.match(r.stdout, /^LEDGER line 7: merge_built needs branch/m);
   assert.doesNotMatch(r.stdout, /undefined/);
 });
 
@@ -320,12 +317,12 @@ test("a worker id derives 'resumed': same worker, later coder event, other model
 test("worker must be a non-empty string; merge_built branch may not be null", () => {
   for (const w of [null, "", {}, 5, ["w"]]) {
     const e = clean();
-    e[4].worker = w;
-    assert.match(run(e).stdout, /^LEDGER line 5: .*worker/m, JSON.stringify(w));
+    e[3].worker = w;
+    assert.match(run(e).stdout, /^LEDGER line 4: .*worker/m, JSON.stringify(w));
   }
   const e = clean();
-  e[8].branch = null;
-  assert.match(run(e).stdout, /^LEDGER line 9: merge_built needs branch/m);
+  e[6].branch = null;
+  assert.match(run(e).stdout, /^LEDGER line 7: merge_built needs branch/m);
 });
 
 // OPR-09: releases
@@ -350,12 +347,12 @@ test("OPR-09: a merge released before the next merge is pushed passes", () => {
 test("OPR-09: the next merge pushed before the previous one's release is a violation; the last unreleased merge warns", () => {
   const r = runP(CS, [...clean(), ...merge2()]);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /^OPR-09 line 14: base main pushed at eeeeeeee while merge bbbbbbbb \(pushed line 11\) has no release/m);
-  assert.match(r.stdout, /^warn: line 14: merge eeeeeeee pushed to main has no release yet/m);
+  assert.match(r.stdout, /^OPR-09 line 12: base main pushed at eeeeeeee while merge bbbbbbbb \(pushed line 9\) has no release/m);
+  assert.match(r.stdout, /^warn: line 12: merge eeeeeeee pushed to main has no release yet/m);
   assert.equal(runP(CS, [...clean(), ...merge2({ release_skip: "docs only, no version change" })]).status, 1, "a skip on the later merge does not excuse the earlier one");
-  const e = clean(); e[8].release_skip = "docs only";
+  const e = clean(); e[6].release_skip = "docs only";
   assert.equal(runP(CS, [...e, ...merge2()]).status, 0, "a merge with a release_skip reason is not due");
-  e[8].release_skip = true;
+  e[6].release_skip = true;
   assert.match(runP(CS, [...e, ...merge2()]).stdout, /^OPR-09 .*release_skip must give the reason/m);
   assert.equal(runP(`${CS}\nrelease_tool: release-please`, [...clean(), ...merge2()]).status, 0, "a release tool owns the cadence");
   assert.equal(runP("release_when: milestone", [...clean(), ...merge2()]).status, 0);
@@ -404,14 +401,14 @@ test("OPR-09: release_when unset or TODO warns once there is a base push", () =>
 const RV7 = { decide: "1.4.0", operator: "1.5.0", rules: "1.7.0" };
 const RV6 = { decide: "1.3.3", operator: "1.4.1", rules: "1.6.1" };
 const at = (rv) => (x) => ({ ...x, rule_version: rv });
-// clean(): 0 triage, 1-3 design, 4 coder, 5 triage, 6 ci_run, 7 coder_report, 8 review_start, 9 proof_check, 10 merge_built, ...
+// clean(): 0 triage, 1-2 design, 3 coder, 4 ci_run, 5 coder_report, 6 review_start, 7 proof_check, 8 merge_built, ...
 const report = (o = {}) => at(RV7)(ev("coder_report", { branch: "t", sha: SHA, evidence: "ok", tests: ["TestA"], ...o }));
 const proof = (o = {}) => at(RV7)(ev("proof_check", { branch: "t", sha: SHA, test: "TestA", result: "fails", ...o }));
 const tdd = (fn = () => {}) => {
   const e = clean().map(at(RV7));
-  e[0].tdd = true; e[5].tdd = true;
-  e.splice(7, 0, report());
-  e.splice(9, 0, proof());
+  e[0].tdd = true;
+  e.splice(5, 0, report());
+  e.splice(7, 0, proof());
   fn(e);
   return e;
 };
@@ -425,16 +422,16 @@ test("DEC-21/22: evidence ok before the review and a failing proof check pass; o
 });
 
 test("DEC-21: a review with no coder_report, or evidence gap, or evidence from before the last coder run", () => {
-  assert.match(run(tdd((e) => e.splice(7, 1))).stdout, /^DEC-21 line \d+: review of t@/m);
-  assert.match(run(tdd((e) => { e[7].evidence = "gap"; })).stdout, /^DEC-21 /m);
-  assert.match(run(tdd((e) => e.splice(7, 0, e.splice(4, 1)[0]))).stdout, /^DEC-21 /m, "coder started again after the report");
-  assert.match(run(tdd((e) => { e[7].evidence = "yes"; })).stdout, /^LEDGER line 8: coder_report evidence must be ok or gap/m);
-  assert.match(run(tdd((e) => { delete e[7].tests; })).stdout, /^LEDGER line 8: coder_report needs tests/m);
-  assert.match(run(tdd((e) => { e[7].tests = "TestA"; })).stdout, /^LEDGER line 8: coder_report tests and exempt must be lists/m);
+  assert.match(run(tdd((e) => e.splice(5, 1))).stdout, /^DEC-21 line \d+: review of t@/m);
+  assert.match(run(tdd((e) => { e[5].evidence = "gap"; })).stdout, /^DEC-21 /m);
+  assert.match(run(tdd((e) => e.splice(5, 0, e.splice(3, 1)[0]))).stdout, /^DEC-21 /m, "coder started again after the report");
+  assert.match(run(tdd((e) => { e[5].evidence = "yes"; })).stdout, /^LEDGER line 6: coder_report evidence must be ok or gap/m);
+  assert.match(run(tdd((e) => { delete e[5].tests; })).stdout, /^LEDGER line 6: coder_report needs tests/m);
+  assert.match(run(tdd((e) => { e[5].tests = "TestA"; })).stdout, /^LEDGER line 6: coder_report tests and exempt must be lists/m);
 });
 
 test("DEC-21: a mid-session upgrade does not flag a coder run stamped before 1.7.0; mixed versions warn; going back is a LEDGER violation", () => {
-  const upgraded = clean().map((x, i) => at(i < 6 ? RV6 : RV7)(x));   // coder ran under 1.6.1, the review under 1.7.0, no coder_report
+  const upgraded = clean().map((x, i) => at(i < 4 ? RV6 : RV7)(x));   // coder ran under 1.6.1, the review under 1.7.0, no coder_report
   upgraded[0].tdd = true;
   const r = run(upgraded);
   assert.equal(r.status, 0, r.stdout);
@@ -445,26 +442,26 @@ test("DEC-21: a mid-session upgrade does not flag a coder run stamped before 1.7
 });
 
 test("DEC-22: every proved test of the coder_report needs a proof_check on the reviewed head; exempt tests need none", () => {
-  assert.match(run(tdd((e) => e.splice(9, 1))).stdout, /^DEC-22 line \d+: merge of t: no proof_check of TestA on the reviewed head/m);
-  const two = run(tdd((e) => { e[7].tests = ["TestA", "TestB"]; }));
+  assert.match(run(tdd((e) => e.splice(7, 1))).stdout, /^DEC-22 line \d+: merge of t: no proof_check of TestA on the reviewed head/m);
+  const two = run(tdd((e) => { e[5].tests = ["TestA", "TestB"]; }));
   assert.match(two.stdout, /^DEC-22 .*no proof_check of TestB/m);
   assert.doesNotMatch(two.stdout, /no proof_check of TestA/);
-  assert.match(run(tdd((e) => { e[9].sha = SHA2; })).stdout, /^DEC-22 .*no proof_check of TestA/m, "a check of another sha does not count");
-  assert.match(run(tdd((e) => { e[9].result = "exempt"; })).stdout, /^DEC-22 .*no proof_check of TestA/m, "exempt does not cover a proved test");
-  const docs = run(tdd((e) => { e[7].tests = []; e[7].exempt = ["docs"]; e.splice(9, 1); }));
+  assert.match(run(tdd((e) => { e[7].sha = SHA2; })).stdout, /^DEC-22 .*no proof_check of TestA/m, "a check of another sha does not count");
+  assert.match(run(tdd((e) => { e[7].result = "exempt"; })).stdout, /^DEC-22 .*no proof_check of TestA/m, "exempt does not cover a proved test");
+  const docs = run(tdd((e) => { e[5].tests = []; e[5].exempt = ["docs"]; e.splice(7, 1); }));
   assert.equal(docs.status, 0, docs.stdout);
-  const nc = run(tdd((e) => { e[9].result = "not-checked"; }));
+  const nc = run(tdd((e) => { e[7].result = "not-checked"; }));
   assert.equal(nc.status, 0, nc.stdout);
-  assert.match(nc.stdout, /^warn: line 10: proof check of TestA on t not checked/m);
-  assert.match(run(tdd((e) => { e[9].result = "green"; })).stdout, /^LEDGER line 10: proof_check result must be/m);
+  assert.match(nc.stdout, /^warn: line 8: proof check of TestA on t not checked/m);
+  assert.match(run(tdd((e) => { e[7].result = "green"; })).stdout, /^LEDGER line 8: proof_check result must be/m);
 });
 
 test("DEC-22: a pass blocks the merge; only a later fails of that test clears it, not not-checked or exempt", () => {
-  assert.match(run(tdd((e) => { e[9].result = "passes"; })).stdout, /^DEC-22 line \d+: merge of t: proof does not prove, TestA passed/m);
-  const later = run(tdd((e) => { e[9].result = "passes"; e.splice(10, 0, proof()); }));
+  assert.match(run(tdd((e) => { e[7].result = "passes"; })).stdout, /^DEC-22 line \d+: merge of t: proof does not prove, TestA passed/m);
+  const later = run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof()); }));
   assert.equal(later.status, 0, later.stdout);
-  for (const r of ["not-checked", "exempt"]) assert.match(run(tdd((e) => { e[9].result = "passes"; e.splice(10, 0, proof({ result: r })); })).stdout, /proof does not prove, TestA/m, r);
-  assert.match(run(tdd((e) => { e[9].result = "passes"; e.splice(10, 0, proof({ test: "TestB" })); })).stdout, /proof does not prove, TestA/m, "a fails of another test");
+  for (const r of ["not-checked", "exempt"]) assert.match(run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof({ result: r })); })).stdout, /proof does not prove, TestA/m, r);
+  assert.match(run(tdd((e) => { e[7].result = "passes"; e.splice(8, 0, proof({ test: "TestB" })); })).stdout, /proof does not prove, TestA/m, "a fails of another test");
 });
 
 test("tdd off (triage without tdd, or tdd false): neither DEC-21 nor DEC-22 applies, as in 0.14.0", () => {
@@ -473,11 +470,11 @@ test("tdd off (triage without tdd, or tdd false): neither DEC-21 nor DEC-22 appl
     if (off !== undefined) e[0].tdd = off;
     const r = run(e);
     assert.equal(r.status, 0, r.stdout);
-    const p = run(tdd((x) => { x[0].tdd = x[5].tdd = off; x[9].result = "passes"; x.splice(7, 1); }));
+    const p = run(tdd((x) => { x[0].tdd = off; x[7].result = "passes"; x.splice(5, 1); }));
     assert.equal(p.status, 0, p.stdout);
   }
   assert.match(run(tdd((x) => { x[0].tdd = "yes"; })).stdout, /^LEDGER line 1: triage tdd must be true or false/m);
-  const sticky = run(tdd((x) => { x.splice(1, 0, at(RV7)(ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["Makefile"] }))); x.splice(8, 1); }));
+  const sticky = run(tdd((x) => { x.splice(1, 0, at(RV7)(ev("triage", { topic: "t", sec: "yes", door: "no", prod: "no", track: "full review", files: ["Makefile"] }))); x.splice(6, 1); }));
   assert.match(sticky.stdout, /^DEC-21 /m, "a later triage without tdd does not turn it off");
 });
 
@@ -491,27 +488,27 @@ test("tdd: yes in the profile: a triage stamped 1.7.0 without tdd true is a LEDG
 });
 
 test("version checks only for tdd-on topics: tdd off audits as 0.14.0", () => {
-  const back = (on) => { const e = clean().map(at(RV7)); if (on) e[0].tdd = true; e[6] = at(RV6)(e[6]); return e; };
+  const back = (on) => { const e = clean().map(at(RV7)); if (on) e[0].tdd = true; e[4] = at(RV6)(e[4]); return e; };
   const off = run(back(false));
   assert.equal(off.status, 0, off.stdout);
   assert.doesNotMatch(off.stdout, /mixed rules versions/);
-  assert.match(run(back(true)).stdout, /^LEDGER line 7: rules version goes backwards: 1\.6\.1 after 1\.7\.0 on topic t/m);
-  const mixedOff = run(clean().map((x, i) => at(i < 6 ? RV6 : RV7)(x)));
+  assert.match(run(back(true)).stdout, /^LEDGER line 5: rules version goes backwards: 1\.6\.1 after 1\.7\.0 on topic t/m);
+  const mixedOff = run(clean().map((x, i) => at(i < 4 ? RV6 : RV7)(x)));
   assert.doesNotMatch(mixedOff.stdout, /mixed rules versions/);
 });
 
 test("DEC-22: every test exempt on a topic whose triage files include production code warns", () => {
-  const r = run(tdd((x) => { x[0].files = x[5].files = ["src/a.go", "docs/a.md"]; x[7].tests = []; x[7].exempt = ["TestA"]; x.splice(9, 1); }));
+  const r = run(tdd((x) => { x[0].files = ["src/a.go", "docs/a.md"]; x[5].tests = []; x[5].exempt = ["TestA"]; x.splice(7, 1); }));
   assert.equal(r.status, 0, r.stdout);
-  assert.match(r.stdout, /^warn: line 8: every test of t's coder_report is exempt but the step touches production code \(src\/a\.go\)/m);
-  assert.doesNotMatch(run(tdd((x) => { x[0].files = x[5].files = ["docs/a.md"]; x[7].tests = []; x[7].exempt = ["docs"]; x.splice(9, 1); })).stdout, /every test/);
+  assert.match(r.stdout, /^warn: line 6: every test of t's coder_report is exempt but the step touches production code \(src\/a\.go\)/m);
+  assert.doesNotMatch(run(tdd((x) => { x[0].files = ["docs/a.md"]; x[5].tests = []; x[5].exempt = ["docs"]; x.splice(7, 1); })).stdout, /every test/);
 });
 
 test("tdd: auto in the profile: a triage stamped 1.7.0 or later must record tdd true or false", () => {
   const p = mkProfile("tdd: auto\ntargeted_test: make t");
   const runA = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
   assert.equal(runA(tdd()).status, 0);
-  const off = clean().map(at(RV7)); off[0].tdd = false; off[5].tdd = false;
+  const off = clean().map(at(RV7)); off[0].tdd = false;
   assert.equal(runA(off).status, 0);
   assert.match(runA(clean().map(at(RV7))).stdout, /^LEDGER line 1: triage of t has no tdd true or false, but the profile says tdd: auto/m);
 });
@@ -525,14 +522,14 @@ test("tdd yes or auto: a backwards rules version is a LEDGER violation anywhere 
     writeFileSync(f, e.map((x) => JSON.stringify(x)).join("\n") + "\n");
     const r = spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" });
     assert.equal(r.status, 1, mode);
-    assert.match(r.stdout, /^LEDGER line 15: rules version goes backwards: 1\.6\.1 after 1\.7\.0$/m, mode);
+    assert.match(r.stdout, /^LEDGER line 13: rules version goes backwards: 1\.6\.1 after 1\.7\.0$/m, mode);
   }
 });
 
 test("tdd auto: a recorded tdd false that tdd-suggest would call yes (security path or door) is a LEDGER violation; code with tdd false warns", () => {
   const p = mkProfile("tdd: auto\ntargeted_test: make t");
   const runA = (events) => { const f = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(f, events.map((x) => JSON.stringify(x)).join("\n") + "\n"); return spawnSync("node", [audit, f, "--profile", p], { encoding: "utf8" }); };
-  const tri = (o) => { const e = clean().map(at(RV7)); Object.assign(e[0], { tdd: false, ...o }); Object.assign(e[5], { tdd: false, ...o }); return e; };
+  const tri = (o) => { const e = clean().map(at(RV7)); Object.assign(e[0], { tdd: false, ...o }); return e; };
   assert.match(runA(tri({ files: ["Makefile", "src/a.go", "src/a_test.go"] })).stdout, /^LEDGER line 1: triage of t records tdd false, but tdd-suggest says yes \(security path or one-way door\)/m);
   const door = runA(tri({ sec: "no", door: "yes", files: ["src/a.go", "src/a_test.go"] }));
   assert.match(door.stdout, /^LEDGER line 1: triage of t records tdd false/m);
@@ -547,7 +544,7 @@ test("condition events: needs topic, id, step, test and status; status is open o
   assert.equal(run([...clean(), c(), c({ status: "proved" })]).status, 0);
   const bad = run([...clean(), c({ status: "done" })]);
   assert.equal(bad.status, 1);
-  assert.match(bad.stdout, /LEDGER line 13: condition status must be open or proved/);
+  assert.match(bad.stdout, /LEDGER line 11: condition status must be open or proved/);
   assert.match(run([...clean(), c({ test: undefined })]).stdout, /condition needs test/);
 });
 
@@ -555,7 +552,7 @@ test("profile base_pusher: operator is agent: a base push by agent is no violati
   const f = join(mkdtempSync(join(tmpdir(), "prof-")), "p.md");
   writeFileSync(f, readFileSync(profile, "utf8").replace("base_pusher: owner", "base_pusher: operator"));
   const go = (events) => { const l = join(mkdtempSync(join(tmpdir(), "led-")), "l.jsonl"); writeFileSync(l, events.map((e) => JSON.stringify(e)).join("\n") + "\n"); return spawnSync("node", [audit, l, "--profile", f], { encoding: "utf8" }); };
-  const e = clean(); e[10].by = "agent";
+  const e = clean(); e[8].by = "agent";
   const r = go(e);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.doesNotMatch(r.stdout, /profile gap/);
