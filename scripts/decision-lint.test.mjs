@@ -78,7 +78,7 @@ test("cli: exit 2 with gap lines, 0 when clean, 64 on bad usage", () => {
 
 test("the six sections are required, with the exact label, and not empty or a placeholder", () => {
   for (const sec of ["Decision", "Track and why", "Lenses", "Actions taken", "Open risks and revisit trigger", "Cost"]) {
-    const without = SEC.split("\n").filter((l) => !new RegExp(`^[-* ]*\\**${sec}\\b`).test(l)).join("\n");
+    const without = SEC.split("\n").filter((l) => !((r) => r.startsWith(sec) && !/^\w/.test(r.slice(sec.length)))(l.replace(/^[-* ]*\**/, ""))).join("\n");
     assert.deepEqual(lint(rec(GOOD, TRIAGE + without)), [`section ${sec} missing (after the table, at the start of a line, as "${sec}:")`], sec);
   }
   assert.deepEqual(lint(rec(GOOD, TRIAGE + SEC.replace("Cost: 4 agents, 34k tokens.", "Cost: ..."))), ["section Cost is empty or a placeholder"]);

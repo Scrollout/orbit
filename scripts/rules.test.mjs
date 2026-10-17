@@ -35,12 +35,12 @@ test("tag drift check: a changed tag, a duplicated id, an unregistered core rule
   const swap = (id, tag) => rules.map((r) => (r.id === id ? { ...r, tag } : r));
   const first = rules.find((r) => r.file === cores[0]);
   const flipped = first.tag === "script" ? "judgment" : "script";
-  assert.match(tagDrift(swap(first.id, flipped), readRepo)[0], new RegExp(`${first.id} tag ${flipped} not in ${first.file.replace("/", "\\/")}`));
+  assert.ok(tagDrift(swap(first.id, flipped), readRepo)[0].includes(`${first.id} tag ${flipped} not in ${first.file}`));
   const dup = (f) => (f === first.file ? `${readRepo(f)}\n- ${first.id} \`${first.tag}\`: again\n` : readRepo(f));
-  assert.match(tagDrift(rules, dup).join("\n"), new RegExp(`${first.id} must appear exactly once`));
+  assert.ok(tagDrift(rules, dup).join("\n").includes(`${first.id} must appear exactly once`));
   const extra = (f) => (f === first.file ? `${readRepo(f)}\n- DEC-99 \`judgment\`: new rule\n` : readRepo(f));
   assert.match(tagDrift(rules, extra).join("\n"), /lists .*DEC-99 but the registry has/);
-  assert.match(tagDrift(rules.filter((r) => r.id !== first.id), readRepo).join("\n"), new RegExp(`lists ${first.id}`));
+  assert.ok(tagDrift(rules.filter((r) => r.id !== first.id), readRepo).join("\n").includes(`lists ${first.id}`));
 });
 
 test("every hook-tagged rule names the hook that enforces it, and that hook names the rule", () => {

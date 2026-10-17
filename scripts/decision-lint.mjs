@@ -72,11 +72,12 @@ export function lint(text) {
     if (a === undefined) gaps.push(`triage line ${name} missing (after the table, at the start of a line, as "${name}:")`);
     else if (!ok.test(a)) gaps.push(`triage line ${name}: answer must start with ${name === "Touches real" ? "yes, no or n/a" : "yes or no"}, got ${JSON.stringify(a.slice(0, 30))}`);
   }
-  const labelled = (label) => { for (let i = 0; i < after.length; i++) { const m = new RegExp(`^${label}\\s*:\\s*(.*)$`, "i").exec(norm(after[i])); if (m) return { text: m[1].trim(), next: after.slice(i + 1).find((l) => l.trim()) }; } return undefined; };
+  const head = (line) => { const m = /^([^:]*):\s*(.*)$/.exec(norm(line)); return m && { label: m[1].trim().split(/\s+/).join(" ").toLowerCase(), text: m[2] }; };
+  const labelled = (label) => { for (let i = 0; i < after.length; i++) { const m = head(after[i]); if (m && m.label === label.toLowerCase()) return { text: m.text.trim(), next: after.slice(i + 1).find((l) => l.trim()) }; } return undefined; };
   for (const sec of SECTIONS) {
-    const a = labelled(sec.replace(/ /g, "\\s+"));
+    const a = labelled(sec);
     if (!a) gaps.push(`section ${sec} missing (after the table, at the start of a line, as "${sec}:")`);
-    else if (a.text ? placeholder(a.text) : !a.next || SECTIONS.some((o) => new RegExp(`^${o}\\s*:`, "i").test(norm(a.next)))) gaps.push(`section ${sec} is empty or a placeholder`);
+    else if (a.text ? placeholder(a.text) : !a.next || SECTIONS.some((o) => head(a.next)?.label === o.toLowerCase())) gaps.push(`section ${sec} is empty or a placeholder`);
   }
   const reason = (label) => { const a = labelled(label); return a !== undefined && a.text !== "" && !placeholder(a.text); };
   const pm = calls.filter((c) => c.role === "pm").at(-1), lead = calls.filter((c) => /^(techlead|tech lead|architect)$/.test(c.role)).at(-1);
