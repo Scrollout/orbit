@@ -810,6 +810,30 @@ test("#36: a backslash-newline is removed before parsing, in a here-doc body, ${
   });
 });
 
+test("#37: $(( ... ) ) without a closing )) is $( and a subshell; $\\<newline>'..' and $\\<newline>\"..\" are $'..' and $\"..\"", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const s of ["git push -f origin feat", "echo x > ~/.claude/settings.json"]) {
+        const bare = kind(guard(bash(`echo $(${s})`, who), env, ctx()));
+        assert.notEqual(bare, "allow", `${m}: bare ${s}`);
+        for (const c of [`echo $((${s}) )`, `echo $(\\\n(${s}) )`, `echo $\\\n((${s}) )`, `echo "$((${s}) )"`, `cat <<EOF\n$((${s}) )\nEOF`,
+          `echo $(( $((${s}) ) ))`, `echo \${x:-$((${s}) )}`, `echo $((echo "))"; ${s}) )`]) {
+          assert.equal(kind(guard(bash(c, who), env, ctx())), bare, `${m}: ${JSON.stringify(c)}`);
+        }
+      }
+      const force = kind(guard(bash("git push origin -f feat", who), env, ctx()));
+      assert.notEqual(force, "allow", `${m}: bare -f`);
+      for (const c of ["git push origin $\\\n'-f' feat", 'git push origin $\\\n"-f" feat', "git push origin $\\\n'\\x2d'f feat"]) {
+        assert.equal(kind(guard(bash(c, who), env, ctx())), force, `${m}: ${JSON.stringify(c)}`);
+      }
+      for (const c of ["echo $((1+2))", "echo $(( $(date +%s) - 1 ))", "echo $(((1+2)*3))", "echo $(( (1+2) ))", "echo $(\\\n(1+2)\\\n)", "cat <<EOF\n$((1+2))'s\nEOF", "git push origin $\\\n'feat'"]) {
+        assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${JSON.stringify(c)}`);
+      }
+    }
+  });
+});
+
 // #30: a fake /proc. procs: pid -> { ppid, fd: [link0, link1, link2], opens?: [target0, ...] } (opens: what opening the fd
 // yields, when it changed after the readlink); devs: path -> { char, uid }. parentTerminal returns an open fd: pt maps it back.
 function fakeProc(procs, devs) {

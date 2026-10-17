@@ -146,9 +146,10 @@ function bodySubs(p, t, depth) {
       if (k >= t.length) throw new ParseError("unclosed ` in a heredoc");
       list({ s: inner, i: 0, cmds: p.cmds, env: p.env, f: p.f }, depth + 1, null);
       j = k;
-    } else if (t.startsWith("$(", j) && t[j + 2] !== "(") {
-      const q = { s: t, i: j + 2, cmds: p.cmds, env: p.env, f: p.f };
-      list(q, depth + 1, ")");
+    } else if (t.startsWith("$(", j)) {
+      // $(...) or $((...)), read as in a word (#37).
+      const q = { s: t, i: j, cmds: p.cmds, env: p.env, f: p.f };
+      word(q, depth, true);
       j = q.i - 1;
     }
   }
@@ -156,7 +157,7 @@ function bodySubs(p, t, depth) {
 
 // A word: `lit` is its text when fully static (else null), `exp` its text with $VAR, ${VAR} and ~ expanded from the
 // environment (null when anything else is dynamic), `subs` the [from, to) ranges of the commands it substitutes.
-function word(p, depth) {
+function word(p, depth, one = false) {   // one: only the $ expansion at p.i (a here-doc body)
   const s = p.s, start = p.i, subs = [], names = [];
   let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0, glob = false, ext = false, plainAt = -1, nested = false;
   const plain = new Set();
@@ -166,18 +167,27 @@ function word(p, depth) {
   const dollar = () => {
     // A substitution inside $((...)) or ${...} is parsed as any other (#36); the word is then not only that substitution.
     const inner = () => {
-      const k = s[p.i] === "$" ? cont(p.i + 1) : -1;
-      if (s[k] === "(" && s[cont(k + 1)] !== "(") { p.i = k + 1; sub(); nested = true; return true; }
+      if (s[p.i] === "$" && s[cont(p.i + 1)] === "(") { dollar(); nested = true; return true; }
       if (s[p.i] === "`") { backtick(); nested = true; return true; }
       if (s[p.i] === "\\") p.i++;
       return false;
     };
     const a = cont(p.i + 1);
     if (s[a] === "(" && s[cont(a + 1)] === "(") {
+      // Arithmetic only when its matching close is )) (backslash-newlines removed), as bash reads it; else, or at a quote,
+      // it is $( and a subshell (#37): what the arithmetic reading parsed is dropped and the body parsed as commands.
+      const from = p.cmds.length, ns = subs.length, nn = nested, cx = p.f.complex;
       let n = 0;
-      for (; p.i < s.length; p.i++) { if (inner()) p.i--; else if (s[p.i] === "(") n++; else if (s[p.i] === ")" && --n === 0) break; }
+      for (p.i = a; p.i < s.length; p.i++) {
+        if (inner()) p.i--;
+        else if (s[p.i] === "'" || s[p.i] === '"') break;
+        else if (s[p.i] === "(") n++;
+        else if (s[p.i] === ")" && --n === 0) { p.i++; dyn = unexp = true; return; }
+        else if (s[p.i] === ")" && n === 1) { if (s[cont(p.i + 1)] !== ")") break; p.i = cont(p.i + 1) - 1; }
+      }
       if (p.i >= s.length) throw new ParseError("unclosed $((");
-      p.i++; dyn = unexp = true; return;
+      p.cmds.length = from; subs.length = ns; nested = nn; p.f.complex = cx;
+      p.i = a + 1; sub(); return;
     }
     if (s[a] === "(") { p.i = a + 1; sub(); return; }
     let name = null;
@@ -206,6 +216,7 @@ function word(p, depth) {
     list(q, depth + 1, null);
     subs.push([from, p.cmds.length]); dyn = unexp = true; p.i = j + 1;
   };
+  if (one) { dollar(); return null; }
   while (p.i < s.length) {
     const c = s[p.i];
     if ((c === "<" || c === ">") && s[p.i + 1] === "(") { p.i += 2; sub(); continue; }
@@ -229,12 +240,14 @@ function word(p, depth) {
       if (e < 0) throw new ParseError("unclosed '");
       add(s.slice(p.i + 1, e)); p.i = e + 1; continue;
     }
-    if (c === "$" && s[p.i + 1] === "'") {
+    // $\<newline>'..' and $\<newline>".." are $'..' and $".." to bash (#37).
+    if (c === "$" && s[cont(p.i + 1)] === "'") {
       // The end as bash's lexer finds it: a backslash escapes the next character, a quote too.
-      let e = p.i + 2, t = "";
+      const q = cont(p.i + 1);
+      let e = q + 1, t = "";
       while (e < s.length && s[e] !== "'") e += s[e] === "\\" ? 2 : 1;
       if (e >= s.length) throw new ParseError("unclosed $'");
-      const b = s.slice(p.i + 2, e);
+      const b = s.slice(q + 1, e);
       // Every ANSI-C escape decoded as bash does (#31, #33): an unknown one (\z, \x without a digit) and a closing \c stay as
       // written; \c\\ is one control character; a NUL ends the segment. A value beyond ASCII is a raw byte or depends on the
       // locale: the word is unreadable.
@@ -253,7 +266,7 @@ function word(p, depth) {
       add(t.split("\0")[0]); p.i = e + 1; continue;
     }
     // A locale string $"..." is a double-quoted string to bash: the $ is dropped (#32).
-    if (c === "$" && s[p.i + 1] === '"') { p.i++; continue; }
+    if (c === "$" && s[cont(p.i + 1)] === '"') { p.i = cont(p.i + 1); continue; }
     if (c === '"') {
       p.i++;
       while (p.i < s.length && s[p.i] !== '"') {
