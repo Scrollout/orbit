@@ -137,7 +137,7 @@ function heredocs(p, pending) {
 // environment (null when anything else is dynamic), `subs` the [from, to) ranges of the commands it substitutes.
 function word(p, depth) {
   const s = p.s, start = p.i, subs = [], names = [];
-  let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0;
+  let lit = "", exp = "", dyn = false, unexp = false, litChars = 0, vars = 0, glob = false, ext = false, plainAt = -1;
   const add = (t) => { lit += t; exp += t; litChars += t.length; };
   const sub = () => { const from = p.cmds.length; list(p, depth + 1, ")"); subs.push([from, p.cmds.length]); dyn = unexp = true; };
   const dollar = () => {
@@ -176,12 +176,18 @@ function word(p, depth) {
   while (p.i < s.length) {
     const c = s[p.i];
     if ((c === "<" || c === ">") && s[p.i + 1] === "(") { p.i += 2; sub(); continue; }
-    // An extglob group (+( @( !( ?( *( inside a word) stays in the word, to its matching ) (#25).
+    // An extglob group (+( @( !( ?( *( after an unquoted, unescaped character of the word) stays in the word, to its
+    // matching ), and makes the word unreadable (#25). One holding an expansion, a quote or an escape is not parsed: a
+    // parse error. ( after a quoted, escaped or expanded +@!?* is a bash syntax error: a parse error too.
     if (c === "(" && p.i > start && "+@!?*".includes(s[p.i - 1])) {
+      if (plainAt !== p.i - 1) throw new ParseError("( after a quoted or expanded glob character");
       let n = 0, j = p.i;
-      for (; j < s.length; j++) { if (s[j] === "(") n++; else if (s[j] === ")" && --n === 0) break; }
+      for (; j < s.length; j++) {
+        if ("$`'\"\\".includes(s[j])) throw new ParseError("extglob group with an expansion or a quote");
+        if (s[j] === "(") n++; else if (s[j] === ")" && --n === 0) break;
+      }
       if (j >= s.length) throw new ParseError("unclosed extglob group");
-      add(s.slice(p.i, j + 1)); p.i = j + 1; continue;
+      add(s.slice(p.i, j + 1)); p.i = j + 1; dyn = unexp = glob = ext = true; continue;
     }
     if (META.has(c)) break;
     if (c === "\\") { if (s[p.i + 1] !== "\n") add(s[p.i + 1] ?? ""); p.i += 2; continue; }
@@ -216,10 +222,12 @@ function word(p, depth) {
       if (p.env.HOME === undefined) unexp = true; else exp += p.env.HOME;
       continue;
     }
-    add(c); p.i++;
+    if (c === "*" || c === "?" || c === "[") glob = true;
+    add(c); plainAt = p.i++;
   }
   if (p.i === start) return null;
-  return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 ? subs[0] : null };
+  // glob: an unquoted *, ? or [ (or an extglob group); ext: an extglob group.
+  return { lit: dyn ? null : lit, exp: unexp ? null : exp, raw: s.slice(start, p.i), glob, ext, subs, vars: names, onlySub: subs.length === 1 && litChars === 0 && vars === 0 ? subs[0] : null };
 }
 
 // ---------- command resolution ----------
@@ -1030,8 +1038,9 @@ function pushOut(rest, dir, cwd, getCtx, add, xargs) {
   const pos = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i].lit;
-    if (a === null) { pos.push(null); continue; }
-    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => w.lit)); break; }
+    // A word with an unquoted glob character is a target it cannot read: bash may expand it to any name (#27).
+    if (a === null || rest[i].glob) { pos.push(null); continue; }
+    if (a === "--") { pos.push(...rest.slice(i + 1).map((w) => (w.glob ? null : w.lit))); break; }
     if (a.startsWith("--")) {
       const eq = a.indexOf("="), n = pushLong(a.slice(2, eq < 0 ? undefined : eq));
       if (n === null) { unknown = true; continue; }
@@ -1556,8 +1565,8 @@ const stateDeny = (what, action, input) => outwardReason("DENY", { what, action 
 // An extglob form (+( @( !( ?( *() counts as a glob too (#25), one globExact does not model.
 const hasGlob = (s) => /[*?[{]|[+@!]\(/.test(s);
 const EXTGLOB = /[+@!?*]\(/;
-// A line that may change glob matching (shopt, set -o/+o, BASHOPTS): its every glob is shared (#25).
-const GLOB_OPTS = /shopt|BASHOPTS|\bset\s+[-+][a-zA-Z]*o\b/;
+// A line that may change glob matching (shopt, BASHOPTS): its every glob is shared (#25). No set option widens matching.
+const GLOB_OPTS = /shopt|BASHOPTS/;
 // A pattern with its {a,b} alternatives expanded (at most 64; null beyond: the caller takes the stricter answer).
 // A group with no comma, or with no closing }, is literal, as in bash; the next group still expands.
 function braces(s, n = 0, from = 0) {
@@ -1644,6 +1653,12 @@ function claudeWrite(cmds, st, dirs) {
   const names = [...new Set([...dirs, ...[st.env?.HOME && join(st.env.HOME, ".claude"), st.env?.CLAUDE_CONFIG_DIR].filter((d) => typeof d === "string" && isAbsolute(d))])];
   const hit = (w, base = st.cwd) => {
     const e = expOf(w, st);
+    // A word with an extglob group cannot be resolved: it names ~/.claude in its text, else it is shared (#25).
+    if (w.ext) {
+      if (w.raw.includes(".claude")) return w.raw;
+      st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
+      return null;
+    }
     if (e != null && hasGlob(e)) {
       if (globUnder(e, base, names) || w.raw.includes(".claude")) return w.raw;
       if (!globExact(e) || st.globOpts) st.links?.push({ cls: "shared", what: "a glob it cannot match exactly in a write target or a link or copy operand", sub: "glob", action: `write or link ${argShow(w)}`, refs: [], cmd: null });
@@ -1659,8 +1674,8 @@ function claudeWrite(cmds, st, dirs) {
     assigns(cmd, r, st);
     const text = [...cmd.words.map((w) => w.raw), cmd.heredoc ?? ""].join(" ");
     if (!r) continue;
-    // A shopt or set -o/+o (or a program it cannot tell) may change glob matching for the rest of the line (#25).
-    if (r.dynamic || r.name === "shopt" || (r.name === "set" && r.args.some((w) => w.lit === null || /^[-+][a-zA-Z]*o$/.test(w.lit)))) st.globOpts = true;
+    // A shopt (or a program it cannot tell) may change glob matching for the rest of the line (#25).
+    if (r.dynamic || r.name === "shopt") st.globOpts = true;
     if (r.dynamic) { if (text.includes(".claude")) return text; continue; }
     if (r.name === "cd" || r.name === "pushd") {
       const t = r.args.find((w) => w.lit === null || !w.lit.startsWith("-") || w.lit === "-");
@@ -1682,7 +1697,7 @@ function claudeWrite(cmds, st, dirs) {
     if (r.xargs && (targets.length || r.name in WRITERS) && text.includes(".claude")) return r.name;
     for (const t of targets) { const h = hit(t); if (h) return h; }
     // Every cp operand with a glob counts (#22); ln checks all its operands below.
-    if (r.name === "cp") for (const t of positionals(r.args, WRITERS.cp.opts)) { if (t.exp != null && hasGlob(t.exp)) { const h = hit(t); if (h) return h; } }
+    if (r.name === "cp") for (const t of positionals(r.args, WRITERS.cp.opts)) { if (t.ext || (t.exp != null && hasGlob(t.exp))) { const h = hit(t); if (h) return h; } }
     // A link to a ~/.claude path (ln in any mode, cp -s or -l) is a way to write it later: every operand counts.
     if (r.name === "ln" || (r.name === "cp" && r.args.some((w) => w.lit === null || /^(-[a-zA-Z]*[sl][a-zA-Z]*|--symbolic-link|--link)$/.test(w.lit)))) {
       const pos = positionals(r.args, WRITERS[r.name].opts);

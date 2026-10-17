@@ -628,14 +628,14 @@ test("#24 row 2: any gh call under xargs, find -exec, fd -x or parallel is share
 });
 
 // ---------- Orbit #25: guard residuals accepted at 0.21.0 ----------
-test("#25 row 1: a line with shopt or set -o/+o shares every glob operand", () => {
+test("#25 row 1: a line with shopt shares every glob operand", () => {
   withGo((env, h) => {
     for (const m of ["default", "bypassPermissions"]) {
       const who = { ...MAIN, cwd: h, permission_mode: m };
       for (const c of [
         "shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json", "bash -c 'shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json'",
         "eval 'shopt -s nocaseglob'; echo x > ~/.CLAUD?/settings.json", "sh''opt -s nocaseglob; cp x ~/.CLAUD?/settings.json",
-        "set -o posix; cp x ~/.CLAUD?/settings.json", "set +o noglob; ln -sf x ~/.CLAUD?/settings.json", "x=shopt; $x -s nocaseglob; cp x ~/.CLAUD?/settings.json",
+        "BASHOPTS=nocaseglob bash -c 'cp x ~/.CLAUD?/settings.json'", "x=shopt; $x -s nocaseglob; cp x ~/.CLAUD?/settings.json",
       ]) assert.notEqual(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
       for (const c of ["rm *.log", "cp x ~/.CLAUD?/settings.json"]) assert.equal(guard(bash(c, { ...who, cwd: c === "rm *.log" ? repo : h }), env, ctx()), null, `${m}: ${c}`);
     }
@@ -660,5 +660,41 @@ test("#25 row 3: ] first in a negated set is a set character, as in bash", () =>
       // [!]c] excludes c; [!]laude has no closing ] after the set, so it is literal: neither names ~/.claude.
       for (const c of ["echo x > ~/.[!]c]laude/settings.json", "echo x > ~/.[!]laude/settings.json"]) assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
     }
+  });
+});
+
+// ---------- Orbit #25 send-back and #27: extglob groups, set, glob refspecs ----------
+test("#25 fix 1: an extglob group holding a substitution, a backtick or a quote is unreadable, never silent", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: h, permission_mode: m };
+      for (const c of ["shopt -s extglob\necho @($(echo x > ~/.claude/settings.json))", "shopt -s extglob\nx=@($(rm -rf ~/.claude))", "echo @(\"x\"$(echo x > ~/.claude/s))"]) assert.equal(kind(guard(bash(c, who), env, ctx())), "deny", `${m}: ${c}`);
+    }
+    attendedAsk(env, ["shopt -s extglob\necho @($(git push --force origin main))", "echo +(a|`git push -f`) ok", "shopt -s extglob\necho @($(gh release delete v1))", "shopt -s extglob\necho @($(gh pr merge 1))", "echo @('x'|git push origin main)"]);
+  });
+});
+
+test("#25 fix 2: a push target holding an extglob group is unreadable (shared)", () => {
+  withGo((env) => attendedAsk(env, ["git push origin @(main)", "git push origin HEAD:@(main)", "git push origin +(main)"]));
+});
+
+test("#25 fix 5: an escaped, quoted or expanded glob character before ( is no extglob group (fails closed)", () => {
+  withGo((env) => attendedAsk(env, ["echo \\*(git push origin main)", "echo $?(git push origin main)", "echo '*'(git push origin main)"]));
+});
+
+test("#25 fix 3: set (any -o/+o or short flags) does not share globs; shopt still does", () => {
+  withGo((env, h) => {
+    for (const m of ["default", "bypassPermissions"]) {
+      const who = { ...MAIN, cwd: repo, permission_mode: m };
+      for (const c of ["set -euo pipefail; rm *.log", "set -o posix; rm *.log", "set +o noglob; rm *.log"]) assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: ${c}`);
+      assert.notEqual(guard(bash("shopt -s nocaseglob; cp x ~/.CLAUD?/settings.json", { ...who, cwd: h }), env, ctx()), null, `${m}: shopt`);
+    }
+  });
+});
+
+test("#27: a push refspec with an unquoted glob character is unreadable (shared), like ma*", () => {
+  withGo((env) => {
+    attendedAsk(env, ["git push origin m?in", "git push origin ma[i]n", "git push origin HEAD:m?in", "git push origin ma*", "git push origin -- m?in"]);
+    assert.equal(guard(bash("git push origin feat", { ...MAIN, permission_mode: "default" }), env, ctx({ ctx: { refKind: () => ({ tag: false, branch: true, remote: true }) } })), null, "a plain feature branch stays silent");
   });
 });
