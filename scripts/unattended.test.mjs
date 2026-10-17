@@ -325,7 +325,7 @@ test("hooks.json: no prompt hook; the guard matcher covers reads, schedulers and
   const h = JSON.parse(readFileSync(join(repo, "hooks/hooks.json"), "utf8")).hooks;
   assert.equal(h.UserPromptSubmit, undefined);
   const m = h.PreToolUse.find((e) => e.hooks.some((x) => x.command.includes("hooks/guard"))).matcher.split("|");
-  for (const name of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob", "mcp__.*", ".*Cron.*", ".*Schedule.*", ".*Wakeup.*", ".*Trigger.*", ".*Message.*", ".*Skill.*", "SlashCommand"]) assert.ok(m.includes(name), name);
+  for (const name of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob", "mcp__.*", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup", "RemoteTrigger", "SendMessage", "PushNotification", "Skill"]) assert.ok(m.includes(name), name);
   assert.ok(existsSync(join(repo, "commands/unattended.md")), "the command file exists");
 });
 

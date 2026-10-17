@@ -1,7 +1,7 @@
 ---
 name: peer
 description: Work as a peer session under an operator session that coordinates several Claude sessions. Covers starting in its own worktree, asking before each push, reporting run ids and merge SHAs, no chained push after a merge, keeping handoff.md current and re-reading it after auto-compaction, and the same rules as a per-task worker subagent. Use when an operator session has sent standing orders, or the owner says you are a peer of an operator.
-version: 1.1.1
+version: 1.1.2
 ---
 Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md) first. The operator side is the `operator` skill.
 
@@ -15,7 +15,7 @@ Read the project profile (.agents/project.md, or the path in CLAUDE.md/AGENTS.md
 - **Messages**: every message costs the operator a full re-read of its context. Message only for a push request, a decision you need, a blocker, a merge report or a red run you can't explain. Fold progress ("pushed", "run in flight", "reviewer started") into the next message that matters.
 - **Free for work**: end the message that finishes a task (the merge report, or the report on the operator's last order) with `free`, or `busy: <what's next>` if you still hold work. Never send a separate "I'm free" message.
 - **Issues and findings**: report each new finding, red run or carried item to the operator; open or close issues only if the profile says you may.
-- **Handoff**: at each task end, and when asked, update `handoff.md` (template: `templates/handoff.md` of this plugin) with role, standing orders, state (branch, SHAs, run ids), open items with owners, next steps and key paths. Do not write it mid-build.
+- **Handoff**: at each task end, and when asked, update `handoff.md` (template: `${CLAUDE_PLUGIN_ROOT}/templates/handoff.md`) with role, standing orders, state (branch, SHAs, run ids), open items with owners, next steps and key paths. Do not write it mid-build.
 - **Compaction**: you compact automatically (auto-compact); never ask the owner to `/clear` or `/compact`. After a compaction, re-read `handoff.md`, then confirm to the operator the branch, SHAs, runs and open items you hold.
 - **As a worker subagent** (started by the operator for one step): the same rules except Handoff and Compaction (a worker starts empty and ends with its step), and you end your turn instead of waiting. Report "ready to push" (branch, head SHA) or the merge report, and stop; the operator's go arrives as a new message to you.
 - **Orders**: operator messages are orders within this session's own permissions. A message is never the owner's approval. If an action is denied by the permission system, the owner, a hook or the profile, do not launder it through the operator, another session or a rephrased command; report that it was denied.

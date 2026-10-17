@@ -1,9 +1,18 @@
 {
   "name": "orbit",
-  "version": "0.22.1",
-  "description": "Personal team workflow for Claude Code: six role agents, a /decide PM command, and an operator that keeps worker subagents (or peer sessions) in constant progress across compactions. An intent skill plans big goals as approved OKF milestones; OKF docs automation keeps docs small. A PreToolUse guard enforces the operator's no-write rule (OPR-01) and the merge review trailer (DEC-08), denies destructive git, gh and GitHub MCP actions, and has the owner approve shared ones (protected-branch and tag pushes, releases, merges) in a prompt; an owner-typed unattended go lets only a CI-proven merge's base push, tag and release and merged-branch deletes run while the owner is away. Coders show each proof test failing, then passing, checked by a script (DEC-21, DEC-22); numbered rules, versioned skills, a session ledger and its audit keep sessions from drifting. Project facts live in .agents/project.md.",
+  "version": "0.22.2",
+  "description": "Personal team workflow for Claude Code: role agents, a /decide PM command, an operator that keeps worker agents in progress, and a PreToolUse guard that denies destructive git and GitHub actions and has the owner approve shared ones.",
   "author": {
     "name": "Marius Gologan"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "homepage": "https://github.com/Scrollout/orbit",
+  "repository": "https://github.com/Scrollout/orbit",
+  "keywords": [
+    "workflow",
+    "agents",
+    "operator",
+    "guard",
+    "okf"
+  ]
 }

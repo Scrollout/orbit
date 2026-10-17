@@ -6,7 +6,7 @@ Detail of the `/decide` command (`commands/decide.md`); the numbered rules and t
 
 | Role | Agent | Model |
 |---|---|---|
-| analyst | `explorer`; `general-purpose` for the web | Haiku to find or quote lines and look up docs or the web (read-only: it returns a digest and never writes or edits docs or any file); Sonnet to explain how code behaves, re-check hypotheses or search the web |
+| analyst | `explorer`; `general-purpose` for the web | By the importance of the fact asked for: low, Haiku, for find-or-quote lookups of lines, docs or the web only (read-only: it returns a digest and never writes or edits docs or any file); medium (explain how code behaves, re-check a hypothesis), Sonnet; high (the fact drives a decision or a security call), Opus |
 | engineer | `designer`, role engineer | Sonnet for a focus of normal complexity; Opus only for a high one (concurrency, failure ordering, a trust boundary, a data migration, or several components interacting), said on the call's line |
 | reviewer | `designer`, role reviewer | Opus |
 | security officer | `security` | Fable |

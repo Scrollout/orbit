@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.2
+Plugin-guideline compliance batch (rules 1.15.22, command `decide` 1.7.8, skill `peer` 1.1.2; scenario pin and manifest updated); guard behaviour unchanged.
+- **Paths**: the plugin's own scripts and templates are referenced as `${CLAUDE_PLUGIN_ROOT}/...` in `agents/operator.md`, `agents/reviewer.md`, `skills/peer/SKILL.md` and `commands/decide.md`.
+- **Hooks** (`hooks/hooks.json`): a short `description`; the PreToolUse matcher names the guarded tools (Bash, the edit and read tools, `mcp__.*`, the Cron, ScheduleWakeup, RemoteTrigger, SendMessage, PushNotification and Skill tools) instead of loose `.*X.*` patterns, and drops `SlashCommand`.
+- **Manifest** (`.claude-plugin/plugin.json`): short description, `homepage`, `repository`, `keywords`. README: `onFailure` hooks need Claude Code 2.1.295 or later.
+- **Models** (`refs/decide/team-tracks.md`): by the importance of the fact: low Haiku (read-only find or quote lookups, never writes a file), medium Sonnet, high (drives a decision or a security call) Opus.
+- **Makefile**: `make help` prints an aligned name column with one short line per target; the detail moved to `ci/README.md`. `make bump` refuses a `V` or `RULES` that is not `X.Y.Z`.
+- **CI**: `ci/scripts/tsc-baseline.mjs` counts global tsc errors (no file position) as findings instead of ignoring them.
+
 ## 0.22.1
 The unattended go runs a whole release without a prompt, every step bound to the verified merge and pushed only as the object it checked (rules 1.15.20, command `unattended` 1.1.4; scenario pin and manifest updated). Fixes #41.
 - **Docs** (`refs/decide/team-tracks.md`): Haiku is for read-only lookups (find or quote lines, docs, web) and never writes or edits docs or files.

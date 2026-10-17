@@ -1,8 +1,8 @@
 {
   "entries": {
     "commands/decide.md": {
-      "version": "1.7.7",
-      "hash": "08aa216b073cc75ea26ad75dd98d25610dcb8c8dfab7cf9095d73aa9f9635f8e",
+      "version": "1.7.8",
+      "hash": "01c9cd3c660a7dd9075469508b3b265b3761c9414e045d2dbb1029784357da57",
       "files": [
         "commands/decide.md",
         "refs/decide/delivery.md",
@@ -54,15 +54,15 @@
       ]
     },
     "skills/peer/SKILL.md": {
-      "version": "1.1.1",
-      "hash": "801030539dfff937eeecd53080381231a6bc4734807d737d81d71e354cef5162",
+      "version": "1.1.2",
+      "hash": "1601c6aea494a3bc49521b21e02426798e53529636f9d0995fad74a550133461",
       "files": [
         "skills/peer/SKILL.md"
       ]
     },
     "rules/rules.json": {
-      "version": "1.15.21",
-      "hash": "417bef72d5a36b03fdcf5630192c50510dcd965d5a207eb91b829ba1bfe9c6d0",
+      "version": "1.15.22",
+      "hash": "eef91880a338592f2033f0778f050efc6f9fe3fa7702a62f77e05db25a9b53a5",
       "files": [
         "rules/rules.json",
         "rules/tracks.json",
