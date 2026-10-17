@@ -16,7 +16,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseProfileText } from "../scripts/profile.mjs";
-import { EVIDENCE_MS, GO_MAX_MS, baseEvidence, deleteEvidence, goForm, goSession, goState, trailerOk } from "./go.mjs";
+import { EVIDENCE_MS, GO_MAX_MS, baseEvidence, deleteEvidence, githubRepo, goForm, goSession, goState, localCommit, pushConfigEvidence, pushUrl, remoteTagCommit, trailerOk } from "./go.mjs";
 import { USAGE, duration } from "./unattended.mjs";
 
 export const OPERATOR_AGENTS = ["orbit:operator", "operator"];
@@ -1624,11 +1624,11 @@ export function classifyOutward(cmds, text, cwd, env, getCtx) {
 }
 
 // The decision for a shared finding: deny when not alone or when the mode cannot prompt, else ask.
-// Under the go every shared action other than the go's own two waits for the owner.
+// Under the go every shared action other than the go's own (base push, release steps, merged branch delete) waits for the owner.
 function sharedDecision(f, input, multi, go = null) {
   if (go) {
     const base = f.sub === "push" && f.what === "push to protected branch" && f.dst ? safe(f.dst) : null;
-    return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only two actions)", do: base ? `push the verified merge as git push origin <40-hex sha>:refs/heads/${base}` : "leave it for the owner" });
+    return outwardReason("DENY", f, input, { note: "needs the owner (the unattended go allows only its verified release steps and merged branch deletes)", do: base ? `push the verified merge as git push origin <40-hex sha>:refs/heads/${base}` : "leave it for the owner" });
   }
   if (multi) return outwardReason("DENY", f, input, { note: "not alone in its call", do: "run it alone in its own call" });
   if (!ASK_MODES.has(input?.permission_mode)) return outwardReason("DENY", f, input, { note: "no prompt in this permission mode", do: f.cmd ? `run it yourself with ! ${f.cmd}` : undefined });
@@ -1940,25 +1940,51 @@ function claudeWrite(cmds, st, dirs) {
   return null;
 }
 
-// Under the go: the pinned base push and the literal delete of a merged topic branch. null: not one of them (classify as
-// usual); { allow: true }; or the deny reason naming the check that failed.
-function goAction(cmds, cwd, input, getCtx) {
+// Under the go: the base push of a verified merge (pinned sha, or a ref naming it), the literal delete of a merged topic branch,
+// and the release steps bound to a verified merge (its semver tag push and gh release create, #41). null: not one of them
+// (classify as usual); { allow: true }; or the deny reason naming the check that failed.
+function goAction(cmds, cwd, input, getCtx, env) {
   const g = goForm(cmds);
   if (!g) return null;
   const dir = g.dir === null ? cwd : isAbsolute(g.dir) ? g.dir : cwd && resolve(cwd, g.dir);
   const c = getCtx(), base = dir ? c.originHead(dir) : FAIL, floor = c.profile(null);
-  const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha.slice(0, 12)}` : `git push --delete → origin/${safe(g.name)}`;
-  const no = (why) => outwardReason("DENY", { what: g.kind === "base" ? "unattended base push" : "unattended branch delete", action }, input, { note: why, do: "leave it for the owner" });
+  // A ref-form push to a branch other than the base is no go action: it is classified as usual (a topic push).
+  if (g.kind === "base" && g.src !== undefined && (base === FAIL || !base || g.dst !== base)) return null;
+  const action = g.kind === "base" ? `git push → origin/${safe(g.dst)} at ${g.sha ? g.sha.slice(0, 12) : safe(g.src)}` : g.kind === "delete" ? `git push --delete → origin/${safe(g.name)}`
+    : g.kind === "tag" ? `git push → origin tag ${g.tag}` : `gh release create ${g.tag}`;
+  const what = { base: "unattended base push", delete: "unattended branch delete", tag: "unattended tag push", release: "unattended release" }[g.kind];
+  const no = (why) => outwardReason("DENY", { what, action }, input, { note: why, do: "leave it for the owner" });
   if (!dir) return no("the directory is unknown");
   if (base === FAIL || !base || !/^[\w./-]+$/.test(base)) return no("origin/HEAD cannot be read");
   // The base, the review trailer and the required checks come from the main checkout's profile (an agent can edit a worktree's).
   if (!floor?.base || floor.base !== base) return no(`origin/HEAD (${safe(base)}) is not the main checkout profile's base_branch`);
   const p = c.profile(dir);
-  if (g.kind === "base") {
-    if (g.dst !== base) return no(`the go pushes only origin/HEAD's branch (${safe(base)})`);
+  if (g.kind !== "delete") {
+    if (g.kind === "base" && g.dst !== base) return no(`the go pushes only origin/HEAD's branch (${safe(base)})`);
     const key = floor.trailer ?? "Reviewed-by";
     if (["co-authored-by", "signed-off-by"].includes(key.toLowerCase())) return no("the profile's review_trailer is not a review");
-    const why = baseEvidence(c.evidence(dir), dir, g.sha, base, key, floor.checks ?? []);
+    const ev = c.evidence(dir);
+    const verified = (sha, pushed) => baseEvidence(ev, dir, sha, base, key, floor.checks ?? [], pushed);
+    if (g.kind === "base" && g.sha) { const why = verified(g.sha, false); return why ? no(why) : { allow: true }; }
+    if (g.kind === "base" || g.kind === "tag") {
+      const cfg = pushConfigEvidence(ev, dir);
+      if (cfg) return no(cfg);
+      // The ref the push sends, read where git push reads it: HEAD, refs/heads/<base> or refs/tags/<tag>.
+      const sha = localCommit(ev, dir, g.kind === "tag" ? `refs/tags/${g.tag}` : g.src === "HEAD" ? "HEAD" : `refs/heads/${g.src}`);
+      if (!sha) return no(g.kind === "tag" ? "the local tag does not name a commit" : "the ref it pushes does not name a commit");
+      const why = verified(sha, g.kind === "tag");
+      return why ? no(why) : { allow: true };
+    }
+    // release: the project repo only, the tag on origin peeling to a verified merge, no other target.
+    const url = pushUrl(ev, dir), repo = url && githubRepo(url);
+    if (!repo) return no("origin's push URL is not its fetch URL on github.com");
+    if ((env.GH_HOST && env.GH_HOST !== "github.com") || (g.repo === null && env.GH_REPO)) return no("GH_HOST or GH_REPO points gh elsewhere");
+    if (g.repo !== null && g.repo !== repo && g.repo !== `github.com/${repo}`) return no(`-R is not ${repo}`);
+    if (g.repo === null && ev.git(dir, "remote")?.out !== "origin") return no("without -R, origin must be the only remote");
+    const sha = remoteTagCommit(ev, dir, url, g.tag);
+    if (!sha) return no(`the tag ${g.tag} is not on origin`);
+    if (g.target !== null && g.target !== sha) return no("--target is not the tag's merge commit");
+    const why = verified(sha, true);
     return why ? no(why) : { allow: true };
   }
   if (FLOOR(g.name) || g.name === base || p?.base === g.name || (p?.protected ?? []).some((x) => x === g.name || (x.endsWith("*") && g.name.startsWith(x.slice(0, -1))))) return null;
@@ -2016,7 +2042,7 @@ export function guard(input, env = {}, ctx = null) {
   const d = out.findings.find((f) => f.cls === "destructive");
   if (d) return outwardReason("DENY", withCommit(d), input);
   if (go && goState(input, env)) {
-    const a = goAction(cmds, cwd, input, getCtx);
+    const a = goAction(cmds, cwd, input, getCtx, env);
     if (a?.allow) return null;
     if (typeof a === "string") return a;
   }

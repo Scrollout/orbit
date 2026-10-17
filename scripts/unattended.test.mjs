@@ -247,7 +247,7 @@ test("the one test, part 2: under a hand-written go, the pinned sha with full ev
       `git push upstream ${M}:refs/heads/main`, "git push origin main", `/usr/bin/git push origin ${M}:refs/heads/main`]) {
       deny(c, c);
     }
-    assert.match(guard(bash("git push origin HEAD:main"), env, ctx()), /<40-hex sha>:refs\/heads\/main/, "HEAD: names the required form");
+    assert.match(guard(bash("git push origin HEAD:main"), env, ctx()), /unattended base push[\s\S]*remote\.origin\.push/, "HEAD:main without its evidence names the failed check");
   });
 });
 
@@ -872,5 +872,103 @@ test("#37: $(( ... ) ) without a closing )) is $( and a subshell; $\\<newline>'.
         assert.equal(guard(bash(c, who), env, ctx()), null, `${m}: plain ${JSON.stringify(c)}`);
       }
     }
+  });
+});
+
+// ---------- #41: the release steps under the go, bound to the verified merge ----------
+const CFG = { "config --get-all remote.origin.push": null, "config --bool --get push.followTags": null };
+const TAGOBJ = "9".repeat(40);
+const PUSHED = { [`ls-remote ${ORIGIN} refs/heads/main`]: `${M}\trefs/heads/main` };
+const LOCAL = { "rev-parse --verify -q HEAD^{commit}": M, "rev-parse --verify -q refs/heads/main^{commit}": M, "rev-parse --verify -q refs/tags/v1.2.3^{commit}": M };
+const LIGHT = { [`ls-remote ${ORIGIN} refs/tags/v1.2.3`]: `${M}\trefs/tags/v1.2.3`, remote: "origin" };
+const ANNOT = { [`ls-remote ${ORIGIN} refs/tags/v1.2.3`]: `${TAGOBJ}\trefs/tags/v1.2.3\n${M}\trefs/tags/v1.2.3^{}`, remote: "origin" };
+// The stub's refKind knows v1.2.x as tags, like a repo that has them.
+const ok41 = (git = {}) => ({ git: { ...CFG, ...LOCAL, ...LIGHT, ...git }, ctx: { refKind: (d, n) => (/^v\d/.test(n) ? { tag: true, branch: false, remote: true } : { tag: false, branch: true, remote: true }) } });
+
+test("#41 a: under the go, git push origin <base>, HEAD:<base> and <base>:<base> pass when the ref they send is the verified merge", () => {
+  withGo((env) => {
+    for (const c of ["git push origin main", "git push origin HEAD:main", "git push origin main:main", "git -C /r/merge push origin HEAD:main", "git -C /r/merge push origin main"]) {
+      assert.equal(guard(bash(c), env, ctx(ok41())), null, c);
+    }
+    const deny = (label, c, over) => assert.equal(kind(guard(bash(c), env, ctx(over))), "deny", label);
+    deny("HEAD is not the merge", "git push origin HEAD:main", ok41({ "rev-parse --verify -q HEAD^{commit}": P1 }));
+    deny("local main is not the merge (HEAD is)", "git push origin main", ok41({ "rev-parse --verify -q refs/heads/main^{commit}": P1 }));
+    deny("HEAD unreadable", "git push origin HEAD:main", ok41({ "rev-parse --verify -q HEAD^{commit}": undefined }));
+    deny("remote.origin.push remaps the refspec", "git push origin main", ok41({ "config --get-all remote.origin.push": "refs/heads/main:refs/heads/x" }));
+    deny("push.followTags on", "git push origin HEAD:main", ok41({ "config --bool --get push.followTags": "true" }));
+    deny("first parent is not the remote tip", "git push origin HEAD:main", ok41({ [`ls-remote ${ORIGIN} refs/heads/main`]: `${TIP}\trefs/heads/main` }));
+    deny("no trailer", "git push origin main", ok41({ [`log -1 --no-show-signature --format=%B ${M}`]: "Merge" }));
+    for (const c of ["git push origin main --tags", "git push origin main v1.2.3", "git push -f origin main", "git push origin +main", "git push origin topic:main",
+      "git push origin HEAD:main && echo ok", "git push origin main --follow-tags", "git push origin HEAD:refs/heads/main", "git push origin main; git push origin v1.2.3"]) deny(c, c, ok41());
+    assert.equal(kind(guard(bash("git push origin main", { ...MAIN, agent_id: "a1" }), env, ctx(ok41()))), "deny", "a subagent");
+    assert.equal(guard(bash("git push origin HEAD:my-topic"), env, ctx({ ...ok41(), ctx: { ...ok41().ctx, head: () => "my-topic" } })), null, "a topic push stays as today");
+  });
+});
+
+test("#41 b: under the go, a semver tag push passes when the local tag peels to the verified merge; any other shape needs the owner", () => {
+  withGo((env) => {
+    for (const git of [{}, PUSHED]) {
+      for (const c of ["git push origin v1.2.3", "git push origin refs/tags/v1.2.3", "git -C /r/merge push origin v1.2.3"]) assert.equal(guard(bash(c), env, ctx(ok41(git))), null, c);
+    }
+    const deny = (label, c, over = ok41(PUSHED)) => assert.equal(kind(guard(bash(c), env, ctx(over))), "deny", label);
+    deny("tag points elsewhere", "git push origin v1.2.3", ok41({ ...PUSHED, "rev-parse --verify -q refs/tags/v1.2.3^{commit}": P1 }));
+    deny("wrong tag (no such local tag)", "git push origin v1.2.4");
+    deny("remote base moved past the merge", "git push origin v1.2.3", ok41({ [`ls-remote ${ORIGIN} refs/heads/main`]: `${TIP}\trefs/heads/main` }));
+    deny("push.followTags on", "git push origin v1.2.3", ok41({ ...PUSHED, "config --bool --get push.followTags": "true" }));
+    deny("remote.origin.push set", "git push origin v1.2.3", ok41({ ...PUSHED, "config --get-all remote.origin.push": "refs/tags/*:refs/heads/main" }));
+    for (const c of ["git push --tags", "git push origin --tags", "git push origin v1.2.3 --follow-tags", "git push --all origin", "git push origin v1.2.3 v1.2.4", "git push origin v1.2.3 main",
+      "git push -f origin v1.2.3", "git push origin +v1.2.3", "git push origin --delete v1.2.3", "git push origin :refs/tags/v1.2.3", "git push origin v1.2", "git push origin v1.2.3-rc1",
+      "git push origin v1.2.3:refs/tags/v1.2.3", "git push upstream v1.2.3", "git push origin v1.2.3 && echo ok", "FOO=1 git push origin v1.2.3"]) deny(c, c);
+    assert.equal(kind(guard(bash("git push origin v1.2.3", { ...MAIN, agent_id: "a1" }), env, ctx(ok41(PUSHED)))), "deny", "a subagent");
+  });
+});
+
+test("#41 c: under the go, gh release create <tag> passes when the tag is on origin peeling to the verified merge, lightweight or annotated", () => {
+  withGo((env) => {
+    for (const tagGit of [LIGHT, ANNOT]) {
+      for (const c of ["gh release create v1.2.3", `gh release create v1.2.3 -R o/r --title "Orbit 0.22.1" -F notes.md --verify-tag --latest`,
+        "gh release create v1.2.3 --repo=o/r --notes 'fixes #41'", `gh release create --target ${M} v1.2.3 -F /tmp/x/notes.md`]) {
+        assert.equal(guard(bash(c), env, ctx(ok41({ ...PUSHED, ...tagGit }))), null, c);
+      }
+    }
+    const deny = (label, c, over = ok41(PUSHED), e = env) => assert.equal(kind(guard(bash(c), e, ctx(over))), "deny", label);
+    deny("tag peels elsewhere", "gh release create v1.2.3", ok41({ ...PUSHED, [`ls-remote ${ORIGIN} refs/tags/v1.2.3`]: `${M}\trefs/tags/v1.2.3\n${P1}\trefs/tags/v1.2.3^{}` }));
+    deny("lightweight tag elsewhere", "gh release create v1.2.3", ok41({ ...PUSHED, [`ls-remote ${ORIGIN} refs/tags/v1.2.3`]: `${P1}\trefs/tags/v1.2.3` }));
+    deny("tag not on origin", "gh release create v1.2.3", ok41({ ...PUSHED, [`ls-remote ${ORIGIN} refs/tags/v1.2.3`]: "" }));
+    deny("release for another tag", "gh release create v1.2.4");
+    deny("other repo", "gh release create v1.2.3 -R evil/r");
+    deny("another target", `gh release create v1.2.3 --target ${P1}`);
+    deny("two remotes, no -R", "gh release create v1.2.3", ok41({ ...PUSHED, remote: "origin\nupstream" }));
+    deny("GH_REPO elsewhere", "gh release create v1.2.3", ok41(PUSHED), { ...env, GH_REPO: "evil/r" });
+    deny("merge not verified", "gh release create v1.2.3", ok41({ ...PUSHED, [`rev-list --parents -n 1 ${M}`]: `${M} ${P1}` }));
+    for (const c of ["gh release create v1.2.3 --draft", "gh release create v1.2.3 dist/a.tgz", "gh release create v1.2.3 --generate-notes", "gh release create v1.2.3 -F ~/.config/gh/hosts.yml",
+      "gh release create v1.2.3 -F ../.env", "gh release create v1.2.3 && echo ok", "gh release create v1.2.3; gh release create v1.2.4", "gh release edit v1.2.3 --latest",
+      "gh release create v1.2", "gh release create v1.2.3 --title a --title b", "GH_REPO=evil/r gh release create v1.2.3", "gh release create v1.2.3 --notes \"$(cat x)\""]) deny(c, c);
+    assert.equal(kind(guard(bash("gh release create v1.2.3", { ...MAIN, agent_id: "a1" }), env, ctx(ok41(PUSHED)))), "deny", "a subagent");
+  });
+});
+
+test("#41: without a valid go for this session the release steps are as before (ask), and destructive ones stay denied", () => {
+  const cmds = ["git push origin main", "git push origin HEAD:main", "git push origin v1.2.3", "gh release create v1.2.3"];
+  const check = (env, who, label) => { for (const c of cmds) assert.equal(kind(guard(bash(c, who), env, ctx(ok41(PUSHED)))), "ask", `${label}: ${c}`); };
+  const h = home();
+  try { check({ HOME: h }, MAIN, "no go"); } finally { rmSync(h, { recursive: true, force: true }); }
+  withGo((env) => check(env, MAIN, "expired go"), { until: Date.now() - 1 });
+  withGo((env) => check(env, MAIN, "another session's go"), { session_id: "other" });
+  withGo((env) => check(env, { ...MAIN, permission_mode: "default" }, "not bypassPermissions"));
+  withGo((env) => { for (const c of ["gh release delete v1.2.3", "git push -f origin main", "git push origin --delete main"]) assert.equal(kind(guard(bash(c), env, ctx(ok41(PUSHED)))), "deny", c); });
+});
+
+test("#41 capture: the go's release steps are class go; a ref-form push to a topic branch is not", () => {
+  withGo((env) => {
+    const ev = (command) => ({ ...MAIN, tool_name: "Bash", tool_input: { command }, tool_response: { exit_code: 0 } });
+    const [b] = outwardEvents(ev("git push origin HEAD:main"), () => ctx(ok41()), env);
+    assert.ok(b.argv.includes("class=go") && b.argv.includes(`sha=${M}`), b.argv.join(" "));
+    for (const [c, sub] of [["git push origin v1.2.3", "subcommand=push tag"], ["gh release create v1.2.3", "subcommand=release create"]]) {
+      const [e] = outwardEvents(ev(c), () => ctx(ok41()), env);
+      assert.ok(e.argv.includes("class=go") && e.argv.includes(sub), e.argv.join(" "));
+    }
+    const t = outwardEvents(ev("git push origin HEAD:my-topic"), () => ctx(ok41()), env);
+    assert.ok(t.every((e) => !e.argv.includes("class=go")), JSON.stringify(t));
   });
 });

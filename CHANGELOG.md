@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.1
+The unattended go runs a whole release without a prompt, every step bound to the verified merge (rules 1.15.17, command `unattended` 1.1.2; scenario pin and manifest updated). Fixes #41.
+- **Base push** (`hooks/go.mjs`, `hooks/guard.mjs`): besides the pinned `<40-hex sha>:refs/heads/<base>`, `git [-C <dir>] push origin <base>`, `HEAD:<base>` and `<base>:<base>` pass when the ref they send (`HEAD` or `refs/heads/<base>`) is a merge with the same evidence as the pinned form, and `remote.origin.push` is unset and `push.followTags` off. A ref-form push to another branch is classified as before.
+- **Tag push**: `git [-C <dir>] push origin vX.Y.Z` or `refs/tags/vX.Y.Z`, alone, one literal semver tag, when the local tag (annotated or lightweight, peeled) is such a merge, the next base push or already the remote base tip. `--tags`, `--all`, `--follow-tags`, force, delete, a second refspec or another tag still need the owner.
+- **Release**: `gh release create vX.Y.Z` with only `-R` (the project repo), `--title`, `-F` (no dot segment in the path), `--notes`, `--verify-tag`, `--latest`, `--target <merge sha>`, when the tag on origin peels to such a merge. Drafts, assets, generated notes, another repo (`-R`, `GH_REPO`, `GH_HOST`, a second remote without `-R`) still need the owner.
+- **Capture**: the new steps are class `go` (`push`, `push tag`, `release create`); the audit's DEC-06 rule is unchanged.
+
 ## 0.22.0
 TypeScript check layer and a cheaper CI and review loop (rules 1.15.16, skill `operator` 1.10.2; scenario pin and manifest updated); hooks behaviour unchanged. Fixes #39.
 - **CI** (`.github/workflows/ci.yml`, `Makefile`, `ci/README.md`): runs once per push (the `push` trigger only, no second `pull_request` run for the same commit). `vet`, `quality` and `security` are parallel jobs sharing one toolbox image build (`SKIP_TOOLBOX_BUILD=1` reuses a loaded image); the job `ci` stays the one required check and fails if any target failed, and publishes the report. `make ci` locally is unchanged.

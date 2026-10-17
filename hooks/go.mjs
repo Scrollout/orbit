@@ -1,4 +1,4 @@
-// The unattended go (Orbit 0.21.0): its state, and the evidence for the only two shared actions it allows. Zero dependencies.
+// The unattended go (Orbit 0.21.0): its state, and the evidence for the shared actions it allows (base push, release tag and release since 0.22.1, merged branch delete). Zero dependencies.
 // The owner opens a go with `/orbit:unattended on [dur]` (hooks/unattended.mjs, behind a permission prompt). The state file is
 // forgeable by any program the agent runs, so the go is intent only: safety rests on the evidence below, checked on GitHub and
 // in git for the exact object pushed. A go counts only for its own session's main thread under bypassPermissions, at most 24 h.
@@ -24,7 +24,7 @@ export function goSession(input, env, now = Date.now()) {
   return { opened: s.opened, until: s.until };
 }
 
-// The go itself, which allows its two actions: the unattended session's main thread only (no agent_id). Any missing or
+// The go itself, which allows its actions: the unattended session's main thread only (no agent_id). Any missing or
 // unexpected field means no go (the attended behaviour).
 export function goState(input, env, now = Date.now()) {
   if (!input || (input.agent_id !== undefined && input.agent_id !== null)) return null;
@@ -39,13 +39,20 @@ export function trailerOk(msg, key) {
   return has(last, lc) && !paras.some((p) => has(p.split("\n"), "co-authored-by"));
 }
 
-// The go's two command shapes, exactly, alone in the call: `git [-C <dir>] push origin <40-hex>:refs/heads/<branch>` and
-// `git [-C <dir>] push origin --delete <branch>`. Anything else (another spelling, an option, a variable) is not a go action.
+// The go's command shapes, exactly, alone in the call (Anything else, another spelling, an option, a variable, is not a go action):
+// - base: `git [-C <dir>] push origin <40-hex>:refs/heads/<branch>` ({ sha }), or `<branch>`, `HEAD:<branch>`, `<branch>:<branch>`
+//   ({ src }: the local ref the push sends, resolved by the evidence);
+// - delete: `git [-C <dir>] push origin --delete <branch>`;
+// - tag: `git [-C <dir>] push origin <vX.Y.Z | refs/tags/vX.Y.Z>`, one semver tag (0.22.1, #41);
+// - release: `gh release create <vX.Y.Z>` with only -R/--repo, -t/--title, -F/--notes-file (a path with no dot segment),
+//   -n/--notes, --verify-tag, --latest, --target (all literal; the guard checks repo, target and the tag).
+export const SEMVER_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 export function goForm(cmds) {
   if (cmds.length !== 1 || cmds.complex) return null;
   const c = cmds[0];
   if (c.depth || c.redirs.length || c.heredoc !== null || c.words.some((w) => w.lit === null)) return null;
   const w = c.words.map((x) => x.lit);
+  if (w[0] === "gh") return releaseForm(w);
   let i = 1, dir = null;
   if (w[0] !== "git") return null;
   if (w[1] === "-C") { if (!w[2]) return null; dir = w[2]; i = 3; }
@@ -56,7 +63,35 @@ export function goForm(cmds) {
     return name(dst) ? { kind: "base", dir, sha: rest[0].slice(0, 40), dst } : null;
   }
   if (rest.length === 2 && rest[0] === "--delete" && name(rest[1])) return { kind: "delete", dir, name: rest[1] };
-  return null;
+  if (rest.length !== 1) return null;
+  const r = rest[0], t = r.startsWith("refs/tags/") ? r.slice(10) : r;
+  if (SEMVER_TAG.test(t)) return { kind: "tag", dir, tag: t };
+  const [src, dst, extra] = r.split(":");
+  if (extra !== undefined) return null;
+  if (dst === undefined) return name(src) ? { kind: "base", dir, src, dst: src } : null;
+  return name(dst) && (src === "HEAD" || src === dst) ? { kind: "base", dir, src, dst } : null;
+}
+
+function releaseForm(w) {
+  if (w[1] !== "release" || w[2] !== "create") return null;
+  const VAL = { "-R": "repo", "--repo": "repo", "-t": "title", "--title": "title", "-F": "file", "--notes-file": "file", "-n": "notes", "--notes": "notes", "--target": "target" };
+  const o = { kind: "release", dir: null, tag: null, repo: null, target: null };
+  const seen = new Set();
+  for (let i = 3; i < w.length; i++) {
+    const a = w[i], eq = a.startsWith("--") ? a.indexOf("=") : -1, f = eq > 0 ? a.slice(0, eq) : a;
+    if (f === "--verify-tag" || f === "--latest") { if (eq > 0) return null; continue; }
+    if (VAL[f]) {
+      const v = eq > 0 ? a.slice(eq + 1) : w[++i];
+      if (v === undefined || v.startsWith("-") || seen.has(VAL[f])) return null;
+      seen.add(VAL[f]);
+      if (VAL[f] === "file" && (!v || v.split("/").some((s) => s.startsWith(".")) || v.startsWith("~"))) return null;
+      if (VAL[f] === "repo" || VAL[f] === "target") o[VAL[f]] = v;
+      continue;
+    }
+    if (a.startsWith("-") || o.tag !== null || !SEMVER_TAG.test(a)) return null;
+    o.tag = a;
+  }
+  return o.tag ? o : null;
 }
 
 // Paths a night merge may not touch: what runs CI or the guard. Test files it may not delete; skip markers it may not add.
@@ -107,14 +142,16 @@ function runsOf(ev, repo, sha) {
 // The base push evidence for the pinned merge sha: null when every check holds, else the first failing check (fixed text).
 // trailerKey: the main checkout profile's review_trailer (Reviewed-by when it names none); requiredChecks: its required_checks.
 // Commit statuses and check runs are never read (an agent can mint one); only GitHub Actions workflow runs count.
-export function baseEvidence(ev, dir, sha, base, trailerKey, requiredChecks = []) {
+// pushed (the tag and release steps): the merge may also already be origin/<base>'s tip; every other check is the same.
+export function baseEvidence(ev, dir, sha, base, trailerKey, requiredChecks = [], pushed = false) {
   const g = (...a) => out(ev.git(dir, ...a));
   const url = pushUrl(ev, dir);
   if (!url) return "origin's push URL is not its fetch URL on github.com";
   const parents = g("rev-list", "--parents", "-n", "1", sha)?.split(/\s+/);
   if (!parents || parents.length !== 3 || parents[0] !== sha) return "it is not a two-parent merge";
   const [, p1, p2] = parents;
-  if (remoteTip(ev, dir, url, base) !== p1) return `its first parent is not the tip of origin/${base}`;
+  const head = remoteTip(ev, dir, url, base);
+  if (head !== p1 && !(pushed && head === sha)) return pushed ? `it is neither the tip of origin/${base} nor its next merge` : `its first parent is not the tip of origin/${base}`;
   const trees = g("rev-parse", `${sha}^{tree}`, `${p2}^{tree}`)?.split("\n");
   if (!trees || trees.length !== 2 || !trees[0] || trees[0] !== trees[1]) return "its tree differs from the branch it merges";
   const msg = g("log", "-1", "--no-show-signature", "--format=%B", sha);
@@ -142,6 +179,31 @@ export function baseEvidence(ev, dir, sha, base, trailerKey, requiredChecks = []
   if (green.some((x) => !have.has(x.name))) return "a workflow green on the base tip did not run green on the branch";
   if (requiredChecks.some((n) => !have.has(n))) return "a required check of the profile did not run green on the branch";
   return null;
+}
+
+// A colon-less refspec could be remapped by remote.origin.push, and push.followTags would send more tags: both must be unset
+// (git config exits 1) for the ref and tag forms. null when they are, else the reason.
+export function pushConfigEvidence(ev, dir) {
+  const unset = (k) => { const r = ev.git(dir, "config", "--get-all", k); return r && r.code === 1; };
+  if (!unset("remote.origin.push")) return "remote.origin.push is set or cannot be read";
+  const ft = ev.git(dir, "config", "--bool", "--get", "push.followTags");
+  if (!(ft && (ft.code === 1 || (ft.code === 0 && ft.out === "false")))) return "push.followTags is on or cannot be read";
+  return null;
+}
+
+// The commit a local ref names (rev-parse --verify), or null.
+export function localCommit(ev, dir, ref) {
+  const s = out(ev.git(dir, "rev-parse", "--verify", "-q", `${ref}^{commit}`));
+  return s && /^[0-9a-f]{40}$/.test(s) ? s : null;
+}
+
+// The commit a remote tag peels to, read from the push URL: the ^{} line of an annotated tag, else the tag's own line.
+export function remoteTagCommit(ev, dir, url, tag) {
+  const l = out(ev.git(dir, "ls-remote", url, `refs/tags/${tag}`))?.split("\n").filter(Boolean).map((x) => x.split("\t"));
+  if (!l || !l.length || l.length > 2 || l.some(([s]) => !/^[0-9a-f]{40}$/.test(s))) return null;
+  const own = l.filter(([, r]) => r === `refs/tags/${tag}`), peeled = l.filter(([, r]) => r === `refs/tags/${tag}^{}`);
+  if (own.length !== 1 || peeled.length !== l.length - 1) return null;
+  return (peeled[0] ?? own[0])[0];
 }
 
 // The branch delete evidence: the branch's remote tip is an ancestor of the remote base tip.
