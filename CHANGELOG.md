@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.0
+An offline SAST lane next to CodeQL (rules 1.15.26, version only; scenario pin and manifest updated). Fixes #26.
+- **`make sast`** (`ci/scripts/sast.sh`, `ci/scripts/sast-baseline.mjs`): Opengrep 1.30.1 with intra-file taint and the `opengrep-rules` packs for JavaScript, bash, Dockerfile, GitHub Actions security, CI and Unicode (bidi), and Checkov 3.3.20 for the Dockerfile and the workflows, both with no network; JSON and SARIF in `ci/out`. `ci/sast-baseline.json` lists accepted findings by rule and file with a count and a reason: a new finding, a grown or stale count, a missing reason or a missing result fails. A failing run prints each finding as `path:line rule: message` and the proposed baseline. The baseline starts empty: the first CI run lists the findings.
+- **Toolbox** (`ci/Dockerfile`): the Opengrep binary pinned by version and sha256 per architecture, the rules by commit and tarball sha256 (rule files only, in the image), Checkov in a venv from `ci/checkov-requirements.txt` (every package hash-pinned, wheels only, each version at least two weeks old) on Debian's python3. `/tmp` in the container is mounted `exec` (`ci/scripts/in-toolbox.sh`): the Opengrep binary unpacks itself there.
+- **CI**: `sast` joins `make ci`, the workflow's checks matrix (so the required `ci` job fails unless it passed) and the report's targets (`ci/scripts/report.mjs`, self-test updated). GitHub's CodeQL default setup is unchanged.
+
 ## 0.22.3
 The unattended go says why it did not apply (rules 1.15.25; scenario pin and manifest updated).
 - **Failed check named** (`hooks/guard.mjs`): in a mode that prompts, a go shape that fails a check asked with only "approve only if you gave the go"; its ask (and the `dontAsk` deny) now has the line `the go did not apply: <check>`, in the words of the `bypassPermissions` deny. What is allowed, asked or denied is unchanged. `ci/tsc-baseline.json`: `hooks/guard.mjs` TS2339 57 to 55 (two findings gone with it).

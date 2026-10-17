@@ -4,7 +4,7 @@ CI_IMAGE ?= orbit-ci-toolbox:dev
 export CI_IMAGE
 IN := ci/scripts/in-toolbox.sh
 
-.PHONY: help toolbox vet quality security report report-test plugin-validate ci bump
+.PHONY: help toolbox vet quality security sast report report-test plugin-validate ci bump
 .DEFAULT_GOAL := help
 
 ## help: list the targets
@@ -27,6 +27,10 @@ quality: toolbox
 security: toolbox
 	@$(IN) sh ci/scripts/security.sh
 
+## sast: Opengrep and Checkov, offline, against ci/sast-baseline.json
+sast: toolbox
+	@$(IN) sh ci/scripts/sast.sh
+
 ## report: print the Markdown report of the last run
 report: toolbox
 	@$(IN) node ci/scripts/report.mjs
@@ -39,9 +43,9 @@ report-test: toolbox
 plugin-validate: toolbox
 	@$(IN) sh ci/scripts/plugin-validate.sh
 
-## ci: vet, quality, security, then the report; fails if any failed
+## ci: vet, quality, security, sast, then the report; fails if any failed
 ci: toolbox
-	@rm -rf ci/out && mkdir ci/out; rc=0; for t in vet quality security; do $(MAKE) --no-print-directory $$t || rc=1; done; \
+	@rm -rf ci/out && mkdir ci/out; rc=0; for t in vet quality security sast; do $(MAKE) --no-print-directory $$t || rc=1; done; \
 	  $(MAKE) --no-print-directory report || rc=1; \
 	  if [ $$rc -eq 0 ]; then echo "ci: PASS"; else echo "ci: FAIL"; fi; exit $$rc
 

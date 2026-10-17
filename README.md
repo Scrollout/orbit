@@ -5,7 +5,7 @@
 
 # Orbit
 
-Version: 0.22.3 (see [CHANGELOG](CHANGELOG.md)).
+Version: 0.23.0 (see [CHANGELOG](CHANGELOG.md)).
 
 ## Why Orbit
 Orbit gives one person working with Claude Code the habits of a small, careful software team.
@@ -54,6 +54,7 @@ then `/plugin marketplace update scrollout` and `/plugin update orbit@scrollout`
 - `hooks/guard.mjs`: the PreToolUse guard for OPR-01, DEC-08 and outward actions (see Operator guard and Outward guard below; tests: `scripts/guard.test.mjs`, `scripts/outward.test.mjs`). Threat model: [docs/threat-model.md](docs/threat-model.md).
 - `commands/unattended.md`, `hooks/unattended.mjs`, `hooks/go.mjs`: the unattended go (see Unattended go below; tests: `scripts/unattended.test.mjs`).
 - `templates/`: `project.md`, `project.example.md`, `operator.md`, `handoff.md`, `principles.md`, `AGENTS.md`.
+- `ci/`, `Makefile`, `.github/workflows/ci.yml`: this repo's CI, offline in a pinned toolbox: vet, quality, security and sast (Opengrep and Checkov against a reasoned baseline), with GitHub's CodeQL default setup alongside; see [ci/README.md](ci/README.md).
 
 ## Drift guard
 Keeps the skills and the sessions from drifting. Zero dependencies (Node built-ins, Node 20+); `npm test` runs every test and check below plus the hook self-test. Commands and skills call the scripts as `node "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.mjs"` (scripts are plugin files, so always the plugin root; a skill's own refs use `${CLAUDE_SKILL_DIR}`); from a shell, run `node <orbit clone>/scripts/<name>.mjs`. Known limit: that variable expansion follows the official Claude Code docs but has not been verified live here.

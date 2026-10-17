@@ -1,6 +1,7 @@
 #!/bin/sh
 # Runs one command in the CI toolbox image, for make only (ci/README.md). The repository is mounted read-only at its
-# host path; only ci/out (the report) and a tmpfs /tmp are writable. No network, no capabilities, no secrets, no
+# host path; only ci/out (the report) and a tmpfs /tmp are writable. /tmp is mounted exec (docker's default is noexec): the
+# Opengrep binary unpacks itself there and runs what it unpacked (make sast). No network, no capabilities, no secrets, no
 # docker socket; the container runs as the calling user. Inside the toolbox already (the marker file /etc/orbit-ci-toolbox, made by the image; a host environment variable cannot fake it)
 # the command runs directly.
 # Usage: ci/scripts/in-toolbox.sh <command> [args...], from the repository root; CI_IMAGE is set by make.
@@ -14,6 +15,6 @@ set -- "$image" "$@"
 gitdir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 case $gitdir in "" | "$root" | "$root"/*) ;; *) set -- -v "$gitdir:$gitdir:ro" "$@" ;; esac
 exec docker run --rm --init -u "$(id -u):$(id -g)" --network none --cap-drop ALL --security-opt no-new-privileges \
-  --read-only --tmpfs /tmp -e HOME=/tmp \
+  --read-only --tmpfs /tmp:exec -e HOME=/tmp \
   -e GIT_CONFIG_COUNT=2 -e GIT_CONFIG_KEY_0=safe.directory -e "GIT_CONFIG_VALUE_0=$root" \
   -e GIT_CONFIG_KEY_1=safe.directory -e "GIT_CONFIG_VALUE_1=${gitdir:-$root}" -v "$root:$root:ro" -v "$root/ci/out:$root/ci/out" -w "$root" "$@"
